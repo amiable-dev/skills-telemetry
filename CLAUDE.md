@@ -8,45 +8,36 @@ Claude Code vs Copilot (VS Code) comparison. Full rationale and industry scan: `
 
 Public repo: `github.com/amiable-dev/skills-telemetry`. Metadata only — never emit prompt/response/file content.
 
-## Key design decisions (do not revisit without reason)
+## Key design decisions (do not revisit without reading the ADR)
+Decisions live in `docs/adrs/`. These bullets are pointers, not the reasoning — the ADR records what
+was rejected and what the decision costs, which is what you need before re-litigating it.
+
+- **[ADR-001](docs/adrs/001-distribution-and-capture-surface.md)** — distribution: one repo for three
+  loaders, hooks vendor-specific, `uv tool install` + absolute path. Copilot instrumented by native
+  OTel config, not our hooks.
+- **[ADR-002](docs/adrs/002-delivery-data-joins-and-proxies.md)** — delivery data: join on the branch
+  ticket key; unlabelled PR is `unknown` never `none`; `review_rounds` counts CHANGES_REQUESTED;
+  `policy_result` from a CI artefact because `run_seq` is unrecoverable; cycle time is a labelled proxy.
+- **[ADR-003](docs/adrs/003-hook-execution-constraints.md)** — the harness environment: `OTEL_*` is
+  scrubbed so config is `STDTEL_*`; the flush timeout must sit on the exporter; hooks get a non-login
+  `sh -c` so paths are absolute; module scope stays stdlib-only; camelCase proves Copilot.
+- **[ADR-004](docs/adrs/004-skill-identity-and-catalogue.md)** — identity: contract fields under
+  `metadata:`; catalogue keyed on the bare name with `plugin:skill` resolved by suffix; hooks lenient,
+  CI strict; the scanner follows symlinks.
+- **[ADR-005](docs/adrs/005-data-integrity.md)** — never record an unobserved value; a component that
+  cannot do its job fails loudly; vacuous truth is a bug; missing data is its own category.
+
+Still true and not yet an ADR:
 - Primary effectiveness metric = **first-time OPA policy pass rate** on the PR, with vs without the skill.
-- Custom attributes live in the `std.*` namespace; `gen_ai.*` is normalised at the collector (still Development, now in
-  `open-telemetry/semantic-conventions-genai`; extend `transform/normalise` rather than changing dashboards).
-- Skill identity comes from `SKILL.md` front-matter (`name`, `version`, `standard_id`, `policy_ids`,
-  `owner`, `harness_support`, `telemetry`). `stdtel-validate` is the CI contract gate.
-- Token attribution: "tail" rule — llm requests after a skill loads until the next skill loads / turn ends;
-  `tail_tokens_first_only` kept as a sensitivity check. Hooks always exit 0 (never block the developer).
-- Join key `std.ticket.id` is parsed from the git branch at `SessionStart`; unattributed sessions are kept
-  for cost analysis, excluded from outcome analysis.
-- Distribution (ADR-001, built): root `plugin.json` (Agent Plugins v1) + `.claude-plugin/` +
-  `com.github.copilot/` over one portable `skills/` tree. Hook manifests are generated from
-  `stdtel/install.py::EVENTS` — edit that table, not the JSON, and `tests/test_distribution.py`
-  catches drift. `SKILL.md` is spec-conformant: contract fields live under `metadata:` (string values,
-  lists comma-separated); the flat form still parses.
-- Copilot is instrumented by native OTel config, not our hooks. If our hooks are used there anyway,
-  `STDTEL_HARNESS` must be set in the hook's own `env` — Copilot reads `~/.claude/settings.json` and
-  its snake_case dialect is indistinguishable from Claude Code's.
-- The Skill tool's input field is `skill` — verified across 120 invocations in 114 real transcripts.
-  Plugin skills arrive namespaced (`plugin:skill`, 71% of real invocations); `_resolve` falls back to
-  the segment after the last `:`. `std.skill.name` is the catalogue name, `std.skill.invoked_as` the raw.
-- `OTEL_*` never reaches a hook (Claude Code scrubs it from every subprocess): the exporter reads
-  `STDTEL_OTLP_ENDPOINT` / `STDTEL_OTLP_TIMEOUT`, and the timeout must be set on the exporter because
-  `force_flush(timeout_millis=)` is ignored upstream.
-- Two span types at Stop: `std.session.cost` (total spend, emitted even with no skill loaded) and
-  `std.skill.invocation` (a share of it). They overlap deliberately — never sum them. Session start
-  time comes from `SessionState.started_at`, not the transcript, whose timestamps can parse to ~0 and
-  turn a duration into seconds-since-epoch (issue #1).
-- `PostToolUse`/`PostToolUseFailure` are **unmatched** — they fire for every tool, because tool-call
-  failure rate needs all of them. The non-Skill path is a counter increment on session state (no
-  catalogue, no exporter) and stays at ~20ms. `PreToolUse` stays matched to Skill: it only opens skill
-  windows, so firing it everywhere would be pure latency (issue #2).
-- `SessionState.save()` must list every field. Each hook is a separate process, so an unpersisted
-  field reads as its default at the next event — silently, as a plausible zero. Two fields shipped
-  that way; a round-trip test over `dataclasses.fields` now guards it.
-- Hook hot path: every `stdtel` import in `hooks/cli.py` is **function-local**, and `pre_tool_use` never
-  loads the catalogue (Stop resolves the version from the manifest anyway). PreToolUse/PostToolUse fire on
-  every Skill call: ~20ms against a 10ms bare-interpreter floor, vs 40ms when the module imported
-  OpenTelemetry and PyYAML eagerly. Do not hoist these back to module scope.
+- Custom attributes live in the `std.*` namespace; `gen_ai.*` is normalised at the collector (still
+  Development, now in `open-telemetry/semantic-conventions-genai`; extend `transform/normalise`).
+- Token attribution: "tail" rule — llm requests after a skill loads until the next skill loads / turn
+  ends; `tail_tokens_first_only` kept as a sensitivity check.
+- Two span types at Stop: `std.session.cost` (total, emitted even with no skill) and
+  `std.skill.invocation` (a share of it). They overlap deliberately — never sum them.
+- `PostToolUse`/`PostToolUseFailure` are unmatched (every tool); `PreToolUse` stays matched to Skill.
+- `SessionState.save()` must list every field — each hook is a separate process, so an unpersisted
+  field reads as its default at the next event, silently.
 - Copilot skills arrive as generic tool-call spans; `collector/copilot-skill-map.yaml` (generated by
   `make skill-map`, test-enforced) maps them onto `std.skill.*`.
 
