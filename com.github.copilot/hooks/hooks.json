@@ -39,8 +39,7 @@
               "STDTEL_HARNESS": "copilot-vscode"
             }
           }
-        ],
-        "matcher": "Skill"
+        ]
       }
     ],
     "postToolUseFailure": [
@@ -53,8 +52,7 @@
               "STDTEL_HARNESS": "copilot-vscode"
             }
           }
-        ],
-        "matcher": "Skill"
+        ]
       }
     ],
     "agentStop": [

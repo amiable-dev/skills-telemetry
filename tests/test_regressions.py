@@ -32,8 +32,9 @@ def test_stop_without_transcript_still_emits(tmp_path):
                         "tool_input": {"skill": "structured-logging"}})
     hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
     e = InMemorySpanExporter()
-    assert hooks.stop({"session_id": sid}, exporter=e) == 1      # was 0, silently
-    (span,) = e.get_finished_spans()
+    # invocation + session cost (the Skill call itself counts as a tool call)
+    assert hooks.stop({"session_id": sid}, exporter=e) == 2      # was 0, silently
+    span = next(s for s in e.get_finished_spans() if s.name == "std.skill.invocation")
     assert span.attributes["std.skill.load_tokens"] == 0
 
 
@@ -114,7 +115,7 @@ def test_namespaced_invocation_keeps_plugin_and_version(tmp_path):
     hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
     e = InMemorySpanExporter()
     hooks.stop({"session_id": sid}, exporter=e)
-    (span,) = e.get_finished_spans()
+    span = next(s for s in e.get_finished_spans() if s.name == "std.skill.invocation")
     assert span.attributes["std.skill.name"] == "structured-logging"
     assert span.attributes["std.skill.invoked_as"] == "my-plugin:structured-logging"
     assert span.attributes["std.skill.plugin"] == "my-plugin"
@@ -216,3 +217,73 @@ def test_session_duration_is_a_duration_not_an_epoch(tmp_path):
     span = e.get_finished_spans()[0]
     seconds = (span.end_time - span.start_time) / 1e9
     assert 0 <= seconds < 60, f"implausible session duration: {seconds}s"
+
+
+# --- issue #2: tool-call failure rate, without leaking tool content ---
+
+def test_non_skill_tool_calls_are_counted(tmp_path):
+    sid = "tools"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    for tool, err in [("Bash", False), ("Bash", True), ("Read", False), ("Edit", False)]:
+        hooks.post_tool_use({"session_id": sid, "tool_name": tool,
+                             "tool_use_id": "x", "tool_response": "SECRET FILE CONTENT"},
+                            error=err)
+    e = InMemorySpanExporter()
+    hooks.stop({"session_id": sid, "transcript_path": ""}, exporter=e)
+    a = e.get_finished_spans()[0].attributes
+    assert a["std.session.tool_calls"] == 4
+    assert a["std.session.tool_failures"] == 1
+    assert a["std.session.tool.Bash.calls"] == 2
+    assert a["std.session.tool.Bash.failures"] == 1
+    assert "std.session.tool.Read.failures" not in a       # zero failures stay off the wire
+
+
+def test_tool_content_never_reaches_a_span(tmp_path):
+    """The hook now sees every tool, so tool_response carries file contents,
+    commands and diffs. Counts only."""
+    sid = "noleak"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    hooks.post_tool_use({"session_id": sid, "tool_name": "Bash", "tool_use_id": "x",
+                         "tool_input": {"command": "cat /etc/passwd"},
+                         "tool_response": "root:x:0:0:SECRET"})
+    e = InMemorySpanExporter()
+    hooks.stop({"session_id": sid, "transcript_path": ""}, exporter=e)
+    blob = repr(e.get_finished_spans()[0].attributes)
+    for banned in ("passwd", "SECRET", "root:x", "cat /etc"):
+        assert banned not in blob, f"leaked {banned!r}"
+
+
+def test_scrub_refuses_tool_content_attributes():
+    from stdtel.exporter import scrub
+    out = scrub({"tool_input": "x", "tool_response": "y", "tool.result": "z",
+                 "std.tool.output": "w", "std.session.tool_calls": 3})
+    assert out == {"std.session.tool_calls": 3}
+
+
+def test_tool_counts_drain_so_a_second_stop_does_not_double_count(tmp_path):
+    sid = "drain"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    hooks.post_tool_use({"session_id": sid, "tool_name": "Bash", "tool_use_id": "x"})
+    e1 = InMemorySpanExporter()
+    hooks.stop({"session_id": sid, "transcript_path": ""}, exporter=e1)
+    assert e1.get_finished_spans()[0].attributes["std.session.tool_calls"] == 1
+    e2 = InMemorySpanExporter()
+    assert hooks.stop({"session_id": sid, "transcript_path": ""}, exporter=e2) == 0
+
+
+def test_every_state_field_survives_a_save_load_cycle():
+    """Each hook is a separate process. A field that save() forgets reads as its
+    default at the next event — silently, as a plausible zero."""
+    import dataclasses
+    from stdtel.state import SessionState
+    st = SessionState.load("roundtrip")
+    st.transcript_offset, st.started_at = 4242, 1700000000.5
+    st.resource = {"std.team": "payments"}
+    st.record_tool("Bash", failed=True)
+    st.open_window("s", "1.0.0", "direct", "t1", prompt_id="p1", permission_mode="default")
+    st.save()
+    back = SessionState.load("roundtrip")
+    for f in dataclasses.fields(SessionState):
+        if f.name == "session_id":
+            continue
+        assert getattr(back, f.name) == getattr(st, f.name), f"{f.name} lost across save/load"

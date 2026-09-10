@@ -14,7 +14,12 @@ SPAN_NAME = "std.skill.invocation"
 SESSION_SPAN_NAME = "std.session.cost"
 DEFAULT_ENDPOINT = "http://localhost:4318"
 DEFAULT_TIMEOUT_S = 2
-FORBIDDEN_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.completion")
+# Widened when the hook began seeing every tool, not just Skill: tool_input and
+# tool_response carry file contents, commands and diffs, none of which may leave
+# the machine. Counts only.
+FORBIDDEN_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.completion",
+                      "tool.input", "tool.output", "tool.arguments", "tool.result",
+                      "tool_input", "tool_response", "std.tool.input", "std.tool.output")
 
 
 def build_provider(resource_attrs: dict, exporter: SpanExporter | None = None) -> TracerProvider:

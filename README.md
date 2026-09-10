@@ -142,6 +142,8 @@ never loads a skill is still spend, and excluding it would silently understate c
 |---|---|
 | `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens` | whole transcript slice |
 | `std.session.llm_requests`, `gen_ai.request.model` | transcript |
+| `std.session.tool_calls`, `std.session.tool_failures` | every tool call in the turn |
+| `std.session.tool.<name>.{calls,failures}` | per tool; `failures` omitted when zero |
 | `std.ticket.id`, `std.repo`, `std.team`, `std.harness` | resource (SessionStart) |
 
 ### `std.skill.invocation`
@@ -157,6 +159,9 @@ never loads a skill is still spend, and excluding it would silently understate c
 
 ## Known limitations
 
+- Tool counts are counts only. `PostToolUse` fires for **every** tool, so `tool_input` and
+  `tool_response` carry commands, file contents and diffs — `scrub()` refuses those attribute names
+  outright and a test asserts nothing leaks.
 - Skill name is parsed from the Skill tool input in hooks (the field is `skill`, verified against 120 real invocations). Parsing is isolated in `hooks/cli.py::_skill_from_payload`.
 - `std.skill.trigger` reports the transcript's `caller.type` where present, else `unknown` — it is never guessed.
 - Tail attribution splits by load order; when several skills load in one turn compare against `tail_tokens_first_only`.

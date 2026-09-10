@@ -62,6 +62,19 @@ SELECT harness,
 FROM skill_invocation GROUP BY 1;
 ```
 
+Tool-call failure rate, by harness — a leading indicator of a skill telling the model to do
+something the environment cannot do:
+
+```sql
+SELECT harness,
+       sum(tool_failures)::numeric / NULLIF(sum(tool_calls), 0) AS failure_rate,
+       sum(tool_calls) AS calls
+FROM session_cost GROUP BY 1;
+```
+
+Per-tool counts live on the span as `std.session.tool.<name>.calls` / `.failures`; query them in
+Tempo or Prometheus rather than Postgres, which stores the session totals.
+
 First-time policy pass rate is the primary effectiveness metric; `warehouse/scorecard.sql` computes
 it with the with/without arms already separated. Run that rather than rewriting it.
 

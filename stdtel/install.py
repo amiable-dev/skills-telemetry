@@ -18,11 +18,14 @@ from pathlib import Path
 HOOK_NAME = "stdtel-hook"
 
 # (stdtel event, Claude Code event, tool matcher, Copilot event)
+# PreToolUse stays matched to Skill: it only opens skill windows, and firing it on
+# every tool would be pure latency. PostToolUse is unmatched because tool-call
+# failure rate needs every tool, and the non-Skill path is a counter increment.
 EVENTS = (
     ("session-start",         "SessionStart",       None,    "sessionStart"),
     ("pre-tool-use",          "PreToolUse",         "Skill", "preToolUse"),
-    ("post-tool-use",         "PostToolUse",        "Skill", "postToolUse"),
-    ("post-tool-use-failure", "PostToolUseFailure", "Skill", "postToolUseFailure"),
+    ("post-tool-use",         "PostToolUse",        None,    "postToolUse"),
+    ("post-tool-use-failure", "PostToolUseFailure", None,    "postToolUseFailure"),
     ("stop",                  "Stop",               None,    "agentStop"),
 )
 

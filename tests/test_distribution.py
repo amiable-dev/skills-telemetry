@@ -96,9 +96,30 @@ def test_agent_plugins_manifest_is_conformant():
     assert p["name"] == "stdtel"
 
 
-def test_shipped_hook_manifests_cover_every_event():
-    assert set(_read("hooks/hooks.json")["hooks"]) == {e[1] for e in EVENTS}
-    assert set(_read("com.github.copilot/hooks/hooks.json")["hooks"]) == {e[3] for e in EVENTS}
+def test_shipped_hook_manifests_match_what_the_installer_generates():
+    """Compares the whole structure, not just event names.
+
+    An earlier version compared names only, and so did not notice when
+    PostToolUse stopped being matcher-restricted — the committed JSON kept a
+    stale `matcher: Skill` that would have silenced tool-failure counting for
+    every plugin install.
+    """
+    class Bare(str):
+        def __str__(self):
+            return "stdtel-hook"
+
+    assert _read("hooks/hooks.json") == json.loads(
+        json.dumps(claude_hooks(Bare("stdtel-hook"))))
+    assert _read("com.github.copilot/hooks/hooks.json") == json.loads(
+        json.dumps(copilot_hooks(Bare("stdtel-hook"), "copilot-vscode")))
+
+
+def test_post_tool_use_is_not_matcher_restricted():
+    """Tool-call failure rate needs every tool, not only Skill."""
+    hooks = claude_hooks(hook_binary())["hooks"]
+    assert "matcher" not in hooks["PostToolUse"][0]
+    assert "matcher" not in hooks["PostToolUseFailure"][0]
+    assert hooks["PreToolUse"][0]["matcher"] == "Skill", "PreToolUse stays cheap"
 
 
 def test_shipped_copilot_manifest_sets_the_harness():

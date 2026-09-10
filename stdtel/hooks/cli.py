@@ -137,11 +137,21 @@ def pre_tool_use(p: dict) -> None:
 
 
 def post_tool_use(p: dict, error: bool = False) -> None:
-    if p.get("tool_name") != "Skill":
-        return
+    """Fires for every tool, not just Skill.
+
+    Tool-call failure rate is a first-class metric and a leading indicator of a
+    skill instructing the model to do something the environment cannot do. The
+    non-Skill path stays at the interpreter floor: state only, no catalogue, no
+    exporter, and counts only — tool_input and tool_response never leave here.
+    """
     from stdtel.state import SessionState
 
+    tool = str(p.get("tool_name") or p.get("toolName") or "")
     st = SessionState.load(p.get("session_id", "unknown"))
+    st.record_tool(tool, failed=error)
+    if tool != "Skill":
+        st.save()
+        return
     w = st.close_window(p.get("tool_use_id"), error=error)
     if w is not None and p.get("duration_ms"):
         w.duration_ms = int(p["duration_ms"])      # the harness times the tool call itself
@@ -201,13 +211,22 @@ def stop(p: dict, exporter=None) -> int:
     # cost-per-PR has no denominator (CLAUDE.md: unattributed sessions are kept
     # for cost analysis, excluded from outcome analysis).
     totals = sl.totals()
+    tool_calls, tool_failures = st.tool_totals()
     session_attrs = {}
-    if sl.requests:
+    if sl.requests or tool_calls:
         session_attrs = {
             "std.session.llm_requests": len(sl.requests),
             "gen_ai.request.model": (sl.models() or ["unknown"])[0],
+            "std.session.tool_calls": tool_calls,
+            "std.session.tool_failures": tool_failures,
             **totals.as_attributes(),
         }
+        # per-tool counts as std.session.tool.<name>.{calls,failures}
+        for name, (calls, failures) in sorted(st.tool_calls.items()):
+            session_attrs[f"std.session.tool.{name}.calls"] = calls
+            if failures:
+                session_attrs[f"std.session.tool.{name}.failures"] = failures
+        st.tool_calls = {}          # drained with the windows
     st.save()
     if not invocations and not session_attrs:
         return 0

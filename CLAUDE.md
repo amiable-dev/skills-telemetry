@@ -36,6 +36,13 @@ Public repo: `github.com/amiable-dev/skills-telemetry`. Metadata only — never 
   `std.skill.invocation` (a share of it). They overlap deliberately — never sum them. Session start
   time comes from `SessionState.started_at`, not the transcript, whose timestamps can parse to ~0 and
   turn a duration into seconds-since-epoch (issue #1).
+- `PostToolUse`/`PostToolUseFailure` are **unmatched** — they fire for every tool, because tool-call
+  failure rate needs all of them. The non-Skill path is a counter increment on session state (no
+  catalogue, no exporter) and stays at ~20ms. `PreToolUse` stays matched to Skill: it only opens skill
+  windows, so firing it everywhere would be pure latency (issue #2).
+- `SessionState.save()` must list every field. Each hook is a separate process, so an unpersisted
+  field reads as its default at the next event — silently, as a plausible zero. Two fields shipped
+  that way; a round-trip test over `dataclasses.fields` now guards it.
 - Hook hot path: every `stdtel` import in `hooks/cli.py` is **function-local**, and `pre_tool_use` never
   loads the catalogue (Stop resolves the version from the manifest anyway). PreToolUse/PostToolUse fire on
   every Skill call: ~20ms against a 10ms bare-interpreter floor, vs 40ms when the module imported

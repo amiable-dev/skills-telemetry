@@ -28,8 +28,7 @@
             "type": "command",
             "command": "stdtel-hook post-tool-use"
           }
-        ],
-        "matcher": "Skill"
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -39,8 +38,7 @@
             "type": "command",
             "command": "stdtel-hook post-tool-use-failure"
           }
-        ],
-        "matcher": "Skill"
+        ]
       }
     ],
     "Stop": [
