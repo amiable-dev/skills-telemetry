@@ -13,17 +13,20 @@ ROOT = Path(__file__).resolve().parent.parent
 SCHEMA = (ROOT / "warehouse" / "schema.sql").read_text()
 
 
+TYPES = "TEXT|INT|BIGINT|NUMERIC|BOOLEAN|TIMESTAMPTZ|SERIAL|JSONB"
+
+
 def schema_columns(table: str) -> list[str]:
+    """Column names for a table.
+
+    Matches `name TYPE` pairs rather than reading one column per line — several
+    tables declare more than one column per line, and a line-based reader
+    silently returned only the first, which made this contract test pass while
+    checking almost nothing.
+    """
     body = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \((.*?)\n\);", SCHEMA, re.S).group(1)
-    cols = []
-    for line in body.splitlines():
-        line = line.strip()
-        if not line or line.startswith("--"):
-            continue
-        name = line.split()[0]
-        if name.upper() not in {"PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"}:
-            cols.append(name.rstrip(","))
-    return cols
+    body = re.sub(r"--[^\n]*", "", body)          # strip comments; they contain commas and types
+    return re.findall(rf"(\w+)\s+(?:{TYPES})\b", body)
 
 
 def loader():

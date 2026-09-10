@@ -4,6 +4,10 @@ stdtel-onboard:
   policy_ids: telemetry.manifest_valid
   standard_id: STD-TEL-001
   version: 1.0.0
+stdtel-query:
+  policy_ids: telemetry.manifest_valid
+  standard_id: STD-TEL-001
+  version: 1.0.0
 structured-logging:
   policy_ids: logging.required_fields,logging.no_pii
   standard_id: STD-LOG-001
