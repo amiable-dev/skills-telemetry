@@ -49,12 +49,12 @@ Still true and not yet an ADR:
 
 ## Docs
 `docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
-skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/adrs/`.
+skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/local-stack.md` (endpoints + `mise run smoke`) · `docs/adrs/`.
 Adding a console script or a skill without documenting it fails `tests/test_docs_coverage.py`.
 
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
-`mise run install|test|validate|skill-map|up|down|eval-dry|ci` — mise owns the toolchain (Python 3.13)
+`mise run install|test|validate|skill-map|up|down|smoke|eval|eval-dry|power|ci` — mise owns the toolchain (Python 3.13)
 and auto-activates `.venv`; the tasks delegate to the Makefile, which stays the single definition.
 The venv is seeded with pip on purpose: mise creates it with uv, which omits pip, and a pip-less venv
 sends a bare `pip install` to the interpreter behind it instead.

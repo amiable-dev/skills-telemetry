@@ -33,6 +33,10 @@ run = "make skill-map"
 description = "Bring up the local collector/Tempo/Prometheus/Grafana stack"
 run = "make up"
 
+[tasks.smoke]
+description = "Verify every hop of the local stack and name the one that broke"
+run = "./deploy/smoke.sh"
+
 [tasks.down]
 description = "Tear the local stack down"
 run = "make down"

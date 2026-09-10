@@ -39,6 +39,7 @@ questions, including the ones the data cannot answer:
 | [docs/skills.md](docs/skills.md) | each skill and the agent — when to use, when not to, what it refuses |
 | [docs/evaluation-power.md](docs/evaluation-power.md) | how much data before a comparison means anything |
 | [docs/insight-walkthroughs.md](docs/insight-walkthroughs.md) | worked examples with real output, including the misreadings |
+| [docs/local-stack.md](docs/local-stack.md) | endpoints, credentials, the verification ladder, and how to reset |
 | [docs/adrs/](docs/adrs/) | why things are the way they are |
 
 ## Layout

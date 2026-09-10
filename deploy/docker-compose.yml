@@ -3,7 +3,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.118.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes: ["../collector/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
-    ports: ["4317:4317", "4318:4318"]
+    ports: ["4317:4317", "4318:4318", "8888:8888"]   # 8888 = the collector's own metrics
     depends_on: [tempo, prometheus]
   tempo:
     image: grafana/tempo:2.7.0
