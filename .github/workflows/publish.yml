@@ -1,0 +1,25 @@
+name: publish
+on:
+  release:
+    types: [published]
+
+# PyPI Trusted Publishing: no long-lived token, and PEP 740 attestations are
+# produced by the action. Configure the publisher on PyPI before first release.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - name: version must match the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          test -f "dist/stdtel-${TAG}-py3-none-any.whl" || {
+            echo "no wheel for tag ${TAG}; bump pyproject/plugin manifests"; ls dist; exit 1; }
+      - uses: pypa/gh-action-pypi-publish@release/v1

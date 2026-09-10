@@ -61,6 +61,7 @@ connectors:
       - { name: std.skill.name }
       - { name: std.skill.version }
       - { name: std.skill.trigger }
+      - { name: std.skill.plugin }
       - { name: std.harness }
       - { name: gen_ai.request.model }
       - { name: std.team }

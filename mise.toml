@@ -1,0 +1,51 @@
+# Toolchain for skills-telemetry. `mise install` then `mise run test`.
+#
+# The venv is for development only: the hooks Claude Code fires must be on the
+# PATH it launches with, which a project venv is not. See README "Install once,
+# globally" for that side.
+
+[tools]
+python = "3.13"          # pyproject allows >=3.10; CI pins 3.12
+
+[env]
+# --seed puts pip in the venv: mise creates it with uv, which omits pip, and a
+# pip-less venv silently sends `pip install` to the interpreter behind it.
+_.python.venv = { path = ".venv", create = true, uv_create_args = ["--seed"] }
+
+[tasks.install]
+description = "Install the package and dev extras into the project venv"
+run = "make install"
+
+[tasks.test]
+description = "Run the test suite"
+run = "make test"
+depends = ["install"]
+
+[tasks.validate]
+description = "SKILL.md front-matter contract gate (what CI runs)"
+run = "make validate"
+
+[tasks.skill-map]
+description = "Regenerate collector/copilot-skill-map.yaml from the catalogue"
+run = "make skill-map"
+
+[tasks.up]
+description = "Bring up the local collector/Tempo/Prometheus/Grafana stack"
+run = "make up"
+
+[tasks.down]
+description = "Tear the local stack down"
+run = "make down"
+
+[tasks.eval]
+description = "Offline with/without-skill eval, graded by OPA against policies/"
+run = "make eval"
+
+[tasks.eval-dry]
+description = "Offline with/without-skill eval, no OPA required"
+run = "make eval-dry"
+
+[tasks.ci]
+description = "Everything CI checks, in order"
+depends = ["install"]
+run = ["make validate", "make test", "make eval-dry"]

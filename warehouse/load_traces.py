@@ -3,16 +3,44 @@ Usage: python warehouse/load_traces.py --tempo http://localhost:3200 --dsn postg
 Requires: psycopg[binary], requests.
 """
 from __future__ import annotations
-import argparse, datetime as dt, json, sys
+import argparse, base64, binascii, datetime as dt, json, sys
+
+def span_id(span: dict, *keys: str) -> str:
+    """Hex id from a Tempo span.
+
+    /api/search returns hex under spanID/traceID; /api/traces/{id} returns OTLP
+    JSON with base64 under spanId/traceId. The loader reads the second, so decode.
+    """
+    for k in keys:
+        v = span.get(k)
+        if v:
+            try:
+                return base64.b64decode(v).hex()
+            except (ValueError, binascii.Error):
+                return str(v)          # already hex (search API shape)
+    return ""
+
+
+def end_nanos(span: dict) -> int:
+    end = span.get("endTimeUnixNano")
+    if end:
+        return int(end)
+    return int(span["startTimeUnixNano"]) + int(span.get("durationNanos", 0))
+
 
 def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
     g = lambda k, d=None: attrs.get(k, resource.get(k, d))
     return {
-        "span_id": span["spanID"], "trace_id": span["traceID"], "session_id": g("session.id", ""),
+        "span_id": span_id(span, "spanId", "spanID"),
+        "trace_id": span_id(span, "traceId", "traceID"),
+        "session_id": g("session.id", ""),
         "started_at": dt.datetime.fromtimestamp(int(span["startTimeUnixNano"]) / 1e9, dt.timezone.utc),
-        "ended_at": dt.datetime.fromtimestamp((int(span["startTimeUnixNano"]) + int(span.get("durationNanos", 0))) / 1e9, dt.timezone.utc),
+        "ended_at": dt.datetime.fromtimestamp(end_nanos(span) / 1e9, dt.timezone.utc),
         "harness": g("std.harness", "unknown"), "harness_mode": g("std.harness.mode"),
-        "skill_name": g("std.skill.name"), "skill_version": g("std.skill.version", "unversioned"),
+        "skill_name": g("std.skill.name"),
+        "invoked_as": g("std.skill.invoked_as", g("std.skill.name")),
+        "plugin": g("std.skill.plugin"),
+        "skill_version": g("std.skill.version", "unversioned"),
         "standard_id": g("std.standard_id"), "policy_ids": [p for p in (g("std.policy.ids", "") or "").split(",") if p],
         "trigger": g("std.skill.trigger"), "model": g("gen_ai.request.model"),
         "load_tokens": int(g("std.skill.load_tokens", 0)), "tail_tokens": int(g("std.skill.tail_tokens", 0)),
@@ -26,7 +54,8 @@ def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
         "user_hash": g("std.user.hash"),
     }
 
-COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","harness_mode","skill_name","skill_version",
+COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","harness_mode","skill_name",
+        "invoked_as","plugin","skill_version",
         "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
         "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","ticket_id","repo","team","user_hash"]
 

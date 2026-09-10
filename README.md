@@ -22,28 +22,116 @@ warehouse/schema.sql        skill_invocation, session_cost, ticket, pull_request
 warehouse/scorecard.sql     weekly per-skill scorecard → keep / refine / review-merge / deprecate
 warehouse/load_traces.py    Tempo → Postgres loader
 eval/run_eval.py            offline with/without-skill eval, OPA as grader (`--dry-run` for CI)
-.claude/settings.json       hook + OTel env wiring for Claude Code
+examples/settings.*.json    hook + OTel wiring: `global` installs once, `project` overrides per repo
+docs/adrs/                  decisions; ADR-001 is the distribution + capture-surface call
+plugin.json                 Agent Plugins v1 manifest (portable `skills/` is the shared half)
+.claude-plugin/             Claude Code plugin + marketplace manifest
+hooks/, com.github.copilot/ per-harness hook manifests, generated from stdtel/install.py::EVENTS
+stdtel/install.py           `stdtel-install`: absolute-path resolution + settings merge
+mise.toml                   toolchain (Python 3.13) + `.venv` + tasks wrapping the Makefile
 ```
 
 ## Quick start
 
+Two separate jobs: **install the harness wiring once for your user**, then **onboard each project** you
+want attributed telemetry from. Skipping the second step still gives you spans — the skills just come
+through as `unversioned`, with `std.team=unknown`.
+
+### 1. Install once, globally
+
 ```bash
-make install && make test          # 15 tests, in-memory OTel exporter
-make validate                      # front-matter contract gate (fails CI on bad SKILL.md)
-make up                            # local stack; Grafana on :3000, Tempo :3200, Prometheus :9090
-cp .claude/settings.json ~/.claude/settings.json   # or merge into a repo-level settings file
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-claude                             # use a skill; watch std.skill.invocation spans arrive in Tempo
+uv tool install stdtel        # or: pipx install stdtel
+stdtel-install settings       # merges hooks into ~/.claude/settings.json
 ```
 
+`stdtel-install` resolves the **absolute path** of the `stdtel-hook` it was installed alongside and
+writes that into the config. This is not cosmetic: hook processes get a non-login `sh -c` and inherit
+whatever PATH launched the harness, so a bare `stdtel-hook` is unresolvable whenever a version manager
+(mise, asdf, pyenv) or an activated venv is what put it there. The same reason pre-commit bakes
+`sys.executable` into the git hook it generates. `stdtel-install where` prints the path it will use;
+`--dry-run` shows the JSON without writing.
+
+Claude Code also **strips `OTEL_*` from every subprocess it spawns**, so point the exporter at your
+collector with the `STDTEL_`-namespaced variables, which survive:
+
+```bash
+export STDTEL_OTLP_ENDPOINT=http://collector.internal:4318   # default: http://localhost:4318
+export STDTEL_OTLP_TIMEOUT=2                                 # seconds; bounds a dead-collector stall
+```
+
+With no `STDTEL_SKILLS_ROOT` set, the catalogue is read from `~/.claude/skills`. Symlink your
+standards there and every project gets versioned spans:
+
+```bash
+ln -s "$PWD/skills/structured-logging" ~/.claude/skills/structured-logging
+stdtel-validate ~/.claude/skills      # same contract gate CI runs
+```
+
+#### As a plugin
+
+The repo is laid out for three loaders at once (ADR-001), so it installs as a plugin without a
+separate packaging step:
+
+```bash
+/plugin marketplace add amiable-dev/skills-telemetry
+/plugin install stdtel@amiable-standards
+```
+
+The shipped `hooks/hooks.json` carries the bare command name, because a distributed manifest cannot
+know your install path — run `stdtel-install settings` afterwards to bind it to an absolute one.
+
+#### Copilot
+
+Copilot needs **no code from us**. It emits first-party OpenTelemetry with per-tool-call spans and
+token counts; point it at the same collector (user settings, `COPILOT_OTEL_*` env vars, or the
+enterprise `managed-settings.json` `telemetry` block for a fleet).
+
+If you do run our hooks on Copilot as well, install them from `com.github.copilot/hooks/hooks.json`,
+which sets `STDTEL_HARNESS` per hook. That is load-bearing: VS Code Copilot **reads
+`~/.claude/settings.json`**, and its snake_case payload dialect is indistinguishable from Claude
+Code's — without that env block, Copilot activity is recorded as `claude-code`.
+
+### 2. Onboard a project
+
+Per-project overrides go in `<project>/.claude/settings.json` — Claude Code merges them over the user
+file, so repeat only what differs. Do **not** repeat the `hooks` block: it is already registered globally
+and a second copy fires each hook twice.
+
+```bash
+cd ~/projects/payments-api
+mkdir -p .claude && cp ~/projects/skills-telemetry/examples/settings.project.json .claude/settings.json
+$EDITOR .claude/settings.json      # STDTEL_TEAM is the one you must set
+git checkout -b feature/PLAT-123-add-audit-log   # ticket prefix -> std.ticket.id join key
+```
+
+| variable | where | meaning |
+|---|---|---|
+| `STDTEL_TEAM` | project | owning team on every span; `unknown` until you set it |
+| `STDTEL_HARNESS_MODE` | project | `agent` / `interactive` — keeps the Claude Code vs Copilot split fair |
+| `STDTEL_SKILLS_ROOT` | project | extra catalogue root(s), `os.pathsep`-separated. A relative path resolves against the project directory; `~/.claude/skills` is always searched last, and the earliest root wins a name collision |
+| `STDTEL_HARNESS`, `OTEL_*` | global | harness label and collector endpoint |
+
+Then verify the loop end to end:
+
+```bash
+claude                                     # invoke a skill in the project
+cat ~/.stdtel/sessions/*.json              # a window with skill, version, tool_use_id
+curl -s 'http://localhost:3200/api/search?tags=name%3Dstd.skill.invocation' | jq '.traces[0]'
+```
+
+A `std.skill.version` of `unversioned` means the name in the transcript matched no `SKILL.md` in any root
+— check `STDTEL_SKILLS_ROOT` and that the skill's front-matter `name` matches what you invoked.
+
 Copilot: enable managed OTel export (VS Code / CLI) pointing at the same collector with resource attributes
-`std.harness=copilot-vscode`, `std.team=<team>`; `collector/otel-collector.yaml` maps catalogued skill tool-calls onto `std.skill.*`.
+`std.harness=copilot-vscode`, `std.team=<team>`; `collector/otel-collector.yaml` maps catalogued skill
+tool-calls onto `std.skill.*`.
 
 ## Span schema (`std.skill.invocation`)
 
 | attribute | source |
 |---|---|
 | `std.skill.name/version/trigger`, `std.standard_id`, `std.policy.ids` | hook + manifest |
+| `std.skill.invoked_as`, `std.skill.plugin` | raw invocation string (plugin skills are namespaced) |
 | `std.skill.load_tokens`, `std.skill.tail_tokens`, `std.skill.tail_tokens_first_only`, `std.skill.llm_requests` | transcript attribution |
 | `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens`, `gen_ai.request.model` | transcript |
 | `std.ticket.id`, `std.repo`, `std.team`, `std.harness`, `std.harness.mode` | resource (SessionStart) |
@@ -51,7 +139,8 @@ Copilot: enable managed OTel export (VS Code / CLI) pointing at the same collect
 
 ## Known limitations
 
-- Skill name is parsed from the Skill tool input in hooks — no first-class field yet (tracked upstream). Parsing is isolated in `hooks/cli.py::_skill_from_input`.
+- Skill name is parsed from the Skill tool input in hooks (the field is `skill`, verified against 120 real invocations). Parsing is isolated in `hooks/cli.py::_skill_from_payload`.
+- `std.skill.trigger` reports the transcript's `caller.type` where present, else `unknown` — it is never guessed.
 - Tail attribution splits by load order; when several skills load in one turn compare against `tail_tokens_first_only`.
 - Copilot granularity is per turn; use Claude Code's finer data for within-harness tuning only.
 - `load_tokens` uses a chars/4 heuristic on the Skill tool result.

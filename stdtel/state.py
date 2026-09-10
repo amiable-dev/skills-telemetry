@@ -18,12 +18,16 @@ def state_dir() -> Path:
 class SkillWindow:
     skill: str
     version: str
-    trigger: str            # auto | explicit | subagent
+    trigger: str            # caller.type from the transcript, or "unknown"
     started_at: float
     ended_at: float | None = None
     tool_use_id: str | None = None
     load_tokens: int = 0
     error: bool = False
+    # straight from the hook payload (validated against a live session 2026-09-10)
+    prompt_id: str = ""         # correlates with native claude_code.* telemetry
+    permission_mode: str = ""   # measured harness mode, not the env's guess
+    duration_ms: int = 0        # the harness's own timing, better than our clock
 
 
 @dataclass
@@ -55,9 +59,11 @@ class SessionState:
             "windows": [asdict(w) for w in self.windows],
         }, indent=1))
 
-    def open_window(self, skill: str, version: str, trigger: str, tool_use_id: str | None) -> SkillWindow:
+    def open_window(self, skill: str, version: str, trigger: str, tool_use_id: str | None,
+                    prompt_id: str = "", permission_mode: str = "") -> SkillWindow:
         w = SkillWindow(skill=skill, version=version, trigger=trigger,
-                        started_at=time.time(), tool_use_id=tool_use_id)
+                        started_at=time.time(), tool_use_id=tool_use_id,
+                        prompt_id=prompt_id, permission_mode=permission_mode)
         self.windows.append(w)
         return w
 

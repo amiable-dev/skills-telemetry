@@ -11,6 +11,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SimpleSpanProcessor
 
 SPAN_NAME = "std.skill.invocation"
+DEFAULT_ENDPOINT = "http://localhost:4318"
+DEFAULT_TIMEOUT_S = 2
 FORBIDDEN_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.completion")
 
 
@@ -20,12 +22,47 @@ def build_provider(resource_attrs: dict, exporter: SpanExporter | None = None) -
     base.update({k: v for k, v in resource_attrs.items() if v is not None})
     provider = TracerProvider(resource=Resource.create(base))
     if exporter is None:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        exporter = OTLPSpanExporter()   # honours OTEL_EXPORTER_OTLP_* env vars
-        provider.add_span_processor(BatchSpanProcessor(exporter))
+        provider.add_span_processor(BatchSpanProcessor(_otlp_exporter()))
     else:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
     return provider
+
+
+def _endpoint() -> str:
+    """Full traces endpoint URL.
+
+    Claude Code strips `OTEL_*` from every subprocess it spawns, so a hook can
+    never see OTEL_EXPORTER_OTLP_ENDPOINT no matter where it is set — it would
+    silently fall back to localhost. STDTEL_OTLP_ENDPOINT survives the scrub and
+    wins; the OTEL_* names stay as a fallback for direct CLI/CI use, where
+    nothing scrubs them.
+    """
+    base = (os.environ.get("STDTEL_OTLP_ENDPOINT")
+            or os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+            or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+            or DEFAULT_ENDPOINT).rstrip("/")
+    return base if base.endswith("/v1/traces") else f"{base}/v1/traces"
+
+
+def _timeout() -> int:
+    try:
+        return max(1, int(os.environ.get("STDTEL_OTLP_TIMEOUT", DEFAULT_TIMEOUT_S)))
+    except ValueError:
+        return DEFAULT_TIMEOUT_S
+
+
+def _otlp_exporter():
+    """OTLP/HTTP exporter that fails fast.
+
+    The timeout must be set on the *exporter*: force_flush(timeout_millis=...)
+    is ignored (open-telemetry/opentelemetry-python#4043), and the env var that
+    would otherwise bound it (OTEL_EXPORTER_OTLP_TIMEOUT) is scrubbed before the
+    hook ever runs. Unbounded, a dead collector stalls the Stop hook for ~7s of
+    retry backoff on every turn.
+    """
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    return OTLPSpanExporter(endpoint=_endpoint(), timeout=_timeout())
 
 
 def scrub(attrs: dict) -> dict:

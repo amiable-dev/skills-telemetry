@@ -1,0 +1,37 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv pip install --system -e ".[dev]"
+      - run: stdtel-validate skills           # front-matter contract gate
+      - run: python -m pytest -q
+      - run: python -m eval.run_eval --dry-run --out /tmp/eval.jsonl
+
+  distribution:
+    # ADR-001: the install channel must keep working from a clean machine, and a
+    # hook must run with no environment at all — that is what a hook shell gives it.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build --wheel
+      - name: install as a tool, as a user would
+        run: uv tool install dist/*.whl
+      - name: hook survives an empty environment
+        run: |
+          echo '{"session_id":"ci","tool_name":"Skill","tool_use_id":"c1","tool_input":{"skill":"p:structured-logging"}}' \
+            | env -i "$(uv tool dir --bin)/stdtel-hook" pre-tool-use
+      - name: installer resolves an absolute path
+        run: |
+          BIN="$(uv tool dir --bin)/stdtel-install"
+          test "$("$BIN" where | cut -c1)" = "/" || { echo "not absolute"; exit 1; }
+          "$BIN" hooks --harness copilot-vscode | grep -q STDTEL_HARNESS

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "stdtel",
+  "version": "0.1.0",
+  "description": "Telemetry for standards-as-skills: attributes token cost and policy outcomes to individual skills across Claude Code and GitHub Copilot.",
+  "author": { "name": "amiable-dev", "url": "https://github.com/amiable-dev" },
+  "homepage": "https://github.com/amiable-dev/skills-telemetry",
+  "repository": "https://github.com/amiable-dev/skills-telemetry",
+  "license": "MIT",
+  "keywords": ["telemetry", "opentelemetry", "skills", "standards", "governance"]
+}

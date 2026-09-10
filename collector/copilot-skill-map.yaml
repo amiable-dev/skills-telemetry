@@ -1,5 +1,9 @@
 # Copilot emits skills as generic tool calls; the collector maps gen_ai.tool.name -> std.* using this table.
 # Generated from skills/ by `make skill-map`; commit alongside the catalogue.
+stdtel-onboard:
+  policy_ids: telemetry.manifest_valid
+  standard_id: STD-TEL-001
+  version: 1.0.0
 structured-logging:
   policy_ids: logging.required_fields,logging.no_pii
   standard_id: STD-LOG-001

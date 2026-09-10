@@ -3,6 +3,12 @@
 Reads the hook JSON payload from stdin. Events: session-start, pre-tool-use,
 post-tool-use, stop. Always exits 0 so a telemetry failure never blocks the
 developer (design §7: memory is best-effort, telemetry likewise).
+
+Every stdtel import is deliberately function-local. PreToolUse and PostToolUse
+fire on *every* Skill call and are pure latency in the developer's loop, so they
+must not pay for OpenTelemetry (~19ms) or PyYAML when they never touch them.
+Only `stop` needs the exporter; only the catalogue lookup needs the parser.
+Module scope stays stdlib-only.
 """
 from __future__ import annotations
 
@@ -10,12 +16,6 @@ import json
 import os
 import sys
 from pathlib import Path
-
-from stdtel.enrich import resource_attributes
-from stdtel.exporter import build_provider, emit_invocations
-from stdtel.manifest import load_catalogue
-from stdtel.state import SessionState
-from stdtel.transcript import attribute, read_slice
 
 
 def _payload() -> dict:
@@ -25,46 +25,132 @@ def _payload() -> dict:
         return {}
 
 
+def skills_roots() -> list[Path]:
+    """Directories to scan for SKILL.md, in precedence order.
+
+    STDTEL_SKILLS_ROOT may name several roots separated by os.pathsep; a relative
+    one is resolved against CLAUDE_PROJECT_DIR (the project the hook fired in),
+    not the process cwd, so `skills` in a project settings file keeps working.
+    The user-level catalogue is always searched last, which is what makes hooks
+    registered once in ~/.claude/settings.json useful from every project.
+    """
+    base = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+    roots = []
+    for raw in os.environ.get("STDTEL_SKILLS_ROOT", "").split(os.pathsep):
+        if raw.strip():
+            root = Path(raw).expanduser()
+            roots.append(root if root.is_absolute() else base / root)
+    roots.append(Path.home() / ".claude" / "skills")
+    out, seen = [], set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved not in seen and resolved.is_dir():
+            seen.add(resolved)
+            out.append(root)
+    return out
+
+
 def _catalogue():
-    root = Path(os.environ.get("STDTEL_SKILLS_ROOT", "skills"))
-    try:
-        return load_catalogue(root)
-    except Exception:
-        return {}
+    """Merged catalogue across roots; earlier roots win on name collisions."""
+    from stdtel.manifest import load_catalogue          # pulls in PyYAML
+
+    cat: dict = {}
+    for root in skills_roots():
+        try:
+            found = load_catalogue(root, strict=False)
+        except Exception:
+            continue
+        for name, manifest in found.items():
+            cat.setdefault(name, manifest)
+    return cat
 
 
-def _skill_from_input(inp: dict) -> tuple[str, str]:
+def _skill_from_payload(p: dict) -> tuple[str, str]:
+    """(skill name as invoked, trigger).
+
+    Field name verified against 120 real Skill invocations across 114 transcripts
+    in ~/.claude/projects: the input carries `skill` every time (never `name`,
+    never `skill_name` — that is the OTel event surface, a different payload).
+    `args` also appears and is deliberately not captured: it can hold content.
+
+    Trigger is provisional here. The transcript carries the tool_use `caller`
+    block, which is ground truth, so Stop upgrades this value; a name is never
+    slash-prefixed in the observed data, so nothing sets "explicit" in practice.
+    """
+    inp = p.get("tool_input") or p.get("toolArgs") or {}
     name = str(inp.get("skill") or inp.get("name") or "")
-    trigger = "explicit" if name.startswith("/") or inp.get("explicit") else "auto"
+    caller = p.get("caller")
+    if name.startswith("/"):
+        trigger = "explicit"
+    elif isinstance(caller, dict) and caller.get("type"):
+        trigger = str(caller["type"])
+    else:
+        trigger = "unknown"
     return name.lstrip("/"), trigger
 
 
+def _resolve(name: str, cat: dict):
+    """(manifest | None, catalogue name) for a skill as invoked.
+
+    Plugin-provided skills arrive namespaced — `epic-loop:epic-loop`,
+    `anthropic-skills:skill-creator` — which is 71% of real invocations, and is
+    what every skill looks like once distributed as a plugin. The catalogue is
+    keyed on the bare front-matter `name`, so match the full string first, then
+    the segment after the last ":".
+    """
+    if name in cat:
+        return cat[name], name
+    bare = name.rsplit(":", 1)[-1]
+    if bare in cat:
+        return cat[bare], bare
+    return None, bare
+
+
 def session_start(p: dict) -> None:
+    from stdtel.enrich import resource_attributes
+    from stdtel.state import SessionState
+
     st = SessionState.load(p.get("session_id", "unknown"))
-    st.resource = resource_attributes(Path(p.get("cwd", ".")))
+    st.resource = resource_attributes(Path(p.get("cwd", ".")), payload=p)
     st.save()
 
 
 def pre_tool_use(p: dict) -> None:
     if p.get("tool_name") != "Skill":
         return
+    from stdtel.state import SessionState
+
     st = SessionState.load(p.get("session_id", "unknown"))
-    name, trigger = _skill_from_input(p.get("tool_input") or {})
-    cat = _catalogue()
-    version = cat[name].version if name in cat else "unversioned"
-    st.open_window(name, version, trigger, p.get("tool_use_id"))
+    name, trigger = _skill_from_payload(p)
+    # Version is resolved from the catalogue at Stop, which loads it anyway to
+    # attach the rest of the manifest attributes. Reading it here too would put
+    # a PyYAML parse of every SKILL.md on the hot path for a value Stop discards.
+    st.open_window(name, "unversioned", trigger, p.get("tool_use_id"),
+                   prompt_id=str(p.get("prompt_id") or ""),
+                   permission_mode=str(p.get("permission_mode") or ""))
     st.save()
 
 
 def post_tool_use(p: dict, error: bool = False) -> None:
     if p.get("tool_name") != "Skill":
         return
+    from stdtel.state import SessionState
+
     st = SessionState.load(p.get("session_id", "unknown"))
-    st.close_window(p.get("tool_use_id"), error=error)
+    w = st.close_window(p.get("tool_use_id"), error=error)
+    if w is not None and p.get("duration_ms"):
+        w.duration_ms = int(p["duration_ms"])      # the harness times the tool call itself
     st.save()
 
 
 def stop(p: dict, exporter=None) -> int:
+    from stdtel.exporter import build_provider, emit_invocations
+    from stdtel.state import SessionState
+    from stdtel.transcript import attribute, read_slice
+
     sid = p.get("session_id", "unknown")
     st = SessionState.load(sid)
     transcript = Path(p.get("transcript_path", ""))
@@ -78,14 +164,27 @@ def stop(p: dict, exporter=None) -> int:
         st.close_window(w.tool_use_id)
     invocations = []
     for w in st.drain_closed():
+        manifest, resolved = _resolve(w.skill, cat)
+        load = loads.get(w.skill)
         attrs = {
-            "std.skill.name": w.skill,
+            "std.skill.name": resolved,
+            "std.skill.invoked_as": w.skill,
             "std.skill.version": w.version,
-            "std.skill.trigger": w.trigger,
-            "std.skill.load_tokens": loads[w.skill].load_tokens if w.skill in loads else 0,
+            # the transcript's caller block is ground truth; the hook payload may not carry it
+            "std.skill.trigger": (load.caller if load and load.caller else w.trigger),
+            "std.skill.load_tokens": load.load_tokens if load else 0,
         }
-        if w.skill in cat:
-            attrs.update(cat[w.skill].as_attributes())
+        if ":" in w.skill:
+            attrs["std.skill.plugin"] = w.skill.rsplit(":", 1)[0]
+        if w.prompt_id:
+            # join key to Claude Code's native claude_code.* telemetry
+            attrs["std.prompt.id"] = w.prompt_id
+        if w.permission_mode:
+            attrs["std.harness.permission_mode"] = w.permission_mode
+        if w.duration_ms:
+            attrs["std.skill.duration_ms"] = w.duration_ms
+        if manifest:
+            attrs.update(manifest.as_attributes())
         a = attributions.get(w.skill)
         if a:
             attrs["std.skill.tail_tokens"] = a.tail.total
