@@ -257,6 +257,11 @@ def main(argv: list[str] | None = None) -> int:
             post_tool_use(p, error=True)
         elif event == "stop":
             stop(p)
+        else:
+            # still exit 0: an unknown event must never block the developer
+            print(f"stdtel-hook: unknown event {event!r}; expected one of "
+                  f"session-start, pre-tool-use, post-tool-use, "
+                  f"post-tool-use-failure, stop", file=sys.stderr)
     except Exception as e:   # never block the developer
         print(f"stdtel: {e}", file=sys.stderr)
     return 0

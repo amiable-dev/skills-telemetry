@@ -47,6 +47,11 @@ Still true and not yet an ADR:
 `warehouse/` schema + weekly scorecard SQL + Tempo→Postgres loader · `policies/` Rego (the primary metric) ·
 `eval/` with/without-skill runner + `fixtures/`, graded by real OPA · `tests/` (93 passing, incl. replay of real captured hook payloads).
 
+## Docs
+`docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
+skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/adrs/`.
+Adding a console script or a skill without documenting it fails `tests/test_docs_coverage.py`.
+
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
 `mise run install|test|validate|skill-map|up|down|eval-dry|ci` — mise owns the toolchain (Python 3.13)

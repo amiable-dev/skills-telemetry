@@ -181,16 +181,35 @@ def load_catalogue(root: Path, strict: bool = True) -> dict[str, SkillManifest]:
 
 
 def cli(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    root = Path(argv[0] if argv else "skills")
+    """The CI contract gate.
+
+    Exit 0 valid, 1 an invalid manifest, 2 the root cannot be read. That last
+    case used to exit 0 with "0 skill(s) valid" — a typo'd path in CI reported a
+    clean gate over nothing, and `--help` was parsed as a directory name.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        prog="stdtel-validate",
+        description="Validate SKILL.md front-matter against the standards contract.")
+    ap.add_argument("root", nargs="?", default="skills",
+                    help="directory to scan recursively for SKILL.md (default: skills)")
+    ap.add_argument("--quiet", "-q", action="store_true", help="only report failures")
+    a = ap.parse_args(sys.argv[1:] if argv is None else argv)
+
+    root = Path(a.root).expanduser()
+    if not root.is_dir():
+        print(f"stdtel-validate: no such directory: {root}", file=sys.stderr)
+        return 2
     try:
         cat = load_catalogue(root)
     except ManifestError as e:
         print(f"INVALID: {e}", file=sys.stderr)
         return 1
-    for name, m in cat.items():
-        print(f"OK  {name}@{m.version}  {m.standard_id}  policies={len(m.policy_ids)}")
-    print(f"{len(cat)} skill(s) valid")
+    if not a.quiet:
+        for name, m in cat.items():
+            print(f"OK  {name}@{m.version}  {m.standard_id}  policies={len(m.policy_ids)}")
+    print(f"{len(cat)} skill(s) valid in {root}")
     return 0
 
 
