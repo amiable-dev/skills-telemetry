@@ -32,6 +32,9 @@ psql "$STDTEL_DSN" -c "SELECT count(*) FROM skill_invocation;" # and how much
 **Always report row counts alongside any number.** This dataset is usually far smaller than it
 looks, and a ratio computed from three rows reads identically to one computed from three thousand.
 
+**The hard floor: below 30 merged PRs per arm, or fewer than 5 developers, report descriptively and make no comparative claim.** Cost and usage figures are reportable at any volume; comparisons between
+skills, harnesses or arms are not. See [`docs/evaluation-power.md`](../../docs/evaluation-power.md).
+
 ## The primary ratios
 
 Tokens per merged PR, by skill:

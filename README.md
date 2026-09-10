@@ -6,6 +6,29 @@ individual skills across Claude Code and GitHub Copilot, joined to policy (OPA/R
 
 Metadata only. No prompt, response or file content is ever emitted; the collector drops it again as defence in depth.
 
+## When can I trust these numbers?
+
+Telemetry starts producing plausible-looking ratios on day one. Most of them mean nothing yet. The
+phases below are set by **data volume, not elapsed time** — how long each takes depends entirely on
+team size, and a small team may never leave the first one.
+
+| phase | you have | what it supports | what it does not |
+|---|---|---|---|
+| **Descriptive** | anything below the floor | cost, usage, and finding data-quality faults — `unversioned` skills, `unattributed` branches | any comparison between skills, harnesses, or arms |
+| **Directional** | 30+ merged PRs per arm, 5+ developers | spotting large effects (>40%) as a hypothesis, always with an interval | point estimates, or a keep/deprecate decision |
+| **Inferential** | 150-400+ PRs per arm, depending on effect size | keep / refine / merge / deprecate decisions | detecting effects under 20%, which needs 900+ |
+
+**The hard floor: below 30 merged PRs per arm, or fewer than 5 developers, report descriptively and make no comparative claim.**
+
+Early on, the most valuable thing this data does is find its own faults. A high share of `unversioned`
+skills or `unattributed` tickets bounds every later conclusion, and both are fixable now — see
+[`stdtel-onboard`](skills/stdtel-onboard/SKILL.md) and ticket-prefixed branches.
+
+The failure mode this exists to prevent: reading a scorecard after two weeks, seeing a skill
+"underperform" across nine PRs, and deprecating it. Nine PRs cannot distinguish a bad skill from a
+quiet fortnight. Full derivations and the assumptions behind every figure:
+[docs/evaluation-power.md](docs/evaluation-power.md).
+
 ## Layout
 
 ```

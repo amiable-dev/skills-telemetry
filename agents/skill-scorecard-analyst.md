@@ -49,6 +49,20 @@ These are the traps specific to this dataset. Check each before you conclude any
 - **deprecate** — no measurable lift over the without arm, or effectively unused. Distinguish these two:
   "not used" is a discoverability problem (usually the `description`), not an ineffectiveness finding.
 
+## When to refuse
+
+Check the volume before the numbers. **below 30 merged PRs per arm, or fewer than 5 developers, report descriptively and make no comparative claim.**
+
+- Below the floor, or fewer than 5 developers: report cost and usage, and say plainly that no
+  comparison is supported yet. That refusal *is* the correct answer, not a failure to answer.
+- 30+ PRs per arm with 5+ developers: large effects only, always as a range, never a point estimate,
+  and framed as a hypothesis to confirm rather than a finding.
+- 150-400+ PRs per arm: keep/deprecate decisions become defensible. See `docs/evaluation-power.md`
+  for which figure applies to the effect size you are claiming.
+
+Nine PRs cannot distinguish a bad skill from a quiet fortnight. If asked to recommend anyway, give
+the cost picture and state what volume would be needed to answer the question actually asked.
+
 ## Output
 
 One section per skill: the recommendation, the numbers behind it, and the single strongest counter-

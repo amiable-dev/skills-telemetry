@@ -23,6 +23,14 @@ from pathlib import Path
 from statistics import NormalDist
 
 DOC = Path(__file__).resolve().parent.parent / "docs" / "evaluation-power.md"
+
+# The one sentence that must read identically everywhere it appears: README, the
+# scorecard agent, stdtel-query and the power doc. A floor stated three different
+# ways is three different floors, and the loosest one wins in practice.
+HARD_FLOOR = ("below 30 merged PRs per arm, or fewer than 5 developers, report "
+              "descriptively and make no comparative claim")
+FLOOR_SURFACES = ("README.md", "docs/evaluation-power.md",
+                  "agents/skill-scorecard-analyst.md", "skills/stdtel-query/SKILL.md")
 ALPHA, POWER = 0.05, 0.80
 
 

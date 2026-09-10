@@ -94,3 +94,39 @@ def test_the_hard_floor_is_stated():
     """The floor is quoted verbatim in the agent and stdtel-query; it must exist here."""
     text = " ".join(DOC.read_text().split())      # collapse wrapping
     assert "below 30 merged PRs per arm, or fewer than 5 developers" in text
+
+
+# --- issue #4: the floor must read identically everywhere it appears ---
+
+def test_hard_floor_is_stated_verbatim_on_every_surface():
+    """A floor worded three ways is three floors, and the loosest one wins.
+
+    Compared with whitespace collapsed, because markdown wraps.
+    """
+    from eval.power import FLOOR_SURFACES, HARD_FLOOR
+    for rel in FLOOR_SURFACES:
+        text = " ".join((ROOT / rel).read_text().split())
+        assert HARD_FLOOR in text, f"{rel} does not state the floor verbatim"
+
+
+def test_readme_states_the_three_phases_before_the_layout():
+    """Someone who never opens the power doc must still meet this."""
+    text = (ROOT / "README.md").read_text()
+    section = text.split("## Layout")[0]
+    assert "When can I trust these numbers?" in section
+    for phase in ("Descriptive", "Directional", "Inferential"):
+        assert phase in section, f"missing phase: {phase}"
+
+
+def test_phases_are_framed_by_volume_not_calendar_time():
+    """Calendar time depends on team size; volume does not."""
+    section = (ROOT / "README.md").read_text().split("## Layout")[0]
+    assert "data volume, not elapsed time" in section
+    for banned in ("Days 1-30", "first month", "after two weeks of use"):
+        assert banned not in section, f"phase framed by calendar time: {banned}"
+
+
+def test_the_agent_treats_refusal_as_a_correct_answer():
+    text = (ROOT / "agents" / "skill-scorecard-analyst.md").read_text()
+    assert "## When to refuse" in text
+    assert "correct answer, not a failure" in text
