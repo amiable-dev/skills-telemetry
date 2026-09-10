@@ -1,0 +1,3 @@
+apiVersion: 1
+providers:
+  - { name: stdtel, folder: Standards-as-Skills, type: file, options: { path: /etc/grafana/provisioning/dashboards } }

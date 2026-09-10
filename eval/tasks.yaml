@@ -1,0 +1,6 @@
+# Offline eval tasks (design §4.6). Each task: a prompt run with and without the skill; output graded by OPA.
+- id: log-001
+  skill: structured-logging
+  prompt: "Add request logging to the FastAPI app in ./app so each request logs method, path, status and latency."
+  fixture: fixtures/fastapi-min
+  policies: [logging.required_fields, logging.no_pii]

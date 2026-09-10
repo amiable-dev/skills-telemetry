@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# Local state / results
+eval/results.jsonl
+.stdtel/
+*.jsonl.tmp
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local stack data
+deploy/tempo-data/

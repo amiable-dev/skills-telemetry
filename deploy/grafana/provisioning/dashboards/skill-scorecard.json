@@ -1,0 +1,12 @@
+{
+  "title": "Skill scorecard", "uid": "stdtel-scorecard", "schemaVersion": 39, "panels": [
+    {"type": "timeseries", "title": "Skill invocations / h", "gridPos": {"x":0,"y":0,"w":12,"h":8},
+     "targets": [{"expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.skill.invocation\"}[1h]))"}]},
+    {"type": "timeseries", "title": "Error rate by skill", "gridPos": {"x":12,"y":0,"w":12,"h":8},
+     "targets": [{"expr": "sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.skill.invocation\",status_code=\"STATUS_CODE_ERROR\"}[1h])) / sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.skill.invocation\"}[1h]))"}]},
+    {"type": "timeseries", "title": "p50 skill window duration", "gridPos": {"x":0,"y":8,"w":12,"h":8},
+     "targets": [{"expr": "histogram_quantile(0.5, sum by (le, std_skill_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.skill.invocation\"}[1h])))"}]},
+    {"type": "timeseries", "title": "Claude Code tokens by type", "gridPos": {"x":12,"y":8,"w":12,"h":8},
+     "targets": [{"expr": "sum by (type) (rate(claude_code_token_usage_tokens_total[1h]))"}]}
+  ]
+}
