@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SimpleSpanProcessor
 
 SPAN_NAME = "std.skill.invocation"
+SESSION_SPAN_NAME = "std.session.cost"
 DEFAULT_ENDPOINT = "http://localhost:4318"
 DEFAULT_TIMEOUT_S = 2
 FORBIDDEN_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.completion")
@@ -69,6 +70,22 @@ def scrub(attrs: dict) -> dict:
     """Defence in depth: refuse to emit content attributes even if handed to us."""
     return {k: v for k, v in attrs.items()
             if not k.startswith(FORBIDDEN_PREFIXES) and isinstance(v, (str, int, float, bool))}
+
+
+def emit_session_cost(provider: TracerProvider, attrs: dict, session_id: str,
+                      started_at: float, ended_at: float) -> int:
+    """One span per Stop carrying the session's whole token cost.
+
+    Deliberately overlaps std.skill.invocation: that span attributes a slice of
+    these tokens to a skill. The two must never be summed — session cost is the
+    total, invocation tail is a share of it.
+    """
+    tracer = provider.get_tracer("stdtel", "0.1.0")
+    a = scrub(dict(attrs))
+    a["session.id"] = session_id
+    span = tracer.start_span(SESSION_SPAN_NAME, attributes=a, start_time=int(started_at * 1e9))
+    span.end(end_time=int(ended_at * 1e9))
+    return 1
 
 
 def emit_invocations(provider: TracerProvider, invocations: Iterable[dict], session_id: str) -> int:

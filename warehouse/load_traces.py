@@ -54,6 +54,34 @@ def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
         "user_hash": g("std.user.hash"),
     }
 
+SESSION_COLS = ["session_id", "harness", "model", "ticket_id", "team", "input_tokens",
+                "output_tokens", "cache_read_tokens", "cache_creation_tokens",
+                "cost_usd", "active_seconds", "started_at"]
+
+
+def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
+    """std.session.cost -> session_cost. This is total spend for the session,
+    which overlaps skill_invocation.tail_tokens by design; never sum the two."""
+    g = lambda k, d=None: attrs.get(k, resource.get(k, d))
+    start = int(span["startTimeUnixNano"])
+    return {
+        "session_id": g("session.id", ""),
+        "harness": g("std.harness", "unknown"),
+        "model": g("gen_ai.request.model"),
+        "ticket_id": g("std.ticket.id", "unattributed"),
+        "team": g("std.team"),
+        "input_tokens": int(g("gen_ai.usage.input_tokens", 0)),
+        "output_tokens": int(g("gen_ai.usage.output_tokens", 0)),
+        "cache_read_tokens": int(g("gen_ai.usage.cache_read_input_tokens", 0)),
+        "cache_creation_tokens": int(g("gen_ai.usage.cache_creation_input_tokens", 0)),
+        "cost_usd": None,                       # priced downstream; harnesses differ in currency
+        # a span whose start is near the epoch would otherwise yield "seconds
+        # since 1970"; anything beyond a day of wall clock is not a session
+        "active_seconds": min(86_400, max(0, (end_nanos(span) - start) // 1_000_000_000)),
+        "started_at": dt.datetime.fromtimestamp(start / 1e9, dt.timezone.utc),
+    }
+
+
 COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","harness_mode","skill_name",
         "invoked_as","plugin","skill_version",
         "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
@@ -64,21 +92,37 @@ def main(argv=None) -> int:
     ap.add_argument("--since", default="24h"); a = ap.parse_args(argv)
     import requests, psycopg
     hours = int(a.since.rstrip("h")); end = int(dt.datetime.now().timestamp()); start = end - hours * 3600
-    r = requests.get(f"{a.tempo}/api/search", params={"q": '{ name = "std.skill.invocation" }', "start": start, "end": end, "limit": 1000}); r.raise_for_status()
-    rows = []
-    for t in r.json().get("traces", []):
+    def search(query):
+        # Tempo returns nothing at all without start/end — it looks like a dead pipeline
+        r = requests.get(f"{a.tempo}/api/search",
+                         params={"q": query, "start": start, "end": end, "limit": 1000})
+        r.raise_for_status()
+        return r.json().get("traces", [])
+
+    traces = {t["traceID"]: t for t in search('{ name = "std.skill.invocation" }')}
+    traces.update({t["traceID"]: t for t in search('{ name = "std.session.cost" }')})
+    rows, session_rows = [], []
+    for t in traces.values():
         tr = requests.get(f"{a.tempo}/api/traces/{t['traceID']}").json()
         for batch in tr.get("batches", []):
             resource = {kv["key"]: list(kv["value"].values())[0] for kv in batch.get("resource", {}).get("attributes", [])}
             for ss in batch.get("scopeSpans", []):
                 for sp in ss.get("spans", []):
-                    if sp.get("name") != "std.skill.invocation": continue
                     attrs = {kv["key"]: list(kv["value"].values())[0] for kv in sp.get("attributes", [])}
-                    rows.append(parse_span(attrs, resource, sp))
+                    if sp.get("name") == "std.skill.invocation":
+                        rows.append(parse_span(attrs, resource, sp))
+                    elif sp.get("name") == "std.session.cost":
+                        session_rows.append(parse_session(attrs, resource, sp))
     with psycopg.connect(a.dsn) as conn, conn.cursor() as cur:
-        sql = f"INSERT INTO skill_invocation ({','.join(COLS)}) VALUES ({','.join('%('+c+')s' for c in COLS)}) ON CONFLICT (span_id) DO NOTHING"
-        cur.executemany(sql, rows)
-    print(f"loaded {len(rows)} invocation(s)"); return 0
+        for table, cols, data, key in (("skill_invocation", COLS, rows, "span_id"),
+                                       ("session_cost", SESSION_COLS, session_rows, "session_id")):
+            if not data:
+                continue
+            sql = (f"INSERT INTO {table} ({','.join(cols)}) "
+                   f"VALUES ({','.join('%(' + c + ')s' for c in cols)}) "
+                   f"ON CONFLICT ({key}) DO NOTHING")
+            cur.executemany(sql, [{c: r.get(c) for c in cols} for r in data])
+    print(f"loaded {len(rows)} invocation(s), {len(session_rows)} session cost row(s)"); return 0
 
 if __name__ == "__main__":
     sys.exit(main())

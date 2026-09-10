@@ -58,6 +58,25 @@ class TranscriptSlice:
     skill_loads: list[SkillLoad] = field(default_factory=list)
     new_offset: int = 0
 
+    def totals(self) -> Usage:
+        """Every token in the slice, whether or not a skill was loaded.
+
+        This is the denominator for cost-per-PR. Skill tail attribution only sees
+        requests after a skill loads, so a session that never loads one is
+        invisible to it — which is most sessions.
+        """
+        total = Usage()
+        for r in self.requests:
+            total.add(r.usage)
+        return total
+
+    def models(self) -> list[str]:
+        seen = []
+        for r in self.requests:
+            if r.model not in seen:
+                seen.append(r.model)
+        return seen
+
 
 def _ts(entry: dict) -> float:
     t = entry.get("timestamp")

@@ -34,6 +34,7 @@ class SkillWindow:
 class SessionState:
     session_id: str
     transcript_offset: int = 0
+    started_at: float = 0.0        # wall clock at SessionStart; see stop()
     resource: dict = field(default_factory=dict)   # std.ticket.id, std.repo, std.team, std.harness
     windows: list[SkillWindow] = field(default_factory=list)
 

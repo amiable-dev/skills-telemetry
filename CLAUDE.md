@@ -32,6 +32,10 @@ Public repo: `github.com/amiable-dev/skills-telemetry`. Metadata only — never 
 - `OTEL_*` never reaches a hook (Claude Code scrubs it from every subprocess): the exporter reads
   `STDTEL_OTLP_ENDPOINT` / `STDTEL_OTLP_TIMEOUT`, and the timeout must be set on the exporter because
   `force_flush(timeout_millis=)` is ignored upstream.
+- Two span types at Stop: `std.session.cost` (total spend, emitted even with no skill loaded) and
+  `std.skill.invocation` (a share of it). They overlap deliberately — never sum them. Session start
+  time comes from `SessionState.started_at`, not the transcript, whose timestamps can parse to ~0 and
+  turn a duration into seconds-since-epoch (issue #1).
 - Hook hot path: every `stdtel` import in `hooks/cli.py` is **function-local**, and `pre_tool_use` never
   loads the catalogue (Stop resolves the version from the manifest anyway). PreToolUse/PostToolUse fire on
   every Skill call: ~20ms against a 10ms bare-interpreter floor, vs 40ms when the module imported

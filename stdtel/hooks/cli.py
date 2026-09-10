@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -115,6 +116,7 @@ def session_start(p: dict) -> None:
 
     st = SessionState.load(p.get("session_id", "unknown"))
     st.resource = resource_attributes(Path(p.get("cwd", ".")), payload=p)
+    st.started_at = st.started_at or time.time()
     st.save()
 
 
@@ -147,7 +149,7 @@ def post_tool_use(p: dict, error: bool = False) -> None:
 
 
 def stop(p: dict, exporter=None) -> int:
-    from stdtel.exporter import build_provider, emit_invocations
+    from stdtel.exporter import build_provider, emit_invocations, emit_session_cost
     from stdtel.state import SessionState
     from stdtel.transcript import attribute, read_slice
 
@@ -194,11 +196,31 @@ def stop(p: dict, exporter=None) -> int:
             attrs.update(a.tail.as_attributes())
         invocations.append({"started_at": w.started_at, "ended_at": w.ended_at,
                             "attributes": attrs, "error": w.error})
+    # The session's whole cost, emitted whether or not a skill was ever loaded.
+    # Without this a session that used no skill produces no telemetry at all, and
+    # cost-per-PR has no denominator (CLAUDE.md: unattributed sessions are kept
+    # for cost analysis, excluded from outcome analysis).
+    totals = sl.totals()
+    session_attrs = {}
+    if sl.requests:
+        session_attrs = {
+            "std.session.llm_requests": len(sl.requests),
+            "gen_ai.request.model": (sl.models() or ["unknown"])[0],
+            **totals.as_attributes(),
+        }
     st.save()
-    if not invocations:
+    if not invocations and not session_attrs:
         return 0
     provider = build_provider(st.resource, exporter=exporter)
-    return emit_invocations(provider, invocations, sid)
+    emitted = emit_invocations(provider, invocations, sid) if invocations else 0
+    if session_attrs:
+        # Session start comes from state, not the transcript: transcript timestamps
+        # can be absent or unparseable, and a start near the epoch turns the span's
+        # duration into "seconds since 1970" rather than the session's length.
+        now = time.time()
+        started = st.started_at or min((i["started_at"] for i in invocations), default=now)
+        emitted += emit_session_cost(provider, session_attrs, sid, started, now)
+    return emitted
 
 
 def main(argv: list[str] | None = None) -> int:

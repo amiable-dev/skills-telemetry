@@ -156,3 +156,63 @@ def test_hook_module_import_stays_stdlib_only():
             "print([m for m in sys.modules if m.split('.')[0] in ('opentelemetry', 'yaml')])")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]", f"heavy imports leaked: {out.stdout}"
+
+
+# --- issue #1: a session that loads no skill must still report its cost ---
+
+def test_session_with_no_skill_still_emits_cost(tmp_path):
+    """Without this there is no denominator for cost-per-PR: most sessions load
+    no skill, and they used to emit nothing at all."""
+    from tests.test_transcript import make_transcript
+    t = tmp_path / "t.jsonl"
+    make_transcript(t)
+    sid = "cost-only"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    e = InMemorySpanExporter()
+    assert hooks.stop({"session_id": sid, "transcript_path": str(t)}, exporter=e) == 1
+    (span,) = e.get_finished_spans()
+    assert span.name == "std.session.cost"
+    assert span.attributes["std.session.llm_requests"] > 0
+    assert span.attributes["gen_ai.usage.input_tokens"] > 0
+
+
+def test_session_cost_is_the_total_not_the_tail(tmp_path):
+    """Session cost and skill tail deliberately overlap; the total must be >= the
+    tail, and the two must never be summed."""
+    from tests.test_transcript import make_transcript
+    t = tmp_path / "t.jsonl"
+    make_transcript(t)
+    sid = "overlap"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    hooks.pre_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1",
+                        "tool_input": {"skill": "structured-logging"}})
+    hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
+    e = InMemorySpanExporter()
+    hooks.stop({"session_id": sid, "transcript_path": str(t)}, exporter=e)
+    by_name = {s.name: s for s in e.get_finished_spans()}
+    total = by_name["std.session.cost"].attributes["gen_ai.usage.input_tokens"]
+    tail = by_name["std.skill.invocation"].attributes["gen_ai.usage.input_tokens"]
+    assert total >= tail > 0
+
+
+def test_empty_slice_emits_nothing(tmp_path):
+    """A second Stop with no new transcript content must stay silent."""
+    sid = "quiet"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    assert hooks.stop({"session_id": sid, "transcript_path": ""},
+                      exporter=InMemorySpanExporter()) == 0
+
+
+def test_session_duration_is_a_duration_not_an_epoch(tmp_path):
+    """A transcript timestamp that parses to ~0 turned active_seconds into
+    'seconds since 1970'. Session start must come from state."""
+    from tests.test_transcript import make_transcript
+    t = tmp_path / "t.jsonl"
+    make_transcript(t)
+    sid = "dur"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    e = InMemorySpanExporter()
+    hooks.stop({"session_id": sid, "transcript_path": str(t)}, exporter=e)
+    span = e.get_finished_spans()[0]
+    seconds = (span.end_time - span.start_time) / 1e9
+    assert 0 <= seconds < 60, f"implausible session duration: {seconds}s"

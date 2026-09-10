@@ -68,9 +68,21 @@ it with the with/without arms already separated. Run that rather than rewriting 
 ## Read it honestly
 
 - **`tail_tokens` is not the session's whole cost.** It counts tokens after a skill loaded until the
-  next one loads or the turn ends. Sessions that used no skill emit no span at all, so a
-  tokens-per-PR figure built from `skill_invocation` alone is a **skill-attributed** denominator, not
-  total spend. Say which one you mean. `session_cost` is the table for total; check whether it has rows.
+  next one loads or the turn ends. Total spend lives in `session_cost`, which is populated for every
+  session including those that loaded no skill. **Never sum the two** — invocation tail is a share of
+  session total. State which denominator a ratio uses:
+
+  ```sql
+  -- total spend per merged PR (the honest cost-per-PR)
+  SELECT p.pr_id, sum(sc.input_tokens + sc.output_tokens) AS total_tokens
+  FROM session_cost sc JOIN pull_request p ON p.ticket_id = sc.ticket_id
+  WHERE p.merged_at IS NOT NULL GROUP BY 1;
+
+  -- how much of that total any skill was able to claim
+  SELECT sc.ticket_id, sum(sc.input_tokens + sc.output_tokens) AS total,
+         coalesce(sum(i.tail_tokens), 0) AS skill_attributed
+  FROM session_cost sc LEFT JOIN skill_invocation i USING (session_id) GROUP BY 1;
+  ```
 - **`unversioned` means not in the catalogue**, not unversioned upstream. Exclude from outcome
   analysis, keep for cost, and suggest `stdtel-onboard`.
 - **`unattributed` means the branch carried no ticket key.** Same rule. Report what share of rows

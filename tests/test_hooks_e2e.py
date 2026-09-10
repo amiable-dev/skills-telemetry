@@ -20,8 +20,9 @@ def test_lifecycle(tmp_path, monkeypatch):
 
     exp = InMemorySpanExporter()
     n = hooks.stop({"session_id": sid, "transcript_path": str(transcript)}, exporter=exp)
-    assert n == 2
-    spans = {s.attributes["std.skill.name"]: s for s in exp.get_finished_spans()}
+    assert n == 3          # 2 skill invocations + 1 std.session.cost
+    spans = {s.attributes["std.skill.name"]: s for s in exp.get_finished_spans()
+             if s.name == "std.skill.invocation"}
     sl = spans["structured-logging"]
     assert sl.name == "std.skill.invocation"
     assert sl.attributes["std.skill.version"] == "2.3.0"

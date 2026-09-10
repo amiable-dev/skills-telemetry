@@ -106,3 +106,30 @@ def test_end_time_falls_back_to_duration():
                                   "startTimeUnixNano": "1000000000",
                                   "durationNanos": "5000000000"})
     assert (row["ended_at"] - row["started_at"]).total_seconds() == 5.0
+
+
+# --- issue #1: session_cost is the total-spend denominator ---
+
+def test_session_loader_columns_exist_in_the_schema():
+    mod = loader()
+    missing = set(mod.SESSION_COLS) - set(schema_columns("session_cost"))
+    assert not missing, f"loader writes columns the schema lacks: {sorted(missing)}"
+
+
+def test_parse_session_produces_exactly_the_session_columns():
+    mod = loader()
+    row = mod.parse_session({}, {}, {"startTimeUnixNano": "0", "endTimeUnixNano": "0"})
+    assert set(row) == set(mod.SESSION_COLS)
+
+
+def test_parse_session_carries_totals_and_join_keys():
+    mod = loader()
+    attrs = {"session.id": "s1", "gen_ai.usage.input_tokens": 500,
+             "gen_ai.usage.cache_read_input_tokens": 100, "gen_ai.request.model": "claude-opus-5"}
+    resource = {"std.ticket.id": "PLAT-42", "std.team": "payments", "std.harness": "claude-code"}
+    row = mod.parse_session(attrs, resource, {"startTimeUnixNano": "1000000000",
+                                              "endTimeUnixNano": "61000000000"})
+    assert row["session_id"] == "s1" and row["ticket_id"] == "PLAT-42"
+    assert row["input_tokens"] == 500 and row["cache_read_tokens"] == 100
+    assert row["active_seconds"] == 60
+    assert row["cost_usd"] is None, "harness currencies differ; price downstream"

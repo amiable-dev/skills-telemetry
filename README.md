@@ -126,7 +126,25 @@ Copilot: enable managed OTel export (VS Code / CLI) pointing at the same collect
 `std.harness=copilot-vscode`, `std.team=<team>`; `collector/otel-collector.yaml` maps catalogued skill
 tool-calls onto `std.skill.*`.
 
-## Span schema (`std.skill.invocation`)
+## Span schema
+
+Two span types, emitted at `Stop`. **They overlap by design and must never be summed:**
+`std.session.cost` is the session's total spend, `std.skill.invocation` attributes a *share* of that
+total to one skill. Use session cost as the denominator for cost-per-PR; use invocation tail tokens to
+compare skills with each other.
+
+### `std.session.cost`
+
+Emitted once per turn that made any LLM request, **whether or not a skill was loaded** — a session that
+never loads a skill is still spend, and excluding it would silently understate cost per PR.
+
+| attribute | source |
+|---|---|
+| `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens` | whole transcript slice |
+| `std.session.llm_requests`, `gen_ai.request.model` | transcript |
+| `std.ticket.id`, `std.repo`, `std.team`, `std.harness` | resource (SessionStart) |
+
+### `std.skill.invocation`
 
 | attribute | source |
 |---|---|
