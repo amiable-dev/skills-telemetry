@@ -158,7 +158,15 @@ both with `curl -s localhost:8888/metrics | grep otelcol_exporter`.
 > **Memory.** Langfuse v4 adds six containers, and ClickHouse alone holds ~700 MiB. On a 2 GiB Docker
 > VM `langfuse-web` is OOM-killed during boot (exit 137). Give the VM 8 GiB — for colima,
 > `colima stop && colima start --memory 8`, which restarts every container on the machine.
-> **Ingestion into Langfuse has not been verified on this machine for that reason.**
+
+**If the UI shows traces but `GET /api/public/traces` returns an empty list, that is expected.**
+Langfuse v4 writes the `events_*` model; that REST endpoint reads the legacy `traces`/`observations`
+tables, which a background backfill populates separately. Confirm ingestion directly instead:
+
+```bash
+docker exec deploy-langfuse-clickhouse-1 clickhouse-client --password langfuse \
+  --query "SELECT project_id, name, session_id FROM events_core ORDER BY start_time DESC LIMIT 5"
+```
 
 ## What is provisioned
 

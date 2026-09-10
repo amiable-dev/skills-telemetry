@@ -4,7 +4,7 @@ status: accepted
 date: 2026-09-10
 tags: [adr, langfuse, collector, observability]
 links: ["001-distribution-and-capture-surface.md", "003-hook-execution-constraints.md", "../local-stack.md", "../../collector/overlay-langfuse.yaml"]
-verified: "2026-09-10 — transform and exporter isolation verified against the live collector; ingestion into Langfuse itself NOT verified (see Known limitations)"
+verified: "2026-09-10 — end to end against self-hosted Langfuse v4: hook -> collector -> Langfuse, with the transformed keys confirmed filterable in ClickHouse"
 ---
 
 ## Context
@@ -64,6 +64,11 @@ Three properties decide how much of our stack it can absorb.
   `otelcol_exporter_sent_spans{exporter="otlp/tempo"} 2` with zero failures, while
   `otlphttp/langfuse` recorded 2 failures and 0 sent. The exporters are independent; the hook still
   exited 0 and the span still reached Tempo and Postgres.
+- **Verified end to end.** With Langfuse reachable: `otelcol_exporter_sent_spans{otlphttp/langfuse} 4`
+  with zero failures, six rows in `events_full` under project `stdtel` carrying our session ids, and
+  the transform's keys promoted to top-level filterable metadata — `skill_name`, `skill_version`,
+  `standard_id`, `trigger`, `ticket_id`, `team`, `harness`, `repo` — while the raw `std.*` attributes
+  sit in the nested `attributes.*` blob. That contrast is the decision in this ADR, observed directly.
 - Two attribute vocabularies now travel on every span. That is the price of a queryable Langfuse view,
   and the transform is one place to change.
 - Self-hosting is not free: Langfuse v4 needs web, worker, Postgres, ClickHouse, Redis and MinIO —
@@ -71,12 +76,16 @@ Three properties decide how much of our stack it can absorb.
 
 ### Known limitations
 
-- **Ingestion into Langfuse is UNVERIFIED.** The Docker VM on the development machine has 2 GiB total
-  and `langfuse-web` was OOM-killed (exit 137) during boot, with ClickHouse alone holding 676 MiB.
-  Everything up to the export call is verified — the overlay loads, the transform emits the correct
-  `langfuse.trace.metadata.*` keys (observed in Tempo), and export failure is isolated — but no span
-  has been confirmed to arrive *in* Langfuse. **Do not treat this as working until someone runs it on
-  a host with more memory.** Budget 8 GiB for the VM.
+- **Langfuse v4 writes the new `events_*` model, and `GET /api/public/traces` reads the legacy
+  tables.** Ingested spans are visible in the UI and in `events_core`/`events_full`, but that REST
+  endpoint returns an empty list until the "DUAL WRITE" backfill job populates `traces`/`observations`.
+  Anything scripted against that endpoint will look like a broken pipeline when it is not — query the
+  v4 model, or drop the `x-langfuse-ingestion-version: 4` header and accept up to ten minutes of lag.
+- **Memory.** Langfuse v4 adds six containers and ClickHouse alone holds ~700 MiB; on a 2 GiB Docker
+  VM `langfuse-web` is OOM-killed during boot (exit 137). Budget 8 GiB.
+- `LANGFUSE_AUTH` is derived from two keys, so it cannot live in `.env` and must be passed through to
+  the collector explicitly. Missing, it produces HTTP 401 — which is invisible while Langfuse is down,
+  because the DNS failure masks it.
 - The attribute list in the transform is **hand-maintained**. A new `std.*` attribute will not appear
   in Langfuse until it is added there, and nothing fails when it is forgotten.
 - `x-langfuse-ingestion-version: 4` is set because ingestion otherwise lags up to ten minutes; that

@@ -8,6 +8,10 @@ services:
       - "--config=/etc/otelcol/${STDTEL_COLLECTOR_OVERLAY:-overlay-none.yaml}"
     volumes: ["../collector:/etc/otelcol:ro"]
     env_file: [".env"]
+    environment:
+      # Derived from the two keys in .env, so it cannot live there. Passed
+      # through from the shell; empty unless the langfuse overlay is selected.
+      LANGFUSE_AUTH: "${LANGFUSE_AUTH:-}"
     ports: ["4317:4317", "4318:4318", "8888:8888"]   # 8888 = the collector's own metrics
     depends_on: [tempo, prometheus]
   tempo:
