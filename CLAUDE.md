@@ -26,6 +26,10 @@ was rejected and what the decision costs, which is what you need before re-litig
   CI strict; the scanner follows symlinks.
 - **[ADR-005](docs/adrs/005-data-integrity.md)** — never record an unobserved value; a component that
   cannot do its job fails loudly; vacuous truth is a bug; missing data is its own category.
+- **[ADR-006](docs/adrs/006-langfuse-as-an-optional-trace-backend.md)** — Langfuse is an optional extra
+  trace exporter behind a collector overlay, not a replacement: it cannot capture, and its unit is the
+  trace while the primary metric joins at PR grain. `std.*` must be duplicated into
+  `langfuse.trace.metadata.*` or it arrives unqueryable.
 
 Still true and not yet an ADR:
 - Primary effectiveness metric = **first-time OPA policy pass rate** on the PR, with vs without the skill.
@@ -45,7 +49,7 @@ Still true and not yet an ADR:
 `stdtel/` (manifest, state, transcript, exporter, enrich, skillmap, hooks/cli) · `skills/` catalogue (incl. `stdtel-onboard`) · `agents/` scorecard analyst ·
 `docs/adrs/` decisions · `collector/` OTel config · `examples/` global vs per-project settings · `deploy/` compose stack (collector, Tempo, Prometheus, Grafana, Postgres) ·
 `warehouse/` schema + weekly scorecard SQL + Tempo→Postgres loader · `policies/` Rego (the primary metric) ·
-`eval/` with/without-skill runner + `fixtures/`, graded by real OPA · `tests/` (93 passing, incl. replay of real captured hook payloads).
+`eval/` with/without-skill runner + `fixtures/`, graded by real OPA · `tests/` (run `mise run test`; includes replay of real captured hook payloads).
 
 ## Docs
 `docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
@@ -54,7 +58,7 @@ Adding a console script or a skill without documenting it fails `tests/test_docs
 
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
-`mise run install|test|validate|skill-map|up|down|smoke|eval|eval-dry|power|ci` — mise owns the toolchain (Python 3.13)
+`mise run install|test|validate|skill-map|up|up-langfuse|down|smoke|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
 and auto-activates `.venv`; the tasks delegate to the Makefile, which stays the single definition.
 The venv is seeded with pip on purpose: mise creates it with uv, which omits pip, and a pip-less venv
 sends a bare `pip install` to the interpreter behind it instead.
@@ -67,11 +71,13 @@ surfaces — do not reword it in one place. Derivations: `docs/evaluation-power.
 the misreadings this data invites: `docs/insight-walkthroughs.md`.
 
 ## Current state / known gaps
-- `load_tokens` is a chars/4 heuristic — and now likely obsolete: Claude Code emits native
+- `load_tokens` is a chars/4 heuristic and likely obsolete: Claude Code emits native
   `claude_code.token.usage` with a `skill.name` attribute and real counts. Open question (ADR-001):
   consume native telemetry and emit only `std.*` correlation, keyed on `session.id` + `prompt.id`.
-- `load_tokens` is only meaningful once a real Skill result flows through; the transcript heuristic is
-  what the note above supersedes.
+  Live evidence the heuristic is weak: one real invocation recorded `load_tokens=7` against
+  `tail_tokens=28199`.
+- Langfuse v4 writes the `events_*` model while `GET /api/public/traces` reads the legacy tables, so
+  that endpoint reads empty even when ingestion worked. Query `events_core` to confirm.
 - Unverified before acting on: Copilot's `skill_name` / `github.copilot.git.*` span attributes, and its
   PascalCase compatibility mode. microsoft/vscode#326254 (spans carry content despite
   `captureContent:false`) means metadata-only must be enforced collector-side, not by config.

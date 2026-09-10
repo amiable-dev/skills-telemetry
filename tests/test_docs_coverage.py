@@ -71,3 +71,33 @@ def test_dry_run_semantics_are_called_out():
     """--dry-run returns True for every policy; read as a result it is a clean sweep."""
     section = REFERENCE.split("## `stdtel-eval`")[1].split("\n## ")[0]
     assert "does not evaluate anything" in section
+
+
+def test_docs_do_not_hardcode_a_test_count():
+    """Hardcoded counts go stale silently — CLAUDE.md carried '93 passing' at 222.
+
+    Point at the command instead; the number is one `mise run test` away.
+    """
+    import re
+    for doc in ("CLAUDE.md", "README.md"):
+        text = (ROOT / doc).read_text()
+        stale = re.findall(r"\b\d+\s+(?:tests?|passing)\b", text)
+        assert not stale, f"{doc} hardcodes a test count: {stale}"
+
+
+def test_claude_md_lists_every_adr():
+    """The key-decisions index must not silently omit a decision."""
+    import re
+    text = (ROOT / "CLAUDE.md").read_text()
+    for adr in sorted((ROOT / "docs" / "adrs").glob("*.md")):
+        num = adr.name[:3]
+        assert f"ADR-{num}" in text, f"ADR-{num} is not indexed in CLAUDE.md"
+
+
+def test_claude_md_lists_every_mise_task():
+    """A task nobody knows about may as well not exist."""
+    import re
+    tasks = set(re.findall(r"^\[tasks\.([\w-]+)\]", (ROOT / "mise.toml").read_text(), re.M))
+    text = (ROOT / "CLAUDE.md").read_text()
+    missing = {t for t in tasks if t not in text}
+    assert not missing, f"undocumented mise tasks: {sorted(missing)}"

@@ -53,13 +53,19 @@ stdtel/exporter.py          std.skill.invocation spans via OTLP/HTTP (content sc
 stdtel/enrich.py            join keys: std.ticket.id from branch, std.repo, std.team, std.harness
 stdtel/skillmap.py          generates collector/copilot-skill-map.yaml for Copilot tool-call mapping
 collector/otel-collector.yaml  drop content → normalise gen_ai.* → map Copilot skills → pseudonymise → spanmetrics
-deploy/docker-compose.yml   collector + Tempo + Prometheus + Grafana (provisioned scorecard) + Postgres
+deploy/docker-compose.yml   collector + Tempo + Prometheus + Grafana + Postgres; `langfuse` profile optional
+deploy/smoke.sh             eight-hop verification ladder (`mise run smoke`)
+collector/overlay-*.yaml    merged over the base config; `none` is the default no-op, `langfuse` adds an exporter
 warehouse/schema.sql        skill_invocation, session_cost, ticket, pull_request, policy_result, defect, skill_eval
 warehouse/scorecard.sql     weekly per-skill scorecard → keep / refine / review-merge / deprecate
 warehouse/load_traces.py    Tempo → Postgres loader
-eval/run_eval.py            offline with/without-skill eval, OPA as grader (`--dry-run` for CI)
+eval/run_eval.py            offline with/without-skill eval, real OPA grading (`--dry-run` is a smoke test)
+eval/power.py               generates every table in docs/evaluation-power.md; CI checks it is current
+policies/                   Rego behind the primary metric: logging.*, telemetry.manifest_valid
+agents/                     skill-scorecard-analyst: keep / refine / merge / deprecate from the data
+warehouse/load_delivery.py  GitHub → ticket / pull_request / defect; policy_result from a CI artefact
 examples/settings.*.json    hook + OTel wiring: `global` installs once, `project` overrides per repo
-docs/adrs/                  decisions; ADR-001 is the distribution + capture-surface call
+docs/adrs/                  six ADRs: distribution, delivery data, hook constraints, identity, integrity, Langfuse
 plugin.json                 Agent Plugins v1 manifest (portable `skills/` is the shared half)
 .claude-plugin/             Claude Code plugin + marketplace manifest
 hooks/, com.github.copilot/ per-harness hook manifests, generated from stdtel/install.py::EVENTS
