@@ -133,3 +133,44 @@ def test_parse_session_carries_totals_and_join_keys():
     assert row["input_tokens"] == 500 and row["cache_read_tokens"] == 100
     assert row["active_seconds"] == 60
     assert row["cost_usd"] is None, "harness currencies differ; price downstream"
+
+
+# --- ADR-006: the Langfuse overlay ---
+
+def test_langfuse_overlay_duplicates_rather_than_moves_attributes():
+    """std.* must survive: Tempo, the warehouse loader and spanmetrics all read it."""
+    overlay = (ROOT / "collector" / "overlay-langfuse.yaml").read_text()
+    assert "delete_key" not in overlay and "delete_matching_keys" not in overlay
+    for attr in ("std.skill.name", "std.skill.version", "std.ticket.id", "std.team", "std.harness"):
+        assert f'attributes["{attr}"]' in overlay, f"{attr} not carried into Langfuse"
+
+
+def test_langfuse_overlay_uses_the_filterable_prefix():
+    """Anything not prefixed langfuse.trace.metadata.* is unqueryable in Langfuse."""
+    import re
+    overlay = (ROOT / "collector" / "overlay-langfuse.yaml").read_text()
+    targets = re.findall(r'set\(attributes\["(langfuse[^"]+)"\]', overlay)
+    assert targets, "overlay sets no langfuse attributes"
+    for t in targets:
+        assert t.startswith("langfuse.trace.metadata.") or t == "langfuse.session.id", t
+
+
+def test_default_overlay_is_a_no_op():
+    """The base stack must not acquire an exporter it cannot reach.
+
+    Checks the parsed structure, not the prose — the file's comments explain what
+    the overlay mechanism is for and legitimately mention Langfuse.
+    """
+    import yaml
+    cfg = yaml.safe_load((ROOT / "collector" / "overlay-none.yaml").read_text()) or {}
+    assert "exporters" not in cfg and "processors" not in cfg and "receivers" not in cfg
+    assert "pipelines" not in (cfg.get("service") or {})
+
+
+def test_langfuse_credentials_are_not_committed():
+    import subprocess
+    tracked = subprocess.run(["git", "ls-files", "deploy/.env"], cwd=ROOT,
+                             capture_output=True, text=True).stdout.strip()
+    assert tracked == "", "deploy/.env must stay gitignored"
+    overlay = (ROOT / "collector" / "overlay-langfuse.yaml").read_text()
+    assert "${env:LANGFUSE_AUTH}" in overlay, "auth must come from the environment"

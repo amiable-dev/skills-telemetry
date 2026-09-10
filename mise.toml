@@ -37,6 +37,15 @@ run = "make up"
 description = "Verify every hop of the local stack and name the one that broke"
 run = "./deploy/smoke.sh"
 
+[tasks.up-langfuse]
+description = "Local stack plus self-hosted Langfuse (ADR-006); needs deploy/.env"
+run = """
+set -a; . deploy/.env; set +a
+export LANGFUSE_AUTH=$(printf '%s:%s' "$LANGFUSE_PUBLIC_KEY" "$LANGFUSE_SECRET_KEY" | base64 | tr -d '\n')
+export STDTEL_COLLECTOR_OVERLAY=overlay-langfuse.yaml
+cd deploy && $(docker compose version >/dev/null 2>&1 && echo docker compose || echo docker-compose) --profile langfuse up -d
+"""
+
 [tasks.down]
 description = "Tear the local stack down"
 run = "make down"

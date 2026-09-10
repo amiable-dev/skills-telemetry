@@ -1,0 +1,10 @@
+# The default collector overlay: deliberately a no-op.
+#
+# The collector merges a second --config over the first. This file is what gets
+# merged when no overlay is selected, so the base pipeline runs unchanged and
+# optional exporters (Langfuse) do not exist unless asked for. Selecting an
+# overlay is done with STDTEL_COLLECTOR_OVERLAY; see docs/local-stack.md.
+service:
+  telemetry:
+    logs:
+      level: info

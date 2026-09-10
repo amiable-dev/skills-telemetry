@@ -130,6 +130,36 @@ docker exec -i deploy-postgres-1 psql -U postgres -d stdtel < warehouse/schema.s
 `schema.sql` is written with `CREATE TABLE IF NOT EXISTS`, so it is safe to re-run — but it will not
 alter an existing table. A changed column needs its own `ALTER`.
 
+## Langfuse (optional)
+
+Self-hosted Langfuse can receive the same traces as an additional destination — see
+[ADR-006](adrs/006-langfuse-as-an-optional-trace-backend.md) for why it supplements the stack rather
+than replacing it.
+
+```bash
+cp deploy/.env.example deploy/.env     # local-only credentials; the file is gitignored
+make up-langfuse                       # base stack + the langfuse profile
+open http://localhost:3001             # remapped: 3000 is Grafana
+```
+
+Ports are remapped because upstream collides with Grafana (3000), our warehouse Postgres (5432) and
+Prometheus (9090). Langfuse's own Postgres, ClickHouse, Redis and MinIO are not published at all.
+
+**How it is wired.** The collector merges a second `--config` over the base. `overlay-none.yaml` is
+the default and does nothing; `overlay-langfuse.yaml` adds the exporter *and* a transform that
+duplicates `std.*` into `langfuse.trace.metadata.*`. That transform is not optional: Langfuse only
+makes attributes filterable under that prefix, so without it every trace arrives with its skill,
+ticket and team in an unqueryable blob.
+
+**It cannot break the rest of the pipeline.** Exporters are independent — with Langfuse down, Tempo
+recorded 2 spans sent and 0 failed while the Langfuse exporter recorded 2 failed and 0 sent. Check
+both with `curl -s localhost:8888/metrics | grep otelcol_exporter`.
+
+> **Memory.** Langfuse v4 adds six containers, and ClickHouse alone holds ~700 MiB. On a 2 GiB Docker
+> VM `langfuse-web` is OOM-killed during boot (exit 137). Give the VM 8 GiB — for colima,
+> `colima stop && colima start --memory 8`, which restarts every container on the machine.
+> **Ingestion into Langfuse has not been verified on this machine for that reason.**
+
 ## What is provisioned
 
 - **Grafana datasources**: Prometheus (`http://prometheus:9090`) and Tempo (`http://tempo:3200`),
