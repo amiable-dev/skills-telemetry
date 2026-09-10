@@ -67,7 +67,8 @@ sends a bare `pip install` to the interpreter behind it instead.
 Phases are set by data volume, not elapsed time; the hard floor and the three phases live in README
 and are repeated verbatim in `agents/skill-scorecard-analyst.md` and `skills/stdtel-query`. The
 canonical sentence is `eval.power.HARD_FLOOR` and a test asserts it appears identically in all four
-surfaces — do not reword it in one place. Derivations: `docs/evaluation-power.md`.
+surfaces — do not reword it in one place. Derivations: `docs/evaluation-power.md`; worked examples with real captured output, including
+the misreadings this data invites: `docs/insight-walkthroughs.md`.
 
 ## Current state / known gaps
 - `load_tokens` is a chars/4 heuristic — and now likely obsolete: Claude Code emits native

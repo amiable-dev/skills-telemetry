@@ -27,7 +27,9 @@ skills or `unattributed` tickets bounds every later conclusion, and both are fix
 The failure mode this exists to prevent: reading a scorecard after two weeks, seeing a skill
 "underperform" across nine PRs, and deprecating it. Nine PRs cannot distinguish a bad skill from a
 quiet fortnight. Full derivations and the assumptions behind every figure:
-[docs/evaluation-power.md](docs/evaluation-power.md).
+[docs/evaluation-power.md](docs/evaluation-power.md). Worked examples of asking these
+questions, including the ones the data cannot answer:
+[docs/insight-walkthroughs.md](docs/insight-walkthroughs.md).
 
 ## Layout
 
