@@ -10,6 +10,7 @@ jobs:
       - run: uv python install 3.12
       - run: uv pip install --system -e ".[dev]"
       - run: stdtel-validate skills           # front-matter contract gate
+      - run: python -m eval.power --check   # published figures must be reproducible
       - run: python -m pytest -q
       - run: python -m eval.run_eval --dry-run --out /tmp/eval.jsonl
 

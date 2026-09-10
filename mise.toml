@@ -45,7 +45,15 @@ run = "make eval"
 description = "Offline with/without-skill eval, no OPA required"
 run = "make eval-dry"
 
+[tasks.power]
+description = "Regenerate the sample-size tables in docs/evaluation-power.md"
+run = "python -m eval.power"
+
+[tasks.power-check]
+description = "Fail if docs/evaluation-power.md has drifted from eval/power.py"
+run = "python -m eval.power --check"
+
 [tasks.ci]
 description = "Everything CI checks, in order"
 depends = ["install"]
-run = ["make validate", "make test", "make eval-dry"]
+run = ["make validate", "make test", "make eval-dry", "python -m eval.power --check"]
