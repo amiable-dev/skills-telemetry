@@ -177,6 +177,12 @@ def stop(p: dict, exporter=None) -> int:
     invocations = []
     for w in st.drain_closed():
         manifest, resolved = _resolve(w.skill, cat)
+        if manifest is not None and not manifest.telemetry_emit:
+            # `telemetry.emit: false` in SKILL.md. Parsed and validated since the
+            # first commit, and until now read by nothing — an advertised control
+            # that did nothing. The session total still counts these tokens; what
+            # is suppressed is attributing them to this skill by name.
+            continue
         load = loads.get(w.skill)
         attrs = {
             "std.skill.name": resolved,
@@ -242,9 +248,20 @@ def stop(p: dict, exporter=None) -> int:
     return emitted
 
 
+def disabled() -> bool:
+    """True when the developer has switched telemetry off.
+
+    Checked before the payload is even read: an opt-out that still parses your
+    transcript is not an opt-out.
+    """
+    return os.environ.get("STDTEL_DISABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     event = argv[0] if argv else ""
+    if disabled():
+        return 0
     p = _payload()
     try:
         if event == "session-start":

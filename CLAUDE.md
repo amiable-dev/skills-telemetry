@@ -52,7 +52,7 @@ Still true and not yet an ADR:
 `eval/` with/without-skill runner + `fixtures/`, graded by real OPA · `tests/` (run `mise run test`; includes replay of real captured hook payloads).
 
 ## Docs
-`docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
+`docs/for-developers.md` (what is collected + opt-out) · `docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
 skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/local-stack.md` (endpoints + `mise run smoke`) · `docs/adrs/`.
 Adding a console script or a skill without documenting it fails `tests/test_docs_coverage.py`.
 

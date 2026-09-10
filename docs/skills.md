@@ -90,6 +90,18 @@ rather than a measurement.
 
 ---
 
+## Opting a skill out
+
+A skill author can suppress named attribution for their skill:
+
+```yaml
+metadata:
+  telemetry.emit: "false"
+```
+
+Its tokens still count toward the session total, which carries no skill name. To switch telemetry off
+for yourself entirely, see [for-developers.md](for-developers.md).
+
 ## Which one do I want?
 
 | question | reach for |
@@ -100,3 +112,4 @@ rather than a measurement.
 | "how do I install the hooks?" | [reference.md](reference.md) |
 | "how do I reach Grafana / Tempo / Postgres?" | [local-stack.md](local-stack.md) |
 | "can I trust this number yet?" | [evaluation-power.md](evaluation-power.md) |
+| "what is collected about me?" | [for-developers.md](for-developers.md) |

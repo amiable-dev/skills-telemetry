@@ -3,6 +3,8 @@
 Each test names the failure it prevents; several of these bugs were silent by
 construction (hooks exit 0 on purpose), so only a test makes them visible.
 """
+import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -287,3 +289,44 @@ def test_every_state_field_survives_a_save_load_cycle():
         if f.name == "session_id":
             continue
         assert getattr(back, f.name) == getattr(st, f.name), f"{f.name} lost across save/load"
+
+
+# --- opt-out controls: advertised since the first commit, wired up now ---
+
+def test_global_kill_switch_stops_everything(tmp_path, monkeypatch, capsys):
+    """STDTEL_DISABLED must short-circuit before the payload is even parsed."""
+    from stdtel.hooks.cli import disabled, main
+    monkeypatch.setenv("STDTEL_DISABLED", "1")
+    assert disabled() is True
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"session_id":"x","tool_name":"Skill"}'))
+    assert main(["pre-tool-use"]) == 0
+    assert not list(Path(os.environ["STDTEL_STATE_DIR"]).glob("*.json")) \
+        if Path(os.environ["STDTEL_STATE_DIR"]).exists() else True
+
+
+@pytest.mark.parametrize("value,off", [("1", True), ("true", True), ("YES", True), ("on", True),
+                                       ("0", False), ("false", False), ("", False)])
+def test_kill_switch_accepts_the_obvious_spellings(monkeypatch, value, off):
+    from stdtel.hooks.cli import disabled
+    monkeypatch.setenv("STDTEL_DISABLED", value)
+    assert disabled() is off
+
+
+def test_skill_with_telemetry_emit_false_is_not_attributed(tmp_path, monkeypatch):
+    """The SKILL.md opt-out was parsed and validated but read by nothing."""
+    root = tmp_path / "skills" / "quiet-skill"
+    root.mkdir(parents=True)
+    (root / "SKILL.md").write_text(
+        GOOD.replace("name: x", "name: quiet-skill").replace(
+            "---\nbody", "telemetry:\n  emit: false\n---\nbody"))
+    monkeypatch.setenv("STDTEL_SKILLS_ROOT", str(tmp_path / "skills"))
+    sid = "quiet"
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    hooks.pre_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1",
+                        "tool_input": {"skill": "quiet-skill"}})
+    hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
+    e = InMemorySpanExporter()
+    hooks.stop({"session_id": sid, "transcript_path": ""}, exporter=e)
+    names = [s.name for s in e.get_finished_spans()]
+    assert "std.skill.invocation" not in names, "opted-out skill was still attributed"
+    assert "std.session.cost" in names, "session cost is an aggregate and still reported"

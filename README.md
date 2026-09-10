@@ -4,7 +4,9 @@ Telemetry and metadata capture for **standards-as-skills** — attributes token 
 individual skills across Claude Code and GitHub Copilot, joined to policy (OPA/Rego), delivery
 (Linear/GitHub) and quality data. Design rationale: [docs/design-proposal.md](docs/design-proposal.md).
 
-Metadata only. No prompt, response or file content is ever emitted; the collector drops it again as defence in depth.
+Metadata only. No prompt, response or file content is ever emitted; the collector drops it again as
+defence in depth. If it runs on your machine, [docs/for-developers.md](docs/for-developers.md) lists
+every field that leaves it — and `export STDTEL_DISABLED=1` turns it off entirely.
 
 ## When can I trust these numbers?
 
@@ -35,6 +37,7 @@ questions, including the ones the data cannot answer:
 
 | page | for |
 |---|---|
+| [docs/for-developers.md](docs/for-developers.md) | **if this runs on your machine**: exactly what is collected, and how to switch it off |
 | [docs/reference.md](docs/reference.md) | every CLI, its flags and exit codes, and the authoritative `STDTEL_*` table |
 | [docs/skills.md](docs/skills.md) | each skill and the agent — when to use, when not to, what it refuses |
 | [docs/evaluation-power.md](docs/evaluation-power.md) | how much data before a comparison means anything |
