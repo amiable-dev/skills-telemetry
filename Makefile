@@ -7,7 +7,9 @@ validate:     ; python -m stdtel.manifest skills
 skill-map:    ; (head -2 collector/copilot-skill-map.yaml; python -m stdtel.skillmap skills) > /tmp/m.yaml && mv /tmp/m.yaml collector/copilot-skill-map.yaml
 up:           ; $(COMPOSE) -f deploy/docker-compose.yml up -d
 up-langfuse:  ; mise run up-langfuse
-down:         ; $(COMPOSE) -f deploy/docker-compose.yml down
+# --profile langfuse so `down` also stops the opt-in services; without it they
+# keep running and the network cannot be removed ("Resource is still in use").
+down:         ; $(COMPOSE) -f deploy/docker-compose.yml --profile langfuse down
 smoke:        ; ./deploy/smoke.sh
 eval:         ; python -m eval.run_eval --out eval/results.jsonl && tail -2 eval/results.jsonl
 eval-dry:     ; python -m eval.run_eval --dry-run --out /tmp/eval.jsonl && cat /tmp/eval.jsonl

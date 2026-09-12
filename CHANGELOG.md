@@ -4,6 +4,22 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.2.1 — 2026-09-12
+
+### Fixed
+- **Plugin installation.** `agents` in the plugin manifest takes a list of agent *files*; 0.2.0 shipped
+  `["./agents/"]`, a directory, and every install failed with `agents.0: Invalid input`. The manifests
+  are now checked by `claude plugin validate` itself — 0.2.0's tests only compared them against our own
+  `install.py::EVENTS` table, and one test asserted the broken value, pinning it.
+- **`make down` left six containers running.** `docker compose down` ignores profiled services unless
+  named, so the Langfuse containers survived and the network could not be removed
+  (`Resource is still in use`). `down` now passes `--profile langfuse`.
+
+### Changed
+- A test that claimed to verify the scorecard agent's refusal behaviour was reading markdown for a
+  substring; renamed to say what it checks. ADR-007 (proposed) records that **no test here verifies any
+  behaviour of a skill or agent**, and issue #10 tracks adopting `claude plugin eval` for that.
+
 ## 0.2.0 — 2026-09-10
 
 ### Added

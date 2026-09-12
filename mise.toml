@@ -25,6 +25,10 @@ depends = ["install"]
 description = "SKILL.md front-matter contract gate (what CI runs)"
 run = "make validate"
 
+[tasks.validate-plugin]
+description = "Validate the plugin and marketplace manifests against Claude Code's own schema"
+run = "claude plugin validate . && claude plugin validate .claude-plugin/plugin.json"
+
 [tasks.skill-map]
 description = "Regenerate collector/copilot-skill-map.yaml from the catalogue"
 run = "make skill-map"
@@ -47,7 +51,7 @@ cd deploy && $(docker compose version >/dev/null 2>&1 && echo docker compose || 
 """
 
 [tasks.down]
-description = "Tear the local stack down"
+description = "Tear the whole local stack down, including the optional langfuse profile"
 run = "make down"
 
 [tasks.eval]
@@ -70,3 +74,5 @@ run = "python -m eval.power --check"
 description = "Everything CI checks, in order"
 depends = ["install"]
 run = ["make validate", "make test", "make eval-dry", "python -m eval.power --check"]
+# `claude plugin validate` needs the Claude Code CLI, so it is not in `ci`;
+# tests/test_distribution.py runs it when the CLI is present and skips when not.

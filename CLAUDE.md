@@ -26,6 +26,10 @@ was rejected and what the decision costs, which is what you need before re-litig
   CI strict; the scanner follows symlinks.
 - **[ADR-005](docs/adrs/005-data-integrity.md)** — never record an unobserved value; a component that
   cannot do its job fails loudly; vacuous truth is a bug; missing data is its own category.
+- **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
+  called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
+  eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
+  agent claims are string checks over markdown. Issue #10.
 - **[ADR-006](docs/adrs/006-langfuse-as-an-optional-trace-backend.md)** — Langfuse is an optional extra
   trace exporter behind a collector overlay, not a replacement: it cannot capture, and its unit is the
   trace while the primary metric joins at PR grain. `std.*` must be duplicated into
@@ -58,7 +62,7 @@ Adding a console script or a skill without documenting it fails `tests/test_docs
 
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
-`mise run install|test|validate|skill-map|up|up-langfuse|down|smoke|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
+`mise run install|test|validate|validate-plugin|skill-map|up|up-langfuse|down|smoke|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
 and auto-activates `.venv`; the tasks delegate to the Makefile, which stays the single definition.
 The venv is seeded with pip on purpose: mise creates it with uv, which omits pip, and a pip-less venv
 sends a bare `pip install` to the interpreter behind it instead.

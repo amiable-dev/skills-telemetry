@@ -174,3 +174,16 @@ def test_langfuse_credentials_are_not_committed():
     assert tracked == "", "deploy/.env must stay gitignored"
     overlay = (ROOT / "collector" / "overlay-langfuse.yaml").read_text()
     assert "${env:LANGFUSE_AUTH}" in overlay, "auth must come from the environment"
+
+
+def test_down_stops_the_optional_profile_too():
+    """`docker compose down` ignores profiled services unless named.
+
+    Without --profile langfuse, `make down` removed the base stack, left six
+    Langfuse containers running, and could not delete the network — reported as
+    "Resource is still in use", which reads as a Docker problem rather than a
+    missing flag.
+    """
+    makefile = (ROOT / "Makefile").read_text()
+    down = next(l for l in makefile.splitlines() if l.startswith("down:"))
+    assert "--profile langfuse" in down, "down must cover the opt-in services"

@@ -4,10 +4,16 @@ Five containers: an OpenTelemetry collector, Tempo for traces, Prometheus for me
 of both, and Postgres for the warehouse. `make up` starts them; nothing needs configuring afterwards.
 
 ```bash
-make up          # start
-make down        # stop (data survives)
+make up          # start the base stack
+make up-langfuse # base stack + the optional Langfuse profile
+make down        # stop everything, including the langfuse profile (data survives)
 mise run smoke   # verify every hop and name the one that broke
 ```
+
+`make down` passes `--profile langfuse` deliberately. A plain `docker compose down` ignores
+profiled services, so it leaves the Langfuse containers running and then cannot remove the
+network — reported as `Resource is still in use`, which looks like a Docker fault rather than a
+missing flag.
 
 ## Endpoints and credentials
 

@@ -9,10 +9,11 @@
       "name": "stdtel",
       "source": ".",
       "description": "Telemetry for standards-as-skills across Claude Code and Copilot.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "amiable-dev"
       }
     }
-  ]
+  ],
+  "description": "Standards-as-skills telemetry: attribute token cost and policy outcomes to individual skills across Claude Code and GitHub Copilot."
 }
