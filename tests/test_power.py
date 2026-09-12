@@ -126,7 +126,18 @@ def test_phases_are_framed_by_volume_not_calendar_time():
         assert banned not in section, f"phase framed by calendar time: {banned}"
 
 
-def test_the_agent_treats_refusal_as_a_correct_answer():
+def test_agent_definition_documents_refusal_as_correct():
+    """Checks the agent's *instructions*, not its behaviour.
+
+    Named for what it does. The previous name — "the agent treats refusal as a
+    correct answer" — claimed to verify conduct while reading a markdown file for
+    a substring, which is the same overclaiming this project fixes elsewhere.
+    Nothing here runs the agent or observes what it does with thin data.
+
+    Verifying the behaviour needs a model in the loop: see ADR-007 and issue #10
+    for `claude plugin eval`, whose `llm` graders can put the question to the
+    agent and judge the reply.
+    """
     text = (ROOT / "agents" / "skill-scorecard-analyst.md").read_text()
     assert "## When to refuse" in text
     assert "correct answer, not a failure" in text

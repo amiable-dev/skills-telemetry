@@ -101,3 +101,13 @@ def test_claude_md_lists_every_mise_task():
     text = (ROOT / "CLAUDE.md").read_text()
     missing = {t for t in tasks if t not in text}
     assert not missing, f"undocumented mise tasks: {sorted(missing)}"
+
+
+def test_behavioural_claims_are_marked_as_unverified():
+    """Our suite checks that skills and agents *say* the right things, never that
+    they do them — no test loads a model. Keep that boundary visible so the
+    string checks are not mistaken for behavioural coverage (ADR-007)."""
+    adr = ROOT / "docs" / "adrs" / "007-plugin-evals-and-what-each-eval-measures.md"
+    assert adr.exists(), "the coverage boundary must be recorded somewhere"
+    text = adr.read_text()
+    assert "claude plugin eval" in text and "eval/run_eval.py" in text
