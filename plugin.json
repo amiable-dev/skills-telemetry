@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "stdtel",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Telemetry for standards-as-skills: attributes token cost and policy outcomes to individual skills across Claude Code and GitHub Copilot.",
   "author": {
     "name": "amiable-dev",
