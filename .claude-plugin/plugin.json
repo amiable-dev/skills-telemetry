@@ -1,7 +1,7 @@
 {
   "name": "stdtel",
   "displayName": "Standards Telemetry",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Attributes token cost and policy outcomes to individual skills.",
   "author": {
     "name": "amiable-dev",

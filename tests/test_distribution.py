@@ -4,6 +4,7 @@ The manifests are generated from stdtel.install.EVENTS, so these tests exist to
 catch drift between what the installer writes and what the repo ships.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -106,14 +107,10 @@ def test_shipped_hook_manifests_match_what_the_installer_generates():
     stale `matcher: Skill` that would have silenced tool-failure counting for
     every plugin install.
     """
-    class Bare(str):
-        def __str__(self):
-            return "stdtel-hook"
-
-    assert _read("hooks/hooks.json") == json.loads(
-        json.dumps(claude_hooks(Bare("stdtel-hook"))))
-    assert _read("com.github.copilot/hooks/hooks.json") == json.loads(
-        json.dumps(copilot_hooks(Bare("stdtel-hook"), "copilot-vscode")))
+    from stdtel.install import PLUGIN_LAUNCHER
+    assert _read("hooks/hooks.json") == claude_hooks(PLUGIN_LAUNCHER, exec_form=True)
+    assert _read("com.github.copilot/hooks/hooks.json") == copilot_hooks(
+        PLUGIN_LAUNCHER, "copilot-vscode", exec_form=True)
 
 
 def test_post_tool_use_is_not_matcher_restricted():
@@ -232,3 +229,48 @@ def test_the_conventional_hooks_file_still_ships():
     """Removing the manifest entry must not remove the file it pointed at."""
     assert (ROOT / "hooks" / "hooks.json").is_file()
     assert _read("hooks/hooks.json")["hooks"], "the auto-discovered file must have content"
+
+
+# --- issue #13: the shipped hooks must resolve, or fail silently ---
+
+LAUNCHER = ROOT / "bin" / "stdtel-hook"
+
+
+def test_shipped_hooks_invoke_the_launcher_not_a_bare_name():
+    """A bare name does not resolve in a hook's `sh -c`.
+
+    Shipping `stdtel-hook post-tool-use` produced "command not found" on every
+    tool call for anyone who installed the plugin.
+    """
+    for manifest in ("hooks/hooks.json", "com.github.copilot/hooks/hooks.json"):
+        for groups in _read(manifest)["hooks"].values():
+            entry = groups[0]["hooks"][0]
+            assert entry["command"].endswith("/bin/stdtel-hook"), entry["command"]
+            assert entry["command"] != "stdtel-hook"
+            assert entry["args"], "exec form, so the path placeholder is not shell-quoted"
+
+
+def test_launcher_ships_and_is_executable():
+    assert LAUNCHER.is_file() and os.access(LAUNCHER, os.X_OK)
+
+
+def test_launcher_is_silent_when_the_cli_is_absent():
+    """An uninstalled plugin must record nothing, not error on every keystroke."""
+    r = subprocess.run(["sh", str(LAUNCHER), "post-tool-use"], input="{}", text=True,
+                       capture_output=True,
+                       env={"HOME": "/nonexistent", "PATH": "/usr/bin:/bin"})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "" and r.stderr == "", f"must be silent: {r.stdout!r} {r.stderr!r}"
+
+
+def test_launcher_execs_the_cli_when_present(tmp_path):
+    state = tmp_path / "state"
+    r = subprocess.run(
+        ["sh", str(LAUNCHER), "post-tool-use"],
+        input='{"session_id":"lw","tool_name":"Bash","tool_use_id":"1"}', text=True,
+        capture_output=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin",
+             "STDTEL_HOOK_BIN": str(Path(sys.executable).parent / "stdtel-hook"),
+             "STDTEL_STATE_DIR": str(state)})
+    assert r.returncode == 0, r.stderr
+    assert (state / "lw.json").is_file(), "the launcher did not reach the CLI"

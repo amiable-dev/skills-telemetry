@@ -59,8 +59,10 @@ def test_every_env_var_read_by_the_code_is_documented():
 
 def test_env_table_does_not_invent_variables():
     """A documented variable nothing reads is a lie with a long half-life."""
-    source = "\n".join(p.read_text() for p in
-                       list((ROOT / "stdtel").rglob("*.py")) + list((ROOT / "eval").rglob("*.py")))
+    # includes the shell launcher: STDTEL_HOOK_BIN is read there, not in Python
+    sources = (list((ROOT / "stdtel").rglob("*.py")) + list((ROOT / "eval").rglob("*.py"))
+               + list((ROOT / "bin").iterdir()) + [ROOT / "deploy" / "smoke.sh"])
+    source = "\n".join(p.read_text() for p in sources if p.is_file())
     table = REFERENCE.split("## Environment variables")[1]
     documented = set(re.findall(r"\| `(STDTEL_[A-Z_]+)`", table))
     for var in documented:
