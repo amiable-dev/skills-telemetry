@@ -103,6 +103,7 @@ most editors do not show. A silent hook is therefore normal-looking. To check:
 
 | symptom | check |
 |---|---|
+| the plugin is installed but nothing is recorded | expected when the `stdtel` package is not installed — the plugin's launcher exits silently by design. `uv tool install stdtel`, then check `stdtel-install where` |
 | nothing recorded at all | `stdtel-install where` — if the hook is registered by bare name it may be unresolvable, since hooks do not get your login shell's PATH |
 | skills show as `unversioned` | the catalogue cannot find them: `stdtel-validate ~/.claude/skills` |
 | ticket shows `unattributed` | your branch has no ticket key, e.g. `PLAT-42-…` |

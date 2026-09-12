@@ -7,7 +7,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook session-start",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "session-start"
+            ],
             "env": {
               "STDTEL_HARNESS": "copilot-vscode"
             }
@@ -20,7 +23,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook pre-tool-use",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "pre-tool-use"
+            ],
             "env": {
               "STDTEL_HARNESS": "copilot-vscode"
             }
@@ -34,7 +40,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook post-tool-use",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "post-tool-use"
+            ],
             "env": {
               "STDTEL_HARNESS": "copilot-vscode"
             }
@@ -47,7 +56,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook post-tool-use-failure",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "post-tool-use-failure"
+            ],
             "env": {
               "STDTEL_HARNESS": "copilot-vscode"
             }
@@ -60,7 +72,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook stop",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "stop"
+            ],
             "env": {
               "STDTEL_HARNESS": "copilot-vscode"
             }

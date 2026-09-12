@@ -1,0 +1,40 @@
+#!/bin/sh
+# Plugin hook launcher.
+#
+# The plugin's hooks.json cannot know where stdtel-hook is installed, and hook
+# processes get a non-login `sh -c` whose PATH does not include a version
+# manager's shims or a project venv. Shipping the bare name therefore failed with
+# "stdtel-hook: command not found" on every tool call (issue #13).
+#
+# This resolves the real CLI and execs it. When it finds nothing it exits 0 in
+# silence: a plugin installed without the package should record nothing, not
+# error on every keystroke. Telemetry is never worth interrupting someone's work.
+set -u
+
+find_bin() {
+    # explicit override wins, for unusual installs and for tests
+    if [ -n "${STDTEL_HOOK_BIN:-}" ] && [ -x "${STDTEL_HOOK_BIN}" ]; then
+        printf '%s' "${STDTEL_HOOK_BIN}"
+        return 0
+    fi
+    # the locations `uv tool install` and `pipx install` actually use
+    for candidate in \
+        "${HOME:-}/.local/bin/stdtel-hook" \
+        "${HOME:-}/.local/share/uv/tools/stdtel/bin/stdtel-hook" \
+        "${HOME:-}/.local/pipx/venvs/stdtel/bin/stdtel-hook" \
+        "/opt/homebrew/bin/stdtel-hook" \
+        "/usr/local/bin/stdtel-hook"
+    do
+        if [ -x "${candidate}" ]; then
+            printf '%s' "${candidate}"
+            return 0
+        fi
+    done
+    # finally PATH, which is usually empty of it but costs nothing to try
+    resolved=$(command -v stdtel-hook 2>/dev/null) || return 1
+    [ -n "${resolved}" ] || return 1
+    printf '%s' "${resolved}"
+}
+
+bin=$(find_bin) || exit 0
+exec "${bin}" "$@"
