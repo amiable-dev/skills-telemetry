@@ -51,7 +51,7 @@ cd deploy && $(docker compose version >/dev/null 2>&1 && echo docker compose || 
 """
 
 [tasks.down]
-description = "Tear the local stack down"
+description = "Tear the whole local stack down, including the optional langfuse profile"
 run = "make down"
 
 [tasks.eval]
