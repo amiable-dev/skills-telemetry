@@ -165,6 +165,20 @@ both with `curl -s localhost:8888/metrics | grep otelcol_exporter`.
 > VM `langfuse-web` is OOM-killed during boot (exit 137). Give the VM 8 GiB — for colima,
 > `colima stop && colima start --memory 8`, which restarts every container on the machine.
 
+**Langfuse names our spans after the tool, not the OTel span name.** An invocation appears as
+`Skill`, because Langfuse takes the observation name from `gen_ai.tool.name`. Searching the UI for
+`std.skill.invocation` finds nothing. Look for:
+
+| in the Langfuse UI | is our |
+|---|---|
+| `Skill` | `std.skill.invocation` |
+| `std.session.cost` | `std.session.cost` (no tool name, so the span name survives) |
+
+Filter and group on the keys the overlay promotes — `skill_name`, `skill_version`, `skill_plugin`,
+`standard_id`, `trigger`, `ticket_id`, `team`, `harness`, `repo`. The raw `std.*` attributes are
+present too, but nested under `attributes.*` where Langfuse cannot query them; that gap is the whole
+reason [ADR-006](adrs/006-langfuse-as-an-optional-trace-backend.md) exists.
+
 **If the UI shows traces but `GET /api/public/traces` returns an empty list, that is expected.**
 Langfuse v4 writes the `events_*` model; that REST endpoint reads the legacy `traces`/`observations`
 tables, which a background backfill populates separately. Confirm ingestion directly instead:

@@ -69,6 +69,9 @@ Three properties decide how much of our stack it can absorb.
   the transform's keys promoted to top-level filterable metadata — `skill_name`, `skill_version`,
   `standard_id`, `trigger`, `ticket_id`, `team`, `harness`, `repo` — while the raw `std.*` attributes
   sit in the nested `attributes.*` blob. That contrast is the decision in this ADR, observed directly.
+- **Span identity changes on the way in.** Langfuse names an observation from `gen_ai.tool.name`, so
+  `std.skill.invocation` appears as `Skill`. Anything correlating the two backends by span name must
+  account for that; `session.id` and `std.prompt.id` correlate cleanly and are the better keys.
 - Two attribute vocabularies now travel on every span. That is the price of a queryable Langfuse view,
   and the transform is one place to change.
 - Self-hosting is not free: Langfuse v4 needs web, worker, Postgres, ClickHouse, Redis and MinIO —
