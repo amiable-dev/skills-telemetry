@@ -4,6 +4,15 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.2.2 — 2026-09-12
+
+### Fixed
+- **Plugin failed to load its hooks.** `hooks/hooks.json` at the plugin root is discovered
+  automatically, so `"hooks": "./hooks/hooks.json"` in the manifest registered it twice:
+  *"Duplicate hooks file detected ... manifest.hooks should only reference additional hook files."*
+  The declaration is removed; the file still ships and is still loaded. `claude plugin validate`
+  accepts the duplicate, so this was only observable by installing.
+
 ## 0.2.1 — 2026-09-12
 
 ### Fixed

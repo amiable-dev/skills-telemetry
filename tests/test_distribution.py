@@ -205,3 +205,30 @@ def test_every_agent_on_disk_is_declared():
     declared = {Path(a).name for a in _read(".claude-plugin/plugin.json").get("agents", [])}
     on_disk = {f.name for f in (ROOT / "agents").glob("*.md")}
     assert on_disk == declared, f"undeclared: {sorted(on_disk - declared)}"
+
+
+def test_manifest_does_not_redeclare_conventional_component_paths():
+    """Conventional paths are auto-discovered; declaring them loads them twice.
+
+    `claude plugin validate` accepts `"hooks": "./hooks/hooks.json"`, and the
+    plugin then fails at load with "Duplicate hooks file detected ... The
+    standard hooks/hooks.json is loaded automatically, so manifest.hooks should
+    only reference additional hook files."
+
+    Validation is not loading. This rule is only observable by installing, which
+    is why it reached a user twice.
+    """
+    manifest = _read(".claude-plugin/plugin.json")
+    hooks = manifest.get("hooks")
+    if hooks is not None:
+        declared = [hooks] if isinstance(hooks, str) else hooks
+        for entry in declared:
+            assert Path(entry).name != "hooks.json" or "hooks/hooks.json" not in entry, (
+                f"{entry} is the conventional path and is loaded automatically; "
+                "declare only additional hook files")
+
+
+def test_the_conventional_hooks_file_still_ships():
+    """Removing the manifest entry must not remove the file it pointed at."""
+    assert (ROOT / "hooks" / "hooks.json").is_file()
+    assert _read("hooks/hooks.json")["hooks"], "the auto-discovered file must have content"
