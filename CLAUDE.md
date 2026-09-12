@@ -26,6 +26,9 @@ was rejected and what the decision costs, which is what you need before re-litig
   CI strict; the scanner follows symlinks.
 - **[ADR-005](docs/adrs/005-data-integrity.md)** — never record an unobserved value; a component that
   cannot do its job fails loudly; vacuous truth is a bug; missing data is its own category.
+- **[ADR-008](docs/adrs/008-spool-spans-to-disk.md)** (proposed) — `stop` should append NDJSON to a
+  spool and never open a socket; a separate process drains it. Auto-starting the stack was rejected:
+  the collector is shared infrastructure, and the coupling is the problem, not the symptom. Issue #14.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
