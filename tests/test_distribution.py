@@ -4,6 +4,8 @@ The manifests are generated from stdtel.install.EVENTS, so these tests exist to
 catch drift between what the installer writes and what the repo ships.
 """
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -142,8 +144,15 @@ def test_skills_tree_is_where_every_loader_looks():
 # --- agent + skill artifacts shipped with the plugin ---
 
 def test_plugin_declares_its_components():
+    """`skills` takes a directory; `agents` takes a list of files.
+
+    This test previously asserted `agents == ["./agents/"]`, which is the value
+    that failed installation — so it did not merely miss the bug, it pinned it.
+    Schema validity is now checked by the real validator, below.
+    """
     p = _read(".claude-plugin/plugin.json")
-    assert p["skills"] == "./skills/" and p["agents"] == ["./agents/"]
+    assert p["skills"] == "./skills/"
+    assert isinstance(p["agents"], list) and all(a.endswith(".md") for a in p["agents"])
     assert (ROOT / "agents").is_dir() and (ROOT / "skills").is_dir()
 
 
@@ -159,3 +168,40 @@ def test_every_agent_has_usable_front_matter():
         # the description is what the model matches on; it must say WHEN to use it
         assert len(meta["description"]) > 60, f"{a}: description too thin to route on"
         assert "Use when" in meta["description"], f"{a}: description must state when to use it"
+
+
+# --- the real schema, not just our own consistency ---
+
+def _claude_cli():
+    return shutil.which("claude")
+
+
+@pytest.mark.skipif(_claude_cli() is None, reason="claude CLI not installed")
+@pytest.mark.parametrize("target", [".", ".claude-plugin/plugin.json"])
+def test_manifests_pass_the_real_validator(target):
+    """`claude plugin validate` is the schema that actually gates installation.
+
+    Our other tests check the manifests against our own EVENTS table, which is
+    internal consistency, not validity. A manifest can be perfectly consistent
+    with itself and still be rejected at install — `agents: ["./agents/"]` was,
+    with "agents.0: Invalid input", and shipped because nothing checked.
+    """
+    r = subprocess.run([_claude_cli(), "plugin", "validate", target],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, f"{target}:\n{r.stdout}\n{r.stderr}"
+
+
+def test_agents_field_lists_files_not_directories():
+    """The schema wants each agent's file. A directory fails validation."""
+    agents = _read(".claude-plugin/plugin.json").get("agents", [])
+    assert agents, "the plugin ships an agent; it must be declared"
+    for entry in agents:
+        assert not entry.endswith("/"), f"{entry} is a directory; list the .md file"
+        assert (ROOT / entry).is_file(), f"{entry} does not exist"
+
+
+def test_every_agent_on_disk_is_declared():
+    """Adding an agent without listing it ships a plugin missing that agent."""
+    declared = {Path(a).name for a in _read(".claude-plugin/plugin.json").get("agents", [])}
+    on_disk = {f.name for f in (ROOT / "agents").glob("*.md")}
+    assert on_disk == declared, f"undeclared: {sorted(on_disk - declared)}"

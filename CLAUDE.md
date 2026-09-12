@@ -62,7 +62,7 @@ Adding a console script or a skill without documenting it fails `tests/test_docs
 
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
-`mise run install|test|validate|skill-map|up|up-langfuse|down|smoke|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
+`mise run install|test|validate|validate-plugin|skill-map|up|up-langfuse|down|smoke|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
 and auto-activates `.venv`; the tasks delegate to the Makefile, which stays the single definition.
 The venv is seeded with pip on purpose: mise creates it with uv, which omits pip, and a pip-less venv
 sends a bare `pip install` to the interpreter behind it instead.

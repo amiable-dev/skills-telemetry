@@ -11,7 +11,7 @@
   "license": "MIT",
   "hooks": "./hooks/hooks.json",
   "agents": [
-    "./agents/"
+    "./agents/skill-scorecard-analyst.md"
   ],
   "skills": "./skills/"
 }

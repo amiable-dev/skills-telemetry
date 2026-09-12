@@ -14,5 +14,6 @@
         "name": "amiable-dev"
       }
     }
-  ]
+  ],
+  "description": "Standards-as-skills telemetry: attribute token cost and policy outcomes to individual skills across Claude Code and GitHub Copilot."
 }
