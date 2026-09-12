@@ -50,6 +50,14 @@ export STDTEL_COLLECTOR_OVERLAY=overlay-langfuse.yaml
 cd deploy && $(docker compose version >/dev/null 2>&1 && echo docker compose || echo docker-compose) --profile langfuse up -d
 """
 
+[tasks.demo]
+description = "Load a synthetic fleet so the scorecard has something to show (all rows DEMO-prefixed)"
+run = "make demo"
+
+[tasks.demo-clear]
+description = "Remove every synthetic row"
+run = "make demo-clear"
+
 [tasks.down]
 description = "Tear the whole local stack down, including the optional langfuse profile"
 run = "make down"

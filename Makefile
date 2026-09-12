@@ -11,5 +11,7 @@ up-langfuse:  ; mise run up-langfuse
 # keep running and the network cannot be removed ("Resource is still in use").
 down:         ; $(COMPOSE) -f deploy/docker-compose.yml --profile langfuse down
 smoke:        ; ./deploy/smoke.sh
+demo:         ; python -m warehouse.demo_seed
+demo-clear:   ; python -m warehouse.demo_seed --clear
 eval:         ; python -m eval.run_eval --out eval/results.jsonl && tail -2 eval/results.jsonl
 eval-dry:     ; python -m eval.run_eval --dry-run --out /tmp/eval.jsonl && cat /tmp/eval.jsonl
