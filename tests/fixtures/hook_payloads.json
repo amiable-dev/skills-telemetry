@@ -1,0 +1,56 @@
+{
+  "PostToolUse": {
+    "cwd": "/tmp/probe",
+    "duration_ms": 3,
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PostToolUse",
+    "permission_mode": "bypassPermissions",
+    "prompt_id": "ae5ed694-aeea-41c1-8067-2f67fc87e7b7",
+    "session_id": "probe-session",
+    "tool_input": {
+      "skill": "telemetry-probe"
+    },
+    "tool_name": "Skill",
+    "tool_use_id": "toolu_01SrYs8g68XA4qjm5k9EdiBW",
+    "transcript_path": "/tmp/probe/t.jsonl"
+  },
+  "PreToolUse": {
+    "cwd": "/tmp/probe",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "permission_mode": "bypassPermissions",
+    "prompt_id": "ae5ed694-aeea-41c1-8067-2f67fc87e7b7",
+    "session_id": "probe-session",
+    "tool_input": {
+      "skill": "telemetry-probe"
+    },
+    "tool_name": "Skill",
+    "tool_use_id": "toolu_01SrYs8g68XA4qjm5k9EdiBW",
+    "transcript_path": "/tmp/probe/t.jsonl"
+  },
+  "SessionStart": {
+    "cwd": "/tmp/probe",
+    "hook_event_name": "SessionStart",
+    "session_id": "probe-session",
+    "source": "startup",
+    "transcript_path": "/tmp/probe/t.jsonl"
+  },
+  "Stop": {
+    "background_tasks": [],
+    "cwd": "/tmp/probe",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "Stop",
+    "permission_mode": "bypassPermissions",
+    "prompt_id": "ae5ed694-aeea-41c1-8067-2f67fc87e7b7",
+    "session_crons": [],
+    "session_id": "probe-session",
+    "stop_hook_active": false,
+    "transcript_path": "/tmp/probe/t.jsonl"
+  }
+}

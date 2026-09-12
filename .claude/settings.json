@@ -1,18 +1,7 @@
 {
   "env": {
-    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-    "OTEL_METRICS_EXPORTER": "otlp",
-    "OTEL_LOGS_EXPORTER": "otlp",
-    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
-    "STDTEL_SKILLS_ROOT": "skills",
-    "STDTEL_HARNESS": "claude-code"
-  },
-  "hooks": {
-    "SessionStart":       [{"hooks": [{"type": "command", "command": "stdtel-hook session-start"}]}],
-    "PreToolUse":         [{"matcher": "Skill", "hooks": [{"type": "command", "command": "stdtel-hook pre-tool-use"}]}],
-    "PostToolUse":        [{"matcher": "Skill", "hooks": [{"type": "command", "command": "stdtel-hook post-tool-use"}]}],
-    "PostToolUseFailure": [{"matcher": "Skill", "hooks": [{"type": "command", "command": "stdtel-hook post-tool-use-failure"}]}],
-    "Stop":               [{"hooks": [{"type": "command", "command": "stdtel-hook stop"}]}]
+    "STDTEL_TEAM": "platform-observability",
+    "STDTEL_HARNESS_MODE": "agent",
+    "STDTEL_SKILLS_ROOT": "skills"
   }
 }

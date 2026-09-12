@@ -1,0 +1,17 @@
+{
+  "name": "stdtel",
+  "displayName": "Standards Telemetry",
+  "version": "0.2.0",
+  "description": "Attributes token cost and policy outcomes to individual skills.",
+  "author": {
+    "name": "amiable-dev",
+    "url": "https://github.com/amiable-dev"
+  },
+  "homepage": "https://github.com/amiable-dev/skills-telemetry",
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json",
+  "agents": [
+    "./agents/"
+  ],
+  "skills": "./skills/"
+}

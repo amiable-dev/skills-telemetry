@@ -7,11 +7,13 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
   ended_at           TIMESTAMPTZ NOT NULL,
   harness            TEXT NOT NULL,          -- claude-code | copilot-vscode | copilot-cli
   harness_mode       TEXT,
-  skill_name         TEXT NOT NULL,
+  skill_name         TEXT NOT NULL,          -- catalogue name (bare, from SKILL.md front-matter)
+  invoked_as         TEXT,                   -- raw invocation string; namespaced when plugin-provided
+  plugin             TEXT,                   -- namespace of invoked_as, NULL for a bare skill
   skill_version      TEXT NOT NULL,
   standard_id        TEXT,
   policy_ids         TEXT[],
-  trigger            TEXT,                   -- auto | explicit | subagent
+  trigger            TEXT,                   -- caller.type from the transcript ("direct"), or unknown
   model              TEXT,
   load_tokens        INT DEFAULT 0,
   tail_tokens        INT DEFAULT 0,
@@ -62,3 +64,5 @@ CREATE TABLE IF NOT EXISTS skill_eval (              -- offline evals (design §
   eval_id TEXT PRIMARY KEY, skill_name TEXT, skill_version TEXT, harness TEXT, task_id TEXT,
   run_at TIMESTAMPTZ, passed BOOLEAN, total_tokens INT, duration_seconds NUMERIC, catalogue_commit TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_skill_invocation_plugin ON skill_invocation (plugin);

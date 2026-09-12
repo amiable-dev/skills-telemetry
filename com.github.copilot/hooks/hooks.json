@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "disableAllHooks": false,
+  "hooks": {
+    "sessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "stdtel-hook session-start",
+            "env": {
+              "STDTEL_HARNESS": "copilot-vscode"
+            }
+          }
+        ]
+      }
+    ],
+    "preToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "stdtel-hook pre-tool-use",
+            "env": {
+              "STDTEL_HARNESS": "copilot-vscode"
+            }
+          }
+        ],
+        "matcher": "Skill"
+      }
+    ],
+    "postToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "stdtel-hook post-tool-use",
+            "env": {
+              "STDTEL_HARNESS": "copilot-vscode"
+            }
+          }
+        ]
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "stdtel-hook post-tool-use-failure",
+            "env": {
+              "STDTEL_HARNESS": "copilot-vscode"
+            }
+          }
+        ]
+      }
+    ],
+    "agentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "stdtel-hook stop",
+            "env": {
+              "STDTEL_HARNESS": "copilot-vscode"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

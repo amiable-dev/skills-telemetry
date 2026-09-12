@@ -19,3 +19,6 @@ eval/results.jsonl
 
 # Local stack data
 deploy/tempo-data/
+
+# local-only credentials for the Langfuse profile
+deploy/.env

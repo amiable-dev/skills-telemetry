@@ -1,0 +1,7 @@
+{
+  "env": {
+    "STDTEL_TEAM": "payments",
+    "STDTEL_HARNESS_MODE": "agent",
+    "STDTEL_SKILLS_ROOT": "skills"
+  }
+}

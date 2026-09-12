@@ -49,6 +49,7 @@ class SkillLoad:
     skill: str
     tool_use_id: str | None
     load_tokens: int = 0
+    caller: str = ""        # tool_use "caller.type", e.g. "direct"
 
 
 @dataclass
@@ -56,6 +57,25 @@ class TranscriptSlice:
     requests: list[LlmRequest] = field(default_factory=list)
     skill_loads: list[SkillLoad] = field(default_factory=list)
     new_offset: int = 0
+
+    def totals(self) -> Usage:
+        """Every token in the slice, whether or not a skill was loaded.
+
+        This is the denominator for cost-per-PR. Skill tail attribution only sees
+        requests after a skill loads, so a session that never loads one is
+        invisible to it — which is most sessions.
+        """
+        total = Usage()
+        for r in self.requests:
+            total.add(r.usage)
+        return total
+
+    def models(self) -> list[str]:
+        seen = []
+        for r in self.requests:
+            if r.model not in seen:
+                seen.append(r.model)
+        return seen
 
 
 def _ts(entry: dict) -> float:
@@ -74,7 +94,10 @@ def _ts(entry: dict) -> float:
 def read_slice(path: Path, offset: int = 0) -> TranscriptSlice:
     """Read new JSONL lines from byte offset. Tolerates partial trailing line."""
     out = TranscriptSlice(new_offset=offset)
-    if not path.exists():
+    # Path("") is ".", which *exists* as a directory: exists() let it through and
+    # open() then raised IsADirectoryError, which hooks swallow into a silent
+    # no-telemetry state. Require an actual file.
+    if not path.is_file():
         return out
     with path.open("rb") as f:
         f.seek(offset)
@@ -99,8 +122,12 @@ def read_slice(path: Path, offset: int = 0) -> TranscriptSlice:
             for block in msg.get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "Skill":
                     inp = block.get("input") or {}
-                    out.skill_loads.append(SkillLoad(ts=_ts(e), skill=str(inp.get("skill") or inp.get("name") or ""),
-                                                     tool_use_id=block.get("id")))
+                    caller = block.get("caller")
+                    out.skill_loads.append(SkillLoad(
+                        ts=_ts(e),
+                        skill=str(inp.get("skill") or inp.get("name") or ""),
+                        tool_use_id=block.get("id"),
+                        caller=str((caller or {}).get("type") or "")))
         elif e.get("type") == "user" and isinstance(msg, dict):
             # tool_result for a Skill call: size of returned content approximates load tokens
             for block in msg.get("content") or []:

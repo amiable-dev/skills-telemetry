@@ -1,0 +1,43 @@
+# Overlay: also export traces to a self-hosted Langfuse (ADR-006).
+#
+#   STDTEL_COLLECTOR_OVERLAY=overlay-langfuse.yaml make up-langfuse
+#
+# Why the transform below is not optional: Langfuse only makes attributes
+# filterable when they are prefixed `langfuse.trace.metadata.*`. Anything else —
+# our entire `std.*` schema — lands in `metadata.attributes` as an opaque blob
+# you cannot query or group by. Exporting without this yields a pipeline that
+# looks healthy and answers no questions.
+processors:
+  transform/langfuse_metadata:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # duplicate, never move: Tempo and the warehouse still read std.*
+          - set(attributes["langfuse.trace.metadata.skill_name"], attributes["std.skill.name"]) where attributes["std.skill.name"] != nil
+          - set(attributes["langfuse.trace.metadata.skill_version"], attributes["std.skill.version"]) where attributes["std.skill.version"] != nil
+          - set(attributes["langfuse.trace.metadata.skill_plugin"], attributes["std.skill.plugin"]) where attributes["std.skill.plugin"] != nil
+          - set(attributes["langfuse.trace.metadata.standard_id"], attributes["std.standard_id"]) where attributes["std.standard_id"] != nil
+          - set(attributes["langfuse.trace.metadata.trigger"], attributes["std.skill.trigger"]) where attributes["std.skill.trigger"] != nil
+          # resource-level join keys, lifted onto the span so Langfuse can filter on them
+          - set(attributes["langfuse.trace.metadata.ticket_id"], resource.attributes["std.ticket.id"]) where resource.attributes["std.ticket.id"] != nil
+          - set(attributes["langfuse.trace.metadata.team"], resource.attributes["std.team"]) where resource.attributes["std.team"] != nil
+          - set(attributes["langfuse.trace.metadata.harness"], resource.attributes["std.harness"]) where resource.attributes["std.harness"] != nil
+          - set(attributes["langfuse.trace.metadata.repo"], resource.attributes["std.repo"]) where resource.attributes["std.repo"] != nil
+          # give Langfuse its native session grouping
+          - set(attributes["langfuse.session.id"], attributes["session.id"]) where attributes["session.id"] != nil
+
+exporters:
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      Authorization: "Basic ${env:LANGFUSE_AUTH}"
+      x-langfuse-ingestion-version: "4"    # without this, ingestion can lag ~10 minutes
+    retry_on_failure: { enabled: true, max_elapsed_time: 30s }
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/drop_content, transform/normalise, transform/copilot_skills, transform/pseudonymise, transform/langfuse_metadata, batch]
+      exporters: [otlp/tempo, spanmetrics, otlphttp/langfuse]
