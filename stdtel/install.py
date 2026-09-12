@@ -16,6 +16,11 @@ import sys
 from pathlib import Path
 
 HOOK_NAME = "stdtel-hook"
+# What the *shipped plugin* manifests invoke. A distributed manifest cannot know
+# the install path, and a bare name does not resolve in a hook's `sh -c` — that
+# failed with "command not found" on every tool call (issue #13). bin/stdtel-hook
+# resolves the real CLI at run time and exits 0 silently when it is absent.
+PLUGIN_LAUNCHER = "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook"
 
 # (stdtel event, Claude Code event, tool matcher, Copilot event)
 # PreToolUse stays matched to Skill: it only opens skill windows, and firing it on
@@ -73,7 +78,7 @@ def _entry(binary: Path, event: str, exec_form: bool, env: dict | None, timeout:
     return entry
 
 
-def claude_hooks(binary: Path, exec_form: bool = False) -> dict:
+def claude_hooks(binary: "Path | str", exec_form: bool = False) -> dict:
     hooks: dict = {}
     for event, cc_event, matcher, _ in EVENTS:
         group: dict = {"hooks": [_entry(binary, event, exec_form, None, None)]}
@@ -83,7 +88,8 @@ def claude_hooks(binary: Path, exec_form: bool = False) -> dict:
     return {"hooks": hooks}
 
 
-def copilot_hooks(binary: Path, harness: str = "copilot-vscode", exec_form: bool = False) -> dict:
+def copilot_hooks(binary: "Path | str", harness: str = "copilot-vscode",
+                  exec_form: bool = False) -> dict:
     """Copilot hook config.
 
     STDTEL_HARNESS is set per hook on purpose. Copilot also reads

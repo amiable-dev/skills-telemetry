@@ -4,6 +4,16 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.2.3 — 2026-09-12
+
+### Fixed
+- **Hooks failed with `stdtel-hook: command not found` on every tool call.** The shipped manifests used
+  the bare command name, which does not resolve in a hook's non-login `sh -c`. They now invoke
+  `${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook`, a launcher that finds the real CLI (`$STDTEL_HOOK_BIN`,
+  `~/.local/bin`, the uv-tool and pipx locations, then PATH) and **exits 0 in silence when it finds
+  none** — an uninstalled plugin should record nothing, not error on every keystroke. Amplified by
+  0.2.0's unmatched `PostToolUse`, which fires on every tool rather than only Skill.
+
 ## 0.2.2 — 2026-09-12
 
 ### Fixed

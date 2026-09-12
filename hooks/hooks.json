@@ -5,7 +5,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook session-start"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "session-start"
+            ]
           }
         ]
       }
@@ -15,7 +18,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook pre-tool-use"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "pre-tool-use"
+            ]
           }
         ],
         "matcher": "Skill"
@@ -26,7 +32,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook post-tool-use"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "post-tool-use"
+            ]
           }
         ]
       }
@@ -36,7 +45,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook post-tool-use-failure"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "post-tool-use-failure"
+            ]
           }
         ]
       }
@@ -46,7 +58,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "stdtel-hook stop"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "stop"
+            ]
           }
         ]
       }
