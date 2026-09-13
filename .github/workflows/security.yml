@@ -1,7 +1,11 @@
 name: security
 
 on:
+  # Unfiltered `push` meant every PR ran this twice: once for the branch push and
+  # once for the pull request. Scoping push to main keeps the post-merge run and
+  # leaves PRs with exactly one.
   push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: "17 6 * * 1"      # a secret committed on Friday should not wait for a push
