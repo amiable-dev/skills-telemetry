@@ -13,7 +13,11 @@ on:
         required: true
         default: testpypi
         type: choice
-        options: [testpypi, pypi]
+        # Test PyPI only. A manual dispatch has no tag, so the version check
+        # below cannot run — and PyPI never allows re-uploading a version, so a
+        # mistaken manual publish burns that number for good. The real index is
+        # reachable only by publishing a release.
+        options: [testpypi]
 
 permissions:
   contents: read
@@ -54,6 +58,21 @@ jobs:
           echo '{}' | /tmp/verify/bin/stdtel-hook session-start
           /tmp/verify/bin/stdtel-doctor --quiet || true   # reports, never gates
 
+      - name: the version must not already exist on the index
+        # Uploading a version that exists fails at the very last step with an
+        # opaque 400. Checking first says which version and why, before anything
+        # is attempted.
+        run: |
+          VERSION=$(uv run --no-project python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          INDEX=https://pypi.org
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && INDEX=https://test.pypi.org
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "$INDEX/pypi/stdtel/$VERSION/json")
+          if [ "$CODE" = "200" ]; then
+            echo "::error::stdtel $VERSION is already published on $INDEX and cannot be replaced. Bump the version in pyproject.toml and the three plugin manifests."
+            exit 1
+          fi
+          echo "stdtel $VERSION is free on $INDEX"
+
       - uses: actions/upload-artifact@v4
         with: { name: dist, path: dist/ }
 
@@ -72,7 +91,8 @@ jobs:
 
   pypi:
     needs: build
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    # Release-only, deliberately: see the note on the dispatch input above.
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
     permissions: { id-token: write }
