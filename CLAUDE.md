@@ -78,9 +78,10 @@ surfaces — do not reword it in one place. Derivations: `docs/evaluation-power.
 the misreadings this data invites: `docs/insight-walkthroughs.md`.
 
 ## Current state / known gaps
-- `scorecard.sql` overstates `n_with` by a cartesian join (~76x on the demo data) and recommends
-  `keep` for a skill with no outcome data (issue #23). Found by `make demo` — the query had never been
-  run against rows. Treat `recommended_action` as untrustworthy until fixed.
+- `make demo` loads a synthetic fleet (all `DEMO-`/`demo-` prefixed) so the scorecard has something to
+  show. It is what first ran `scorecard.sql` against rows, which found #23 — a cartesian join
+  inflating `n_with` ~76x and a `keep` verdict for a skill with no outcome data. Both fixed; the
+  scorecard now aggregates per PR and returns `insufficient-data` below the floor.
 - `load_tokens` is a chars/4 heuristic and likely obsolete: Claude Code emits native
   `claude_code.token.usage` with a `skill.name` attribute and real counts. Open question (ADR-001):
   consume native telemetry and emit only `std.*` correlation, keyed on `session.id` + `prompt.id`.
