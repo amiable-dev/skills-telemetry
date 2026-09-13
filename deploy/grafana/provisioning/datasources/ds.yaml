@@ -1,4 +1,18 @@
 apiVersion: 1
+# Every datasource pins its uid. Dashboards reference datasources by uid, and
+# Grafana generates a random one when it is not given — so a committed dashboard
+# points at nothing, renders empty, and reports no error.
 datasources:
-  - { name: Prometheus, type: prometheus, url: http://prometheus:9090, isDefault: true }
-  - { name: Tempo, type: tempo, url: http://tempo:3200 }
+  - { name: Prometheus, uid: Prometheus, type: prometheus, url: http://prometheus:9090, isDefault: true }
+  - { name: Tempo, uid: Tempo, type: tempo, url: http://tempo:3200 }
+  # The outcome metrics — first-time policy pass rate, the with/without arms, the
+  # recommendation — live in the warehouse, not in Prometheus. Without this the
+  # "Skill scorecard" dashboard could only ever show operational signals.
+  - name: Warehouse
+    uid: Warehouse
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    database: stdtel
+    user: postgres
+    jsonData: { sslmode: disable, postgresVersion: 1600 }
+    secureJsonData: { password: stdtel }
