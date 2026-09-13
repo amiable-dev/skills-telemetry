@@ -69,6 +69,10 @@ uv tool uninstall stdtel          # or: pipx uninstall stdtel
 Then remove the `hooks` block from `~/.claude/settings.json` (and any project `.claude/settings.json`).
 If you installed it as a plugin, `/plugin uninstall stdtel@amiable-standards`.
 
+If `STDTEL_SPOOL=1` is set, spans are queued in `~/.stdtel/spool/` until `stdtel-export` sends them —
+so working offline records rather than loses data. That directory holds the same metadata as the table
+above and nothing more.
+
 Local state lives in `~/.stdtel/sessions/` and is only ever read by the hooks on your machine:
 
 ```bash

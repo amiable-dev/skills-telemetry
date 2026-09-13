@@ -195,6 +195,30 @@ status bar down with it.
 
 ---
 
+## `stdtel-export`
+
+Drains the spool and exports it. Only needed when `STDTEL_SPOOL=1` (ADR-008), where the hook writes
+spans to disk and opens no socket.
+
+```
+stdtel-export [--once | --watch] [--interval SECONDS]
+```
+
+| flag | default | meaning |
+|---|---|---|
+| `--once` | default | drain and exit; suits cron, launchd, or `make up` |
+| `--watch` | off | drain repeatedly |
+| `--interval` | `30` | seconds between drains under `--watch` |
+
+**A failed export leaves the spool intact** and exits non-zero, so the next run retries. Records are
+removed only after the export returns, and records appended while it runs are kept.
+
+The spool is bounded (`STDTEL_SPOOL_MAX`, default 50,000 records); over the bound the oldest are
+dropped **and the count is reported on stderr** — a silent drop at the bound would reintroduce exactly
+the invisible loss spooling removes.
+
+---
+
 ## `stdtel-hook`
 
 Invoked by the harness, one process per event, reading the payload as JSON on stdin.
@@ -227,6 +251,9 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_HARNESS` | `claude-code` | enrich | harness label. **Required in Copilot's hook `env`**, because its snake_case payload is indistinguishable from Claude Code's |
 | `STDTEL_HARNESS_MODE` | `agent` | enrich | `agent` / `interactive`, for a fair cross-harness split |
 | `STDTEL_HOOK_BIN` | *(searched)* | plugin launcher | absolute path to `stdtel-hook`, overriding the launcher's search |
+| `STDTEL_SPOOL` | unset | hooks | `1` writes spans to `~/.stdtel/spool/` instead of exporting inline; `stdtel-export` sends them |
+| `STDTEL_SPOOL_MAX` | `50000` | spool | records kept before the oldest are dropped; the drop count is reported, never silent |
+| `STDTEL_SPOOL_DIR` | `~/.stdtel/spool` | spool | where spooled spans are written |
 | `STDTEL_STATUSLINE` | unset | statusline | `off`/`0`/`false`/`no` hides the status line without disabling telemetry |
 | `STDTEL_DISABLED` | unset | hooks | `1`/`true`/`yes`/`on` disables telemetry entirely; checked before the payload is read |
 | `STDTEL_STATE_DIR` | `~/.stdtel/sessions` | state | per-session state between hook processes |
