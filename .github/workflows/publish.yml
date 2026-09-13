@@ -38,7 +38,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           test -f "dist/stdtel-${TAG}-py3-none-any.whl" || {
-            echo "::error::no wheel for tag ${TAG} — bump pyproject.toml and the three plugin manifests"
+            echo "::error::no wheel for tag ${TAG} — bump the version in all five places - see docs/releasing.md"
             ls dist; exit 1; }
 
       - name: the wheel must actually install and run
@@ -68,7 +68,7 @@ jobs:
           [ "${{ github.event_name }}" = "workflow_dispatch" ] && INDEX=https://test.pypi.org
           CODE=$(curl -s -o /dev/null -w '%{http_code}' "$INDEX/pypi/stdtel/$VERSION/json")
           if [ "$CODE" = "200" ]; then
-            echo "::error::stdtel $VERSION is already published on $INDEX and cannot be replaced. Bump the version in pyproject.toml and the three plugin manifests."
+            echo "::error::stdtel $VERSION is already published on $INDEX and cannot be replaced. Bump the version in all five places - see docs/releasing.md."
             exit 1
           fi
           echo "stdtel $VERSION is free on $INDEX"

@@ -132,6 +132,10 @@ def test_versions_agree_across_manifests():
     assert _read("plugin.json")["version"] == version
     assert _read(".claude-plugin/plugin.json")["version"] == version
     assert _read(".claude-plugin/marketplace.json")["plugins"][0]["version"] == version
+    # CITATION.cff is the fifth. A citation that names a version nobody can
+    # install is a lie with a long half-life, and nothing else would catch it.
+    cff = (ROOT / "CITATION.cff").read_text()
+    assert f"version: {version}\n" in cff, "CITATION.cff version has drifted"
 
 
 def test_skills_tree_is_where_every_loader_looks():

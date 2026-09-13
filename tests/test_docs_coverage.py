@@ -59,9 +59,12 @@ def test_every_env_var_read_by_the_code_is_documented():
 
 def test_env_table_does_not_invent_variables():
     """A documented variable nothing reads is a lie with a long half-life."""
-    # includes the shell launcher: STDTEL_HOOK_BIN is read there, not in Python
+    # Not every variable is read from Python: STDTEL_HOOK_BIN is read by the shell
+    # launcher, STDTEL_BIND by the compose file. The table covers all of them, so
+    # the search has to as well, or documenting one fails this test.
     sources = (list((ROOT / "stdtel").rglob("*.py")) + list((ROOT / "eval").rglob("*.py"))
-               + list((ROOT / "bin").iterdir()) + [ROOT / "deploy" / "smoke.sh"])
+               + list((ROOT / "bin").iterdir())
+               + [ROOT / "deploy" / "smoke.sh", ROOT / "deploy" / "docker-compose.yml"])
     source = "\n".join(p.read_text() for p in sources if p.is_file())
     table = REFERENCE.split("## Environment variables")[1]
     documented = set(re.findall(r"\| `(STDTEL_[A-Z_]+)`", table))

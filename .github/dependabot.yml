@@ -1,0 +1,22 @@
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message: { prefix: "chore(deps)" }
+    groups:
+      opentelemetry:
+        # The SDK and the OTLP exporter are version-locked in practice; splitting
+        # them across PRs produces a pair that never gets tested together.
+        patterns: ["opentelemetry-*"]
+      dev:
+        patterns: ["pytest*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule: { interval: "weekly", day: "monday" }
+    labels: ["dependencies", "ci"]
+    commit-message: { prefix: "chore(ci)" }

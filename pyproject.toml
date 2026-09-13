@@ -4,6 +4,7 @@ version = "0.2.3"
 description = "Telemetry and metadata capture for standards-as-skills (Claude Code + Copilot)"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["telemetry", "opentelemetry", "claude-code", "copilot", "skills", "governance"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -39,7 +40,7 @@ stdtel-hook = "stdtel.hooks.cli:main"
 stdtel-eval = "eval.run_eval:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]   # PEP 639: license-files
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

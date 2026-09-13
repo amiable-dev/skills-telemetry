@@ -1,0 +1,20 @@
+# Every owner here must have write access, or GitHub silently assigns nobody.
+# A personal account has no teams: `@owner/team` looks right and reviews nothing.
+
+*                       @amiable-dev
+
+# Publishing holds id-token: write against PyPI. A change here can ship code as
+# `stdtel` to everyone who has installed it.
+/.github/workflows/     @amiable-dev
+/pyproject.toml         @amiable-dev
+/.claude-plugin/        @amiable-dev
+/plugin.json            @amiable-dev
+
+# The metadata-only promise lives in these three layers (SECURITY.md).
+/stdtel/exporter.py     @amiable-dev
+/stdtel/spool.py        @amiable-dev
+/collector/             @amiable-dev
+
+# The primary metric and the thresholds every published figure rests on.
+/policies/              @amiable-dev
+/eval/power.py          @amiable-dev

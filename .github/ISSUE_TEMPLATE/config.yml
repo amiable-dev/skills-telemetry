@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & discussion
+    url: https://github.com/amiable-dev/skills-telemetry/discussions
+    about: Ask anything that is not clearly a bug or a feature request
+  - name: Security vulnerabilities
+    url: https://github.com/amiable-dev/skills-telemetry/security/advisories/new
+    about: Report privately. Never open a public issue for a vulnerability.
+  - name: No data in my dashboards
+    url: https://github.com/amiable-dev/skills-telemetry/blob/main/SUPPORT.md
+    about: Start with stdtel-doctor — a silent install looks exactly like a working one

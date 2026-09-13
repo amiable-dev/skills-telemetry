@@ -261,6 +261,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_STATE_DIR` | `~/.stdtel/sessions` | state | per-session state between hook processes |
 | `STDTEL_BRANCH` | *(git)* | enrich | overrides branch detection; the ticket key is parsed from it |
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
+| `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | exporter | fallback for direct CLI/CI use only, where nothing scrubs it |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | exporter | fallback, checked before the base URL; must be the full `/v1/traces` URL |
