@@ -116,3 +116,60 @@ def test_every_check_runs_without_an_exception_escaping():
         result = fn()
         assert isinstance(result, Check), fn.__name__
         assert "check itself failed" not in result.detail, f"{fn.__name__}: {result.detail}"
+
+
+# --- the false positive this check produced on a real machine ---
+
+def test_unrelated_hooks_are_not_mistaken_for_ours(tmp_path, monkeypatch):
+    """It reported "registered in settings AND as a plugin" on a machine whose
+    settings held only iterm2 status hooks.
+
+    The check tested `bool(settings["hooks"])` — any hooks at all — so any user
+    with their own hooks got a confidently wrong double-registration warning.
+    """
+    import json
+    from stdtel.doctor import hooks_registered
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text(json.dumps({"hooks": {
+        "Notification": [{"hooks": [{"type": "command", "command": "/usr/local/bin/cc-status"}]}]}}))
+    check = hooks_registered()
+    assert "AND as a plugin" not in check.detail, check.detail
+    assert not check.ok, "no stdtel hooks anywhere means nothing is recorded"
+
+
+def test_stdtel_hooks_in_settings_are_recognised(tmp_path, monkeypatch):
+    import json
+    from stdtel.doctor import hooks_registered
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text(json.dumps({"hooks": {
+        "Stop": [{"hooks": [{"type": "command", "command": "/x/bin/stdtel-hook stop"}]}]}}))
+    assert hooks_registered().ok
+
+
+def test_double_registration_is_still_caught(tmp_path, monkeypatch):
+    import json
+    from stdtel.doctor import hooks_registered
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    claude = tmp_path / ".claude"
+    (claude / "plugins").mkdir(parents=True)
+    (claude / "settings.json").write_text(json.dumps({"hooks": {
+        "Stop": [{"hooks": [{"type": "command", "command": "stdtel-hook stop"}]}]}}))
+    (claude / "plugins" / "installed_plugins.json").write_text('{"stdtel@amiable-standards": true}')
+    check = hooks_registered()
+    assert not check.ok and "AND as a plugin" in check.detail
+
+
+def test_plugin_only_registration_reports_whether_the_cli_is_installed(tmp_path, monkeypatch):
+    """The case that produced no data and no error: plugin enabled, package absent."""
+    import json
+    from stdtel.doctor import hooks_registered
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    claude = tmp_path / ".claude"
+    (claude / "plugins").mkdir(parents=True)
+    (claude / "plugins" / "installed_plugins.json").write_text('{"stdtel@amiable-standards": true}')
+    check = hooks_registered()
+    assert check.ok and "plugin" in check.detail

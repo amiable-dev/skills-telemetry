@@ -89,6 +89,12 @@ uv tool install stdtel        # or: pipx install stdtel
 stdtel-install settings       # merges hooks into ~/.claude/settings.json
 ```
 
+> **Not published yet.** `stdtel` is not on PyPI until the first release
+> ([docs/releasing.md](docs/releasing.md)). Until then install from a checkout:
+> `uv tool install /path/to/skills-telemetry`. This matters more than it looks: the plugin's hooks
+> call a launcher that exits silently when it cannot find the CLI, so an uninstalled package produces
+> **no data and no error**. `stdtel-doctor` says so explicitly.
+
 `stdtel-install` resolves the **absolute path** of the `stdtel-hook` it was installed alongside and
 writes that into the config. This is not cosmetic: hook processes get a non-login `sh -c` and inherit
 whatever PATH launched the harness, so a bare `stdtel-hook` is unresolvable whenever a version manager
