@@ -127,8 +127,14 @@ def test_review_single_user_fires_when_only_one_person_used_a_skill(seeded):
         pytest.skip("no demo skill clears the 30-PR floor; the branch is unreachable here")
     skill = above_floor[0]
     with _connect() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE skill_invocation SET user_hash = 'demo-user-solo' WHERE skill_name = %s",
-                    (skill,))
+        # span_id LIKE 'demo%' is the fence. Demo skill names collide with real
+        # ones — `structured-logging` is both — and an unscoped UPDATE here
+        # rewrote user_hash on eight real rows that `clear()` then had no reason
+        # to remove. A test that corrupts the warehouse it is checking is worse
+        # than no test; the teardown deletes demo rows, so scoping is enough.
+        cur.execute("UPDATE skill_invocation SET user_hash = 'demo-user-solo' "
+                    "WHERE skill_name = %s AND span_id LIKE 'demo%%'", (skill,))
+        assert cur.rowcount, "no demo rows matched: the fence would make this test vacuous"
         conn.commit()
     rows = {r["skill_name"]: r for r in scorecard_rows()}
     assert int(rows[skill]["distinct_users"]) == 1
