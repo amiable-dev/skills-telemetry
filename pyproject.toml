@@ -32,6 +32,7 @@ warehouse = ["psycopg[binary]>=3.1", "requests>=2.31"]   # warehouse/load_traces
 stdtel-validate = "stdtel.manifest:cli"
 stdtel-install = "stdtel.install:main"
 stdtel-policy-report = "stdtel.policy_report:main"
+stdtel-doctor = "stdtel.doctor:main"
 stdtel-hook = "stdtel.hooks.cli:main"
 stdtel-eval = "eval.run_eval:main"
 
