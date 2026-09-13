@@ -211,7 +211,7 @@ never loads a skill is still spend, and excluding it would silently understate c
 | `std.skill.load_tokens`, `std.skill.tail_tokens`, `std.skill.tail_tokens_first_only`, `std.skill.llm_requests` | transcript attribution |
 | `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens`, `gen_ai.request.model` | transcript |
 | `std.ticket.id`, `std.repo`, `std.team`, `std.harness`, `std.harness.mode` | resource (SessionStart) |
-| `std.user.hash` | collector (pseudonymised) |
+| `std.user.hash` | hook, already SHA-256 of uid + hostname (the collector also pseudonymises `user.email` if a harness supplies one) |
 
 ## Known limitations
 

@@ -173,3 +173,82 @@ def test_plugin_only_registration_reports_whether_the_cli_is_installed(tmp_path,
     (claude / "plugins" / "installed_plugins.json").write_text('{"stdtel@amiable-standards": true}')
     check = hooks_registered()
     assert check.ok and "plugin" in check.detail
+
+
+# --- #44: "hooks running" was true, and about somebody else's project ---
+
+def _session(state_dir: Path, projects: Path, session_id: str, project: str | None):
+    """A session state file, optionally with the transcript that places it."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / f"{session_id}.json").write_text("{}")
+    if project:
+        (projects / project).mkdir(parents=True, exist_ok=True)
+        (projects / project / f"{session_id}.jsonl").write_text("")
+
+
+def _recent_state(monkeypatch, tmp_path, cwd: Path, sessions: list[tuple[str, str | None]]):
+    from stdtel.doctor import recent_state
+    state_dir, projects = tmp_path / "state", tmp_path / ".claude" / "projects"
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(state_dir))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    cwd.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(cwd)
+    for session_id, project in sessions:
+        _session(state_dir, projects, session_id, project)
+    return recent_state()
+
+
+def test_state_from_this_project_passes(monkeypatch, tmp_path):
+    cwd = tmp_path / "work" / "mine"
+    check = _recent_state(monkeypatch, tmp_path, cwd, [("sess-1", str(cwd).replace("/", "-"))])
+    assert check.ok and "this project" in check.detail
+
+
+def test_state_only_from_another_project_is_not_ok(monkeypatch, tmp_path):
+    """The #44 case exactly: every state file belonged to a different project,
+    the session being watched had none, and the report said `ok hooks running`.
+
+    Claude Code reads hook configuration at session start, so a session that was
+    already open when stdtel was installed never runs the hooks — for its whole
+    life, however long that is.
+    """
+    cwd = tmp_path / "work" / "mine"
+    check = _recent_state(monkeypatch, tmp_path, cwd, [("sess-2", "-somewhere-else")])
+    assert not check.ok
+    assert "somewhere-else" in check.detail, "say whose data it is, not just that it exists"
+    assert "restart" in check.remedy.lower()
+
+
+def test_no_state_at_all_is_distinct_from_state_elsewhere(monkeypatch, tmp_path):
+    cwd = tmp_path / "work" / "mine"
+    empty = _recent_state(monkeypatch, tmp_path, cwd, [])
+    elsewhere = _recent_state(monkeypatch, tmp_path, cwd, [("sess-3", "-elsewhere")])
+    assert not empty.ok and not elsewhere.ok
+    assert empty.detail != elsewhere.detail, "the two need different remedies"
+
+
+def test_state_whose_project_cannot_be_told_is_not_reported_as_this_project(monkeypatch, tmp_path):
+    """Copilot writes no Claude transcript, so ownership is sometimes unknowable.
+
+    Unknown is not the same as wrong: it passes, but it must not claim the state
+    came from here.
+    """
+    cwd = tmp_path / "work" / "mine"
+    check = _recent_state(monkeypatch, tmp_path, cwd, [("sess-4", None)])
+    assert check.ok
+    assert "this project" not in check.detail
+
+
+def test_the_installer_says_open_sessions_must_be_restarted(capsys, tmp_path, monkeypatch):
+    """The moment a developer needs to hear it is the moment they install.
+
+    Without it, they install, keep working in the session they already had open,
+    see nothing for hours, and conclude the tool is broken (#44).
+    """
+    from stdtel import install
+    monkeypatch.setattr(install, "hook_binary", lambda: "/somewhere/stdtel-hook")
+    settings = tmp_path / "settings.json"
+    assert install.main(["settings", "--path", str(settings)]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "restart" in out and "already open" in out

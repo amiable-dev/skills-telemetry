@@ -129,6 +129,14 @@ def _dump(obj: dict) -> str:
     return json.dumps(obj, indent=2)
 
 
+# Said at the moment it can still save someone hours. Hook configuration is read
+# at session start, so a session that is already open runs no hooks for the rest
+# of its life — and hooks exit 0 in silence, so it looks exactly like a working
+# install producing no work (#44).
+RESTART_NOTICE = ("\nRestart Claude Code to pick these up. A session that is already open keeps "
+                  "the\nhook configuration it started with, and will record nothing.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="stdtel-install", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -166,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             merge_settings(args.path, block)
             print(f"wrote {len(block['hooks'])} hook events to {args.path} -> {binary}")
+            print(RESTART_NOTICE)
     return 0
 
 

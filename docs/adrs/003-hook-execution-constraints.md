@@ -59,6 +59,11 @@ properties of that environment are non-negotiable and were each discovered the h
 6. **Harness detection uses camelCase keys as positive evidence of Copilot**, falling back to
    `STDTEL_HARNESS`. Copilot's snake_case dialect is indistinguishable from Claude Code's, so its
    hooks must set `STDTEL_HARNESS` in their own `env` block.
+7. **Identity is derived, never generated** (`stdtel/identity.py`). A value the SDK generates per
+   process is a new value per hook, and `service.instance.id` becomes Prometheus's `instance` label
+   — so every span opened its own series, each counter reached 1 and stopped, and every `rate()`
+   panel read zero at any volume (#42). `service.instance.id` and `std.user.hash` are both SHA-256
+   of values that exist under `env -i`: the hostname, and the uid with the hostname.
 
 ## Consequences
 
@@ -68,6 +73,11 @@ properties of that environment are non-negotiable and were each discovered the h
   because it overlaps multi-second model turns, but it is not free and must not regress.
 - A distributed hook manifest cannot carry the absolute path, so `stdtel-install` must run after any
   plugin install. Shipped manifests carry the bare name and are explicitly a step short of working.
+- Separate processes also mean **nothing can be held in memory between events**, and that anything
+  the harness decides at session start — hook registration above all — is fixed for that session's
+  life. An install never reaches an already-open session, which is invisible because hooks exit 0
+  (#44). `stdtel-install` says so, and `stdtel-doctor` reports which project its newest data came
+  from rather than that data exists.
 
 ### Known limitations
 

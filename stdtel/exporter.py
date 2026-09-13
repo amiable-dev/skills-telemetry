@@ -23,7 +23,18 @@ FORBIDDEN_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.
 
 
 def build_provider(resource_attrs: dict, exporter: SpanExporter | None = None) -> TracerProvider:
+    """Provider for one hook process.
+
+    `service.instance.id` is pinned deliberately. Left unset the SDK generates a
+    UUID per process, and prometheusremotewrite maps it to the `instance` label —
+    so every hook opened a new time series, each counter reached 1 and stopped,
+    and rate() was structurally zero (#42). Anything in resource_attrs still
+    wins, for fleets that set their own.
+    """
+    from stdtel.identity import machine_id
+
     base = {"service.name": os.environ.get("OTEL_SERVICE_NAME", "stdtel"),
+            "service.instance.id": machine_id(),
             "std.harness": resource_attrs.get("std.harness", "claude-code")}
     base.update({k: v for k, v in resource_attrs.items() if v is not None})
     provider = TracerProvider(resource=Resource.create(base))

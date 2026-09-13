@@ -4,6 +4,30 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.2.4 — 2026-09-13
+
+### Fixed
+- **Span-metric counters could never increase, so three dashboard panels read zero at any volume.**
+  Unset, the OpenTelemetry SDK generates `service.instance.id` per process, and
+  `prometheusremotewrite` maps it to the `instance` label — so every hook, being its own process,
+  opened a brand-new series which received exactly one increment and was abandoned. `rate()` needs
+  two points in one series and always had one. Measured before the fix:
+  `max(traces_span_metrics_calls_total)` = 1 across 563 samples, with cardinality growing by a series
+  set per hook invocation. Identity is now derived rather than generated (`stdtel/identity.py`), and
+  the metrics pipeline drops `service.instance.id` regardless of who sent it. `deploy/smoke.sh` emits
+  from two separate processes and fails if the counter does not reach 2. (#42)
+- **`distinct_users` read 0 for every skill, at every volume.** The collector derived `std.user.hash`
+  from `user.email`, which nothing ever set, so the scorecard's `review-single-user` verdict could
+  never fire and the "5+ developers" half of the reporting floor was measured by a column pinned at
+  zero. The hook now emits a pseudonymous per-developer id — SHA-256 of uid and hostname, hashed
+  before it leaves the process, never reversible to a name. (#43)
+- **`stdtel-doctor` reported "hooks running" when the current project was recording nothing.** Every
+  state file on the machine belonged to other projects; the session being watched had none. The check
+  now says which project its newest data came from, and fails when none of it is from here. Claude
+  Code reads hook configuration at session start, so a session already open when stdtel was installed
+  runs no hooks for its entire life — `stdtel-install` now says so, and it is the first entry under
+  "empty dashboards" in SUPPORT.md. (#44)
+
 ## 0.2.3 — 2026-09-12
 
 First release published to PyPI: `uv tool install stdtel`.

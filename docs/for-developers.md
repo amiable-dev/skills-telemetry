@@ -20,6 +20,7 @@ One span per skill invocation and one per turn, containing only these fields:
 | session id, prompt id | opaque uuids | the harness |
 | ticket id | `PLAT-42` | **parsed from your git branch name** |
 | repo, team, harness | `payments-api`, `payments`, `claude-code` | git remote and configuration |
+| a pseudonymous id for you | `3f9a1c7e0b2d4a86` | SHA-256 of your uid and hostname, hashed **before** it leaves the process. It answers "how many people used this skill", which the reporting floor needs; it is not reversible to your name, and the same person on two machines counts as two |
 | duration | `3ms` | the harness |
 
 That is the whole list. You can print it yourself — see [verify it](#verify-it-yourself).
@@ -120,6 +121,7 @@ most editors do not show. A silent hook is therefore normal-looking. To check:
 
 | symptom | check |
 |---|---|
+| nothing from the session you are watching | **was it already open when you installed?** Hook configuration is read at session start, so a session that predates the install runs no hooks for the rest of its life. Restart Claude Code. `stdtel-doctor` now says which project its newest data came from |
 | the plugin is installed but nothing is recorded | expected when the `stdtel` package is not installed — the plugin's launcher exits silently by design. `uv tool install stdtel`, then check `stdtel-install where` |
 | nothing recorded at all | `stdtel-install where` — if the hook is registered by bare name it may be unresolvable, since hooks do not get your login shell's PATH |
 | skills show as `unversioned` | the catalogue cannot find them: `stdtel-validate ~/.claude/skills` |

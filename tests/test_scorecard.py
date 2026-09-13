@@ -105,3 +105,31 @@ def test_a_pr_counts_once_however_often_the_skill_was_invoked(seeded):
         "JOIN skill_invocation i ON i.ticket_id = p.ticket_id "
         "WHERE i.skill_name = 'structured-logging'"))
     assert int(row["n_with"]) <= prs_using, f"n_with={row['n_with']} > {prs_using} PRs using it"
+
+
+# --- #43: distinct_users read 0 for every skill, at every volume ---
+
+def test_the_demo_fleet_has_more_than_one_developer(seeded):
+    """A synthetic pack with one user cannot exercise the branch below."""
+    assert int(psql("SELECT count(DISTINCT user_hash) FROM skill_invocation")) > 1
+
+
+def test_review_single_user_fires_when_only_one_person_used_a_skill(seeded):
+    """The branch existed and could never be reached.
+
+    `std.user.hash` was derived at the collector from `user.email`, which nothing
+    ever set, so COUNT(DISTINCT user_hash) was 0 — never 1 — and a skill used by
+    exactly one person was never flagged. Vacuous truth is a bug (ADR-005).
+    """
+    above_floor = [r["skill_name"] for r in scorecard_rows()
+                   if "insufficient" not in r["recommended_action"]]
+    if not above_floor:
+        pytest.skip("no demo skill clears the 30-PR floor; the branch is unreachable here")
+    skill = above_floor[0]
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE skill_invocation SET user_hash = 'demo-user-solo' WHERE skill_name = %s",
+                    (skill,))
+        conn.commit()
+    rows = {r["skill_name"]: r for r in scorecard_rows()}
+    assert int(rows[skill]["distinct_users"]) == 1
+    assert rows[skill]["recommended_action"] == "review-single-user", rows[skill]

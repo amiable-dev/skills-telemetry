@@ -67,6 +67,15 @@ echo "{\"session_id\":\"$SID\",\"tool_name\":\"Skill\",\"tool_use_id\":\"s1\"}" 
 echo "{\"session_id\":\"$SID\"}" | "$HOOK" stop
 [ -f "$STDTEL_STATE_DIR/$SID.json" ] && ok "hook wrote session state" || bad "no state file" "check 'stdtel-install where' and that the hook path is absolute"
 
+# A second invocation, from a second set of processes. Not redundant: the whole
+# of #42 was that each hook process opened its own series, so one emission looks
+# identical whether the counter can accumulate or not. Step 6 checks it did.
+SID2="smoke-$(date +%s)-b"
+echo "{\"session_id\":\"$SID2\",\"cwd\":\"$PWD\"}" | "$HOOK" session-start
+echo "{\"session_id\":\"$SID2\",\"tool_name\":\"Skill\",\"tool_use_id\":\"s2\",\"tool_input\":{\"skill\":\"structured-logging\"}}" | "$HOOK" pre-tool-use
+echo "{\"session_id\":\"$SID2\",\"tool_name\":\"Skill\",\"tool_use_id\":\"s2\"}" | "$HOOK" post-tool-use
+echo "{\"session_id\":\"$SID2\"}" | "$HOOK" stop
+
 echo "4. collector accepted it"
 accepted=$(curl -s --max-time 5 "$COLLECTOR_METRICS/metrics" | awk '/^otelcol_receiver_accepted_spans/{s+=$2} END{print s+0}')
 [ "${accepted:-0}" -gt 0 ] && ok "collector accepted $accepted span(s)" || bad "collector accepted 0 spans" "the exporter never reached it: check STDTEL_OTLP_ENDPOINT (OTEL_* is scrubbed from hooks)"
@@ -95,6 +104,26 @@ have_metrics() {
 # the span emitted above must cross the connector, remote write and a scrape
 retry 12 5 have_metrics && ok "$series span-metric series" \
   || bad "no span metrics after 60s" "check otelcol_exporter_send_failed_metric_points at :8888, and that the spanmetrics connector is in the traces pipeline"
+
+# The series existing is not the same as the series being usable. #42: every hook
+# process carried a generated service.instance.id, which becomes the `instance`
+# label, so every span landed in a fresh series that reached 1 and stopped. Every
+# rate() panel read zero at any volume while the legend looked healthy.
+promq() { curl -s --get "$PROM/api/v1/query" --data-urlencode "query=$1" \
+          | sed -n 's/.*"value":\[[^,]*,"\([^"]*\)"\].*/\1/p'; }
+counter_accumulates() {
+    peak=$(promq 'max(traces_span_metrics_calls_total{span_name="std.skill.invocation"})')
+    peak=${peak%%.*}
+    [ "${peak:-0}" -ge 2 ]
+}
+retry 12 5 counter_accumulates && ok "counter reached $peak across separate hook processes" \
+  || bad "counter never exceeded ${peak:-0} after two invocations" \
+        "each hook process is opening its own series - check service.instance.id is pinned (stdtel/identity.py) and that the metrics pipeline drops it (#42)"
+
+instances=$(promq 'count(count by (instance) (traces_span_metrics_calls_total{span_name="std.skill.invocation"}))')
+instances=${instances%%.*}
+[ "${instances:-0}" -le 1 ] && ok "one series per skill, not one per process" \
+  || bad "$instances distinct instance labels" "cardinality is growing per hook process; stale series clear after ~5m, so re-run if you have just fixed it (#42)"
 
 echo "7. postgres schema and loader"
 cols=$(docker exec "$PG" psql -U postgres -d stdtel -tAc \
