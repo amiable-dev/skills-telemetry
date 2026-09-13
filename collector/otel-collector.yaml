@@ -52,6 +52,16 @@ processors:
           - delete_key(attributes, "user.email")
           - delete_key(attributes, "user.id")
 
+  # Defence in depth for #42. prometheusremotewrite maps service.instance.id to
+  # the `instance` label, so any producer that leaves it generated opens a new
+  # series per process — a counter that reaches 1 and stops, and a rate() that is
+  # structurally zero. stdtel pins it now; Copilot's native SDK does not, and we
+  # do not control that. Stripped on the metrics pipeline only: traces keep it,
+  # and no dashboard groups by instance.
+  resource/collapse_instance:
+    attributes:
+      - { key: service.instance.id, action: delete }
+
   batch: {}
 
 connectors:
@@ -94,7 +104,7 @@ service:
       exporters: [otlp/tempo, spanmetrics]
     metrics:
       receivers: [otlp, spanmetrics]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, resource/collapse_instance, batch]
       exporters: [prometheusremotewrite]
     logs:
       receivers: [otlp]

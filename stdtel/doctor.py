@@ -158,8 +158,37 @@ def collector_ok() -> Check:
                      "STDTEL_OTLP_ENDPOINT at a live collector (OTEL_* cannot reach a hook)")
 
 
+def _project_slug(path: Path) -> str:
+    """Claude Code names a project directory after its path, with / as -."""
+    return str(path).replace("/", "-")
+
+
+def _owning_project(session_id: str) -> str | None:
+    """Which project's transcript directory holds this session, if any."""
+    try:
+        for d in (Path.home() / ".claude" / "projects").iterdir():
+            if (d / f"{session_id}.jsonl").exists():
+                return d.name
+    except Exception:                             # noqa: BLE001 - a diagnostic must never crash
+        pass
+    return None
+
+
 def recent_state() -> Check:
-    """Has a hook actually run recently? Registration alone proves nothing."""
+    """Has a hook run recently *for this project*? Registration proves nothing.
+
+    Neither does state from somewhere else, which is how #44 presented: every
+    state file on the machine belonged to other projects, the session being
+    watched had none, and this check said `ok hooks running`. True, and the
+    opposite of useful.
+
+    Claude Code reads hook configuration at session start, so a session that was
+    already open when stdtel was installed runs no hooks for its entire life.
+    That is the single most common reason for an empty dashboard, and it is
+    invisible unless the check knows whose data it found.
+    """
+    import datetime as dt
+
     from stdtel.state import state_dir
     try:
         files = sorted(state_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -169,9 +198,23 @@ def recent_state() -> Check:
         return Check("hooks running", False, "no session state has ever been written",
                      "the hooks are registered but not firing; run `stdtel-install where` and "
                      "invoke stdtel-hook by hand to see the error")
-    import datetime as dt
-    newest = dt.datetime.fromtimestamp(files[0].stat().st_mtime)
-    return Check("hooks running", True, f"last session state {newest:%Y-%m-%d %H:%M}")
+
+    when = lambda f: f"{dt.datetime.fromtimestamp(f.stat().st_mtime):%Y-%m-%d %H:%M}"
+    here = _project_slug(Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()))
+    owners = {f: _owning_project(f.stem) for f in files}
+    mine = [f for f in files if owners[f] == here]
+    if mine:
+        return Check("hooks running", True, f"last session state {when(mine[0])}, from this project")
+    if all(o is None for o in owners.values()):
+        # Copilot writes no Claude transcript, so ownership can be unknowable.
+        # Unknown is not wrong — but it must not be reported as "from here".
+        return Check("hooks running", True, f"last session state {when(files[0])}, project unknown")
+    elsewhere = next(o for o in owners.values() if o)
+    return Check("hooks running", False,
+                 f"newest state {when(files[0])} came from {elsewhere.lstrip('-')}, "
+                 f"nothing from this project",
+                 "hook configuration is read at session start, so a session already open when "
+                 "stdtel was installed never picks it up — restart Claude Code in this project")
 
 
 CHECKS = (hook_resolvable, hooks_registered, ticket_key, catalogue_ok, collector_ok, recent_state)

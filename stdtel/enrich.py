@@ -6,6 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from stdtel.identity import developer_hash
+
 TICKET = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d{1,6})\b")
 
 
@@ -56,4 +58,9 @@ def resource_attributes(cwd: Path | None = None, payload: dict | None = None) ->
         "std.team": os.environ.get("STDTEL_TEAM", "unknown"),
         "std.harness": detect_harness(payload) or os.environ.get("STDTEL_HARNESS", "claude-code"),
         "std.harness.mode": os.environ.get("STDTEL_HARNESS_MODE", "agent"),
+        # Pseudonymous, and already hashed when it leaves the process. The
+        # collector derived this from user.email, which nothing ever set, so
+        # distinct_users read 0 for every skill at every volume (#43) — and the
+        # "5+ developers" half of the reporting floor was measured by it.
+        "std.user.hash": developer_hash(),
     }

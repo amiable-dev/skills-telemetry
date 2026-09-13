@@ -72,6 +72,25 @@ def test_collector_exports_plugin_as_a_metric_dimension():
     assert "std.skill.plugin" in cfg, "plugin must be groupable in Prometheus too"
 
 
+def test_metrics_pipeline_drops_service_instance_id():
+    """prometheusremotewrite maps it to `instance`, and a per-process value there
+    gives every span its own series — a counter stuck at 1 and a rate of 0 (#42).
+
+    stdtel pins the value now, but Copilot's native SDK does not and we do not
+    control it, so the metrics pipeline drops it regardless of who sent it.
+    """
+    import yaml
+    cfg = yaml.safe_load((ROOT / "collector" / "otel-collector.yaml").read_text())
+    processor = next(k for k in cfg["processors"] if k.startswith("resource/"))
+    deleted = {a["key"] for a in cfg["processors"][processor]["attributes"]
+               if a["action"] == "delete"}
+    assert "service.instance.id" in deleted
+    assert processor in cfg["service"]["pipelines"]["metrics"]["processors"], \
+        "declared but not in the pipeline drops nothing"
+    assert processor not in cfg["service"]["pipelines"]["traces"]["processors"], \
+        "traces keep it: per-machine detail is wanted there, and costs no series"
+
+
 # --- Tempo returns two different span shapes; the loader reads the OTLP one ---
 
 def test_otlp_json_ids_are_decoded_to_hex():
@@ -187,3 +206,11 @@ def test_down_stops_the_optional_profile_too():
     makefile = (ROOT / "Makefile").read_text()
     down = next(l for l in makefile.splitlines() if l.startswith("down:"))
     assert "--profile langfuse" in down, "down must cover the opt-in services"
+
+
+def test_user_hash_is_read_from_the_resource():
+    """It is a resource attribute, set once at SessionStart, not per span (#43)."""
+    mod = loader()
+    row = mod.parse_span({"std.skill.name": "s"}, {"std.user.hash": "3f9a1c7e0b2d4a86"},
+                         {"spanID": "s", "traceID": "t", "startTimeUnixNano": "0"})
+    assert row["user_hash"] == "3f9a1c7e0b2d4a86"
