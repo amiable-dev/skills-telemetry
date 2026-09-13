@@ -36,6 +36,39 @@ jobs:
           fi
       - run: python -m eval.run_eval --dry-run --out /tmp/eval.jsonl
 
+  policy-results:
+    # Produces the policy_result artefact the primary metric is computed from.
+    # run_seq must be recorded here: after the fact, re-runs and retries make the
+    # true ordering unknowable, and "first-time pass" is the whole metric.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: { contents: read, actions: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: install opa
+        run: |
+          curl -sSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+      - run: |
+          uv venv --python 3.12
+          uv pip install -e .
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: grade the tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stdtel-policy-report \
+            --pr-id "${{ github.repository }}#${{ github.event.pull_request.number }}" \
+            --derive-run-seq "${{ github.repository }}" ci.yml "${{ github.head_ref }}" \
+            --out policy-results.jsonl
+          cat policy-results.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: policy-results
+          path: policy-results.jsonl
+
   distribution:
     # ADR-001: the install channel must keep working from a clean machine, and a
     # hook must run with no environment at all — that is what a hook shell gives it.

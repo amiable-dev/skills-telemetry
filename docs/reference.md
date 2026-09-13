@@ -100,6 +100,40 @@ Exit codes: `0` the run completed (this says nothing about whether the arms pass
 
 ---
 
+## `stdtel-policy-report`
+
+Grades a PR's working tree with OPA and writes the `policy_result` rows the primary metric is computed
+from. Runs in CI; `warehouse/load_delivery.py --policy-results` ingests the output unchanged.
+
+```
+stdtel-policy-report --pr-id owner/repo#42 (--run-seq N | --derive-run-seq REPO WORKFLOW BRANCH)
+                     [--policies DIR] [--policy-ids a,b] [--workdir DIR] [--out FILE]
+```
+
+| flag | default | meaning |
+|---|---|---|
+| `--pr-id` | *(required)* | must match `pull_request.pr_id`, i.e. `owner/repo#number` |
+| `--run-seq` | — | explicit sequence number; `1` is the first CI run on the PR |
+| `--derive-run-seq` | — | count prior completed runs with `gh` and use the next number |
+| `--policies` | `policies` | Rego root |
+| `--policy-ids` | *(all discovered)* | comma-separated package names |
+| `--workdir` | `.` | tree to grade |
+| `--out` | `policy-results.jsonl` | JSONL output |
+
+> **`run_seq` is the metric, not metadata.** First-*time* pass rate cannot be reconstructed later —
+> re-runs, retries and cancelled jobs make the true ordering unknowable from history. Record it when
+> CI knows it. If the count cannot be determined, the tool treats the run as the first and says so:
+> a duplicated `run_seq=1` shows up as a conflict, whereas skipping to `2` would silently destroy the
+> first-time measurement.
+
+Exit codes: `0` report written (this says nothing about whether policies passed — read the rows) ·
+`2` the policy root is missing or contains no packages.
+
+A policy that cannot be evaluated is written as `passed: false` with the reason on stderr. It is never
+omitted, because an absent row and a failing row must not look alike.
+
+---
+
 ## `stdtel-hook`
 
 Invoked by the harness, one process per event, reading the payload as JSON on stdin.

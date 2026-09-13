@@ -22,3 +22,6 @@ deploy/tempo-data/
 
 # local-only credentials for the Langfuse profile
 deploy/.env
+
+# Graft runtime cache (session-scoped, churns constantly)
+graft/.cache/
