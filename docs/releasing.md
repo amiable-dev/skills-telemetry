@@ -46,6 +46,24 @@ The workflow then builds, checks the tag matches the version, **installs the whe
 and runs every console script**, and publishes. A wheel that cannot be installed fails on someone
 else's machine rather than ours, so that check is not optional.
 
+## Safety properties
+
+These are enforced by `tests/test_publish_workflow.py`, because the cost of getting them wrong is
+permanent — PyPI never allows re-uploading a version, even after deletion.
+
+- **The real index is reachable only by publishing a release.** A manual dispatch has no tag, so the
+  version-vs-tag check cannot run; allowing manual publishes to PyPI would let any build go out under
+  any version number. Manual dispatch targets Test PyPI only.
+- **The version must not already exist** on the target index. Checked before the build is uploaded, so
+  the failure names the version rather than surfacing as an opaque 400 at the last step.
+- **The wheel is installed into a clean venv and every console script is run** before anything
+  publishes.
+- **No long-lived token** exists in the repository; `id-token: write` is granted to the publishing jobs
+  only, not the whole workflow.
+
+Worth adding on the GitHub side, which cannot be asserted from here: a **required reviewer** on the
+`pypi` environment, and restricting its deployment branches to protected branches or `v*` tags.
+
 ## Rehearse first
 
 ```bash
