@@ -1,6 +1,12 @@
 name: ci
 on: [push, pull_request]
 
+# Stated, not inherited. The repository default happens to be read-only today,
+# so omitting this was harmless — but it is a settings toggle away from granting
+# every job write access to the repo, silently and retroactively.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

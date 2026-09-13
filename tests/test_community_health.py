@@ -78,3 +78,42 @@ def test_gitleaks_allowlist_is_scoped_to_the_development_stack():
     for path in paths:
         assert path.startswith(("deploy/", "docs/")) or path.startswith("toolu_"), \
             f"{path} allowlists more than the local stack"
+
+
+# --- the token every workflow runs with ---
+
+def _workflows():
+    import yaml
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        yield path, yaml.safe_load(path.read_text())
+
+
+def test_every_workflow_states_its_permissions():
+    """Inherited is not the same as read-only.
+
+    With no top-level `permissions`, jobs get whatever the repository default is.
+    That default is read today, and it is one settings toggle away from granting
+    every job write access to the repo — retroactively, across every workflow,
+    with no diff to notice.
+    """
+    for path, wf in _workflows():
+        assert wf.get("permissions") == {"contents": "read"}, \
+            f"{path.name}: declare `permissions: {{contents: read}}` and widen per job"
+
+
+def test_write_scopes_are_granted_per_job_not_workflow_wide():
+    """`id-token: write` mints a PyPI credential; `security-events: write` writes
+    to the security tab. Neither belongs to the build job that runs repo code."""
+    for path, wf in _workflows():
+        for name, job in (wf.get("jobs") or {}).items():
+            for scope, level in (job.get("permissions") or {}).items():
+                if level == "write":
+                    assert scope in ("id-token", "security-events"), \
+                        f"{path.name}/{name}: unexpected write scope {scope}"
+
+
+def test_no_workflow_uses_pull_request_target():
+    """It runs with the base repo's token and secrets against a fork's code."""
+    for path, wf in _workflows():
+        triggers = wf.get("on") or wf.get(True)    # PyYAML reads `on:` as True
+        assert "pull_request_target" not in (triggers or {}), path.name
