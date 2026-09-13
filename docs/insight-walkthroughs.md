@@ -174,6 +174,66 @@ curl -s --get http://localhost:3200/api/search \
 reads exactly like an empty pipeline. This cost real debugging time during development; if a Tempo
 query returns nothing, check the time range before concluding anything.
 
+## From nothing to a populated dashboard
+
+Two paths, both verified end to end. Run them in order: the synthetic one shows what a finding looks
+like, the real one shows what your own data will actually do at first.
+
+### Synthetic — what a finding looks like
+
+```bash
+make up && make demo
+open http://localhost:3000     # "Skill scorecard"
+```
+
+```
+skill                 n_with   with   n_wo  without  action
+structured-logging        38   0.74     53     0.40  keep
+stdtel-onboard            10   0.60     19     0.53  insufficient-data
+uncatalogued-helper        -      -      -        -  insufficient-data
+```
+
+One finding and two refusals, on 120 synthetic PRs. `make demo-clear` removes it.
+
+### Real — what yours will do
+
+```bash
+# 1. check the install before trusting anything it produces
+stdtel-doctor
+
+# 2. work on a ticket-prefixed branch, or none of it is attributable
+git checkout -b feature/PLAT-42-thing
+
+# 3. telemetry flows from your hooks; load it
+python warehouse/load_traces.py --tempo http://localhost:3200 --dsn "$STDTEL_DSN" --since 24h
+
+# 4. delivery outcomes from GitHub
+python -m warehouse.load_delivery --repo owner/name --dsn "$STDTEL_DSN" --since 30d
+
+# 5. policy results, which only CI can record (run_seq is the metric)
+stdtel-policy-report --pr-id owner/name#42 --run-seq 1 --out policy.jsonl
+```
+
+Run against this repository's own history, that produces:
+
+```
+skill                n_with  n_without  action
+stdtel-query              1          -  insufficient-data
+structured-logging        -          1  insufficient-data
+```
+
+**That refusal is the correct output**, and it is what you should expect for weeks. One PR cannot
+support a comparison; see [evaluation-power.md](evaluation-power.md).
+
+### The fault you will actually hit
+
+Loading this repository's first ten merged PRs produced **zero ticket rows** — none of those branches
+carried a ticket key, so every one is `unattributed` and excluded from outcome analysis. The eleventh,
+on `feature/STDTEL-15-doctor`, produced a ticket row immediately.
+
+This is not recoverable later: renaming a branch tomorrow does not retroactively attribute today's PRs.
+`stdtel-doctor` checks it, and the data-quality panel on the dashboard counts it.
+
 ## The recurring tells
 
 | looks like | actually is | the tell |
