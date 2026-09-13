@@ -28,9 +28,14 @@ The environment name must match, or the publish is rejected with a mismatched-cl
 > if someone takes it first, the name in `pyproject.toml` and all three plugin manifests must change
 > together — a test enforces that they agree.
 
-Then create the matching GitHub environments — Settings → Environments → `pypi` and `testpypi`. They
-can be empty; their existence is what the workflow's `environment:` key binds to. Adding a required
-reviewer to `pypi` gives you a human gate on every publish, which is worth having.
+Then create the matching GitHub environments — Settings → Environments → `pypi` and `testpypi`. Their
+existence is what the workflow's `environment:` key binds to.
+
+`pypi` needs one setting beyond existing: under **Deployment branches and tags**, add a rule for the
+tag pattern `v*`. A release fires the workflow on a *tag* ref, and the default "Protected branches
+only" policy rejects tag refs — the run reaches the `pypi` job and stops there with a branch-policy
+error, after the build has already passed. Adding a **required reviewer** to `pypi` on top of that
+gives you a human gate on every publish, which is worth having.
 
 ## Every release
 
@@ -61,15 +66,21 @@ permanent — PyPI never allows re-uploading a version, even after deletion.
 - **No long-lived token** exists in the repository; `id-token: write` is granted to the publishing jobs
   only, not the whole workflow.
 
-Worth adding on the GitHub side, which cannot be asserted from here: a **required reviewer** on the
-`pypi` environment, and restricting its deployment branches to protected branches or `v*` tags.
+One more is worth adding on the GitHub side, which cannot be asserted from here: a **required
+reviewer** on the `pypi` environment. Its deployment rule is already restricted to `v*` tags.
 
 ## Rehearse first
 
 ```bash
 gh workflow run publish.yml -f target=testpypi
-uv tool install --index https://test.pypi.org/simple/ stdtel   # verify it installs from the index
+# Test PyPI carries stdtel but not its dependencies, so the resolver must be allowed
+# to fall back to the real index for those:
+uv tool install stdtel --index https://test.pypi.org/simple/ --index-strategy unsafe-best-match
 ```
+
+Those switches get recorded in the tool's `uv-receipt.toml`, so a later `uv tool upgrade` keeps
+resolving from Test PyPI. Reinstall cleanly (`uv tool uninstall stdtel && uv tool install stdtel`)
+once the real release is out, rather than leaving a rehearsal install as the working setup.
 
 Test PyPI is the only way to find out that a package is broken *before* the version number is burned:
 PyPI does not allow re-uploading a version, even after deletion.

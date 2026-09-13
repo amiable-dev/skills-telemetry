@@ -61,7 +61,7 @@ stdtel-validate [root] [--quiet]
 | `1` | a manifest is invalid or two skills share a name |
 | `2` | the root does not exist |
 
-> Until the first PyPI release, install from a checkout: `uv tool install /path/to/skills-telemetry`. See [releasing.md](releasing.md).
+> To run an unreleased change, install from a checkout instead: `uv tool install /path/to/skills-telemetry`. See [releasing.md](releasing.md).
 
 Exit `2` matters: this used to exit `0` with "0 skill(s) valid" for a missing directory, so a typo'd
 path in CI reported a clean gate over nothing.

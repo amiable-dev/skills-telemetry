@@ -6,6 +6,15 @@ version until this number changes — so bump it for anything a user would recei
 
 ## 0.2.3 — 2026-09-12
 
+First release published to PyPI: `uv tool install stdtel`.
+
+### Changed
+- **Publishing to the real index is release-only.** A manual dispatch skipped the version-vs-tag check
+  (gated on `github.event_name == 'release'`), so any build could have gone out under any version —
+  permanently, since PyPI never allows re-uploading a version. Manual dispatch now targets Test PyPI
+  only. Added a pre-flight check that the version is free on the target index, so a collision names the
+  version instead of surfacing as an opaque 400 at the final step.
+
 ### Fixed
 - **Hooks failed with `stdtel-hook: command not found` on every tool call.** The shipped manifests used
   the bare command name, which does not resolve in a hook's non-login `sh -c`. They now invoke

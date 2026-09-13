@@ -89,11 +89,11 @@ uv tool install stdtel        # or: pipx install stdtel
 stdtel-install settings       # merges hooks into ~/.claude/settings.json
 ```
 
-> **Not published yet.** `stdtel` is not on PyPI until the first release
-> ([docs/releasing.md](docs/releasing.md)). Until then install from a checkout:
-> `uv tool install /path/to/skills-telemetry`. This matters more than it looks: the plugin's hooks
-> call a launcher that exits silently when it cannot find the CLI, so an uninstalled package produces
-> **no data and no error**. `stdtel-doctor` says so explicitly.
+> **Install the package, not just the plugin.** The plugin's hooks call a launcher that exits
+> silently when it cannot find the CLI, so a missing package produces **no data and no error** —
+> which is exactly how it presents: dashboards that stay empty with nothing in any log.
+> `stdtel-doctor` says so explicitly. To run from a checkout instead:
+> `uv tool install /path/to/skills-telemetry`.
 
 `stdtel-install` resolves the **absolute path** of the `stdtel-hook` it was installed alongside and
 writes that into the config. This is not cosmetic: hook processes get a non-login `sh -c` and inherit
