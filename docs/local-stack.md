@@ -193,7 +193,13 @@ docker exec deploy-langfuse-clickhouse-1 clickhouse-client --password langfuse \
 - **Grafana datasources**: Prometheus (`http://prometheus:9090`) and Tempo (`http://tempo:3200`),
   from `deploy/grafana/provisioning/datasources/ds.yaml`. Anonymous access is admin, so there is no
   login step and no password to find.
-- **Grafana dashboard**: the skill scorecard, from `deploy/grafana/provisioning/dashboards/`.
+- **Grafana dashboards**: two, from `deploy/grafana/provisioning/dashboards/`.
+  **Skill scorecard** reads the warehouse — first-time policy pass rate with and without the skill,
+  tokens per merged PR, and a data-quality panel. **Skill telemetry (operational)** reads Prometheus —
+  invocation rate, errors, duration. With no data yet, `make demo` gives both something to show.
+- **Grafana datasources**: Prometheus, Tempo and Warehouse (Postgres), each with a **pinned uid**.
+  Unpinned, Grafana generates a random uid and committed dashboards resolve to nothing — rendering
+  empty with no error.
 - **Collector pipeline**: content dropped, `gen_ai.*` normalised, Copilot tool-calls mapped onto
   `std.skill.*`, user identifiers hashed, then fanned out to Tempo and to Prometheus via spanmetrics.
 - **Postgres**: `warehouse/schema.sql` on first create.

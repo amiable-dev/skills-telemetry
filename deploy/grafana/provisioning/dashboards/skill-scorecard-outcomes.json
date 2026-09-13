@@ -1,0 +1,138 @@
+{
+  "uid": "stdtel-scorecard",
+  "title": "Skill scorecard",
+  "description": "Outcome metrics from the warehouse. Operational signals are on 'Skill telemetry'. Below 30 merged PRs per arm no comparison is supportable \u2014 see docs/evaluation-power.md.",
+  "tags": [
+    "stdtel"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Skill scorecard \u2014 pass rate with vs without, and the recommended action",
+      "description": "The primary metric. recommended_action is 'insufficient-data' whenever an arm is below 30 merged PRs or has no outcome data at all \u2014 that is a refusal, not a verdict.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawSql": "-- Weekly skill scorecard (design \u00a74.5). Parameters: $__timeFrom(), $__timeTo()\nWITH inv AS (\n  SELECT * FROM skill_invocation WHERE started_at >= $__timeFrom() AND started_at < $__timeTo()\n),\n-- first-time policy pass for each PR/policy the skill is coupled with\nfirst_run AS (\n  SELECT pr_id, policy_id, passed FROM policy_result WHERE run_seq = 1\n),\npr_skill AS (   -- PRs whose ticket had \u22651 invocation of the skill\n  SELECT DISTINCT p.pr_id, i.skill_name, i.skill_version, i.harness\n  FROM pull_request p JOIN inv i ON i.ticket_id = p.ticket_id\n),\n-- the policies each skill is accountable for, one row per (skill, version, policy)\nskill_policy AS (\n  SELECT DISTINCT skill_name, skill_version, unnest(policy_ids) AS policy_id FROM inv\n),\n-- A PR passes first time when EVERY policy the skill is accountable for passed on\n-- run_seq = 1. Aggregating to one row per PR first is the whole point: the metric\n-- is \"first-time pass rate on the PR\", so the PR is the unit. Averaging over the\n-- join directly counted each PR once per invocation and reported n_with = 3192\n-- against 120 merged PRs (#23).\npr_pass_with AS (\n  SELECT ps.skill_name, ps.skill_version, ps.harness, ps.pr_id,\n         MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed\n  FROM pr_skill ps\n  JOIN skill_policy sp\n    ON sp.skill_name = ps.skill_name AND sp.skill_version = ps.skill_version\n  JOIN first_run fr\n    ON fr.pr_id = ps.pr_id AND fr.policy_id = sp.policy_id\n  GROUP BY 1,2,3,4\n),\npass_with AS (\n  SELECT skill_name, skill_version, harness,\n         AVG(pr_passed::numeric) AS first_pass_rate_with,\n         COUNT(*) AS n_with                      -- PRs, never invocations\n  FROM pr_pass_with GROUP BY 1,2,3\n),\n-- the same measure over PRs in the window that did NOT use the skill\npr_pass_without AS (\n  SELECT sp.skill_name, p.pr_id,\n         MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed\n  FROM skill_policy sp\n  JOIN first_run fr ON fr.policy_id = sp.policy_id\n  JOIN pull_request p ON p.pr_id = fr.pr_id\n  WHERE p.opened_at >= $__timeFrom() AND p.opened_at < $__timeTo()\n    AND NOT EXISTS (SELECT 1 FROM pr_skill ps WHERE ps.pr_id = p.pr_id AND ps.skill_name = sp.skill_name)\n  GROUP BY 1,2\n),\npass_without AS (\n  SELECT skill_name, AVG(pr_passed::numeric) AS first_pass_rate_without,\n         COUNT(*) AS n_without                   -- PRs, never invocations\n  FROM pr_pass_without GROUP BY 1\n),\noverlap AS (   -- redundancy: co-invocation with other skills in the same session\n  SELECT a.skill_name, COUNT(DISTINCT b.skill_name) AS co_invoked_skills\n  FROM inv a JOIN inv b ON a.session_id = b.session_id AND a.skill_name <> b.skill_name\n  GROUP BY 1\n)\nSELECT\n  i.skill_name, i.skill_version, i.harness,\n  COUNT(*)                                            AS invocations,\n  COUNT(DISTINCT i.user_hash)                         AS distinct_users,\n  COUNT(DISTINCT i.session_id)                        AS sessions,\n  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY i.load_tokens) AS p50_load_tokens,\n  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY i.tail_tokens) AS p50_tail_tokens,\n  SUM(i.load_tokens + i.tail_tokens)                  AS total_tokens,\n  AVG(CASE WHEN i.is_error THEN 1 ELSE 0 END)         AS error_rate,\n  AVG(CASE WHEN i.llm_requests = 0 THEN 1 ELSE 0 END) AS abandonment_rate,\n  pw.first_pass_rate_with, pw.n_with,\n  pwo.first_pass_rate_without, pwo.n_without,\n  COALESCE(o.co_invoked_skills, 0)                    AS co_invoked_skills,\n  CASE\n    -- Insufficient data is checked FIRST and is not a verdict about the skill.\n    -- 30 merged PRs per arm is the floor from docs/evaluation-power.md; below\n    -- it no comparative claim is supportable, and 'keep' used to be returned\n    -- for a skill with no outcome data at all (#23).\n    WHEN pw.first_pass_rate_with IS NULL OR pwo.first_pass_rate_without IS NULL\n      THEN 'insufficient-data'\n    WHEN COALESCE(pw.n_with, 0) < 30 OR COALESCE(pwo.n_without, 0) < 30\n      THEN 'insufficient-data'\n    WHEN COUNT(*) = 0 THEN 'deprecate'\n    WHEN COUNT(DISTINCT i.user_hash) = 1 THEN 'review-single-user'\n    WHEN pw.first_pass_rate_with < pwo.first_pass_rate_without THEN 'refine'\n    WHEN COALESCE(o.co_invoked_skills, 0) >= 3 THEN 'review-merge'\n    ELSE 'keep'\n  END AS recommended_action\nFROM inv i\nLEFT JOIN pass_with pw ON pw.skill_name = i.skill_name AND pw.skill_version = i.skill_version AND pw.harness = i.harness\nLEFT JOIN pass_without pwo ON pwo.skill_name = i.skill_name\nLEFT JOIN overlap o ON o.skill_name = i.skill_name\nGROUP BY 1,2,3, pw.first_pass_rate_with, pw.n_with, pwo.first_pass_rate_without, pwo.n_without, o.co_invoked_skills\nORDER BY total_tokens DESC"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 2,
+      "title": "First-time pass rate by arm",
+      "description": "Read the PR count beside the rate. A rate over few PRs is descriptive only.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawSql": "SELECT t.harness_arm AS arm,\n       avg(CASE WHEN pr.passed THEN 1 ELSE 0 END) AS first_time_pass_rate,\n       count(DISTINCT pr.pr_id) AS prs\nFROM policy_result pr\nJOIN pull_request p ON p.pr_id = pr.pr_id\nJOIN ticket t ON t.ticket_id = p.ticket_id\nWHERE pr.run_seq = 1 AND p.merged_at IS NOT NULL\nGROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 3,
+      "title": "Tokens per merged PR (total spend, not skill-attributed)",
+      "description": "Uses session_cost, which is total spend. skill_invocation.tail_tokens is only the share one skill could claim; the two must never be summed.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawSql": "SELECT t.harness_arm AS arm,\n       sum(sc.input_tokens + sc.output_tokens)::numeric\n         / NULLIF(count(DISTINCT p.pr_id), 0) AS tokens_per_pr,\n       count(DISTINCT p.pr_id) AS prs\nFROM session_cost sc\nJOIN pull_request p ON p.ticket_id = sc.ticket_id AND p.merged_at IS NOT NULL\nJOIN ticket t ON t.ticket_id = p.ticket_id\nGROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 4,
+      "title": "Data quality \u2014 these bound every conclusion",
+      "description": "Both are fixable only while the work is happening: a branch renamed tomorrow does not retroactively attribute today's PRs. Unattributed rows are kept for cost and excluded from outcome analysis.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawSql": "SELECT 'unattributed sessions (no ticket key on the branch)' AS issue,\n       count(*) FILTER (WHERE ticket_id = 'unattributed') AS affected,\n       count(*) AS total\nFROM session_cost\nUNION ALL\nSELECT 'unversioned skills (not in the catalogue)',\n       count(*) FILTER (WHERE skill_version = 'unversioned'), count(*)\nFROM skill_invocation"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}
