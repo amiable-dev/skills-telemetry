@@ -134,6 +134,33 @@ omitted, because an absent row and a failing row must not look alike.
 
 ---
 
+## `stdtel-doctor`
+
+Checks an installation and says what to do about each problem. Every failure mode in this system is
+quiet by design — hooks exit 0 so telemetry never blocks you — so a broken install looks exactly like
+a working one.
+
+```
+stdtel-doctor [--quiet]
+```
+
+| check | failing means |
+|---|---|
+| hook resolvable | a hook cannot run `stdtel-hook`; probed under `/bin/sh -c`, not your interactive shell |
+| hooks registered | not registered, or registered **twice** (settings *and* plugin), which double-counts every skill window |
+| ticket key | this branch yields `unattributed`, so the work is excluded from outcome analysis |
+| skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
+| collector reachable | spans are being dropped right now |
+| hooks running | registered but never fired — no session state has been written |
+
+`--quiet` shows only problems. Exit `0` when everything passes, `1` otherwise, so it can gate
+onboarding.
+
+The ticket-key and catalogue checks matter most early: both are **only fixable while the work is
+happening**. A branch renamed tomorrow does not retroactively attribute today's PRs.
+
+---
+
 ## `stdtel-hook`
 
 Invoked by the harness, one process per event, reading the payload as JSON on stdin.
