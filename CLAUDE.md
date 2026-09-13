@@ -65,7 +65,7 @@ Adding a console script or a skill without documenting it fails `tests/test_docs
 
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
-`mise run install|test|validate|validate-plugin|skill-map|up|up-langfuse|down|smoke|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
+`mise run install|test|validate|validate-plugin|skill-map|up|up-langfuse|down|smoke|demo|demo-clear|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
 and auto-activates `.venv`; the tasks delegate to the Makefile, which stays the single definition.
 The venv is seeded with pip on purpose: mise creates it with uv, which omits pip, and a pip-less venv
 sends a bare `pip install` to the interpreter behind it instead.
@@ -78,6 +78,9 @@ surfaces — do not reword it in one place. Derivations: `docs/evaluation-power.
 the misreadings this data invites: `docs/insight-walkthroughs.md`.
 
 ## Current state / known gaps
+- `scorecard.sql` overstates `n_with` by a cartesian join (~76x on the demo data) and recommends
+  `keep` for a skill with no outcome data (issue #23). Found by `make demo` — the query had never been
+  run against rows. Treat `recommended_action` as untrustworthy until fixed.
 - `load_tokens` is a chars/4 heuristic and likely obsolete: Claude Code emits native
   `claude_code.token.usage` with a `skill.name` attribute and real counts. Open question (ADR-001):
   consume native telemetry and emit only `std.*` correlation, keyed on `session.id` + `prompt.id`.

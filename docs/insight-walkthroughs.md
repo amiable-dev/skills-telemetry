@@ -7,6 +7,16 @@ cannot answer a question is most of the value early on.
 
 Run `make up` first, and see [local-stack.md](local-stack.md) for endpoints and credentials.
 
+**No data of your own yet?** `make demo` loads a synthetic fleet — 120 PRs, two skills, eight
+developers across six weeks — so the scorecard has something to show. Every identifier is `DEMO-` or
+`demo-` prefixed and `make demo-clear` removes it. It is deliberately a mixed picture: one skill with
+a clear effect, one too thinly sampled to judge, and a share of `unattributed` and `unversioned` rows,
+because that is what real data looks like early on.
+
+> The synthetic data is illustrative, not a benchmark. It was also the first thing ever to run
+> `scorecard.sql` against rows, which immediately found two defects in it (issue #23) — so treat its
+> `recommended_action` column as untrustworthy until that is fixed.
+
 ```bash
 export STDTEL_DSN=postgresql://postgres:stdtel@localhost:5432/stdtel
 psql "$STDTEL_DSN" -c "SELECT count(*) FROM skill_invocation;"   # always start here
