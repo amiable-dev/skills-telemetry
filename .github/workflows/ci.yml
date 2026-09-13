@@ -64,7 +64,7 @@ jobs:
             --derive-run-seq "${{ github.repository }}" ci.yml "${{ github.head_ref }}" \
             --out policy-results.jsonl
           cat policy-results.jsonl
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: policy-results
           path: policy-results.jsonl
