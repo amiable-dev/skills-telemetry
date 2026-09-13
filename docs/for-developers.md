@@ -66,6 +66,8 @@ stdtel-install where              # confirm which install you are removing
 uv tool uninstall stdtel          # or: pipx uninstall stdtel
 ```
 
+If `stdtel-install where` finds nothing, the package was never installed — the plugin's hooks exit silently in that state, which is why you would have seen no data and no errors.
+
 Then remove the `hooks` block from `~/.claude/settings.json` (and any project `.claude/settings.json`).
 If you installed it as a plugin, `/plugin uninstall stdtel@amiable-standards`.
 

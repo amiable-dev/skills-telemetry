@@ -1,25 +1,82 @@
 name: publish
+
+# PyPI Trusted Publishing (OIDC): no long-lived token lives in this repo, and the
+# publish action produces PEP 740 attestations. The publisher must be registered
+# on PyPI before the first run — see docs/releasing.md.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
 
-# PyPI Trusted Publishing: no long-lived token, and PEP 740 attestations are
-# produced by the action. Configure the publisher on PyPI before first release.
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: ubuntu-latest
-    environment: pypi
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv build
-      - name: version must match the tag
+
+      - name: the version must match the tag
+        # A release tagged v0.3.0 that ships 0.2.9 is the kind of mismatch nobody
+        # notices until an install produces the wrong code. Tag-triggered only;
+        # a manual run has no tag to check against.
+        if: github.event_name == 'release'
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           test -f "dist/stdtel-${TAG}-py3-none-any.whl" || {
-            echo "no wheel for tag ${TAG}; bump pyproject/plugin manifests"; ls dist; exit 1; }
+            echo "::error::no wheel for tag ${TAG} — bump pyproject.toml and the three plugin manifests"
+            ls dist; exit 1; }
+
+      - name: the wheel must actually install and run
+        # Publishing something that cannot be installed is worse than not
+        # publishing: it fails on someone else's machine, not ours.
+        run: |
+          uv venv --python 3.12 /tmp/verify
+          # --python, not VIRTUAL_ENV: with the env var alone uv checked the
+          # active environment instead and reported "Checked 1 package",
+          # installing nothing while appearing to succeed.
+          uv pip install --python /tmp/verify/bin/python dist/*.whl
+          for script in stdtel-validate stdtel-install stdtel-doctor stdtel-policy-report \
+                        stdtel-statusline stdtel-export stdtel-eval; do
+            test -x "/tmp/verify/bin/$script" || { echo "::error::$script missing from the wheel"; exit 1; }
+          done
+          /tmp/verify/bin/stdtel-validate --help > /dev/null
+          echo '{}' | /tmp/verify/bin/stdtel-hook session-start
+          /tmp/verify/bin/stdtel-doctor --quiet || true   # reports, never gates
+
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+
+  testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
       - uses: pypa/gh-action-pypi-publish@release/v1

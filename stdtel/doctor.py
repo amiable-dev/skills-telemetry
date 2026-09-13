@@ -75,7 +75,12 @@ def hooks_registered() -> Check:
     in_settings = False
     if settings.is_file():
         try:
-            in_settings = bool(json.loads(settings.read_text() or "{}").get("hooks"))
+            # Look for OUR hooks specifically. Testing `bool(hooks)` reported
+            # "registered in settings AND as a plugin" to anyone with hooks of
+            # their own — a confidently wrong warning, in the tool meant to
+            # diagnose confidently wrong behaviour.
+            raw = json.loads(settings.read_text() or "{}").get("hooks") or {}
+            in_settings = "stdtel-hook" in json.dumps(raw)
         except json.JSONDecodeError:
             return Check("hooks registered", False, f"{settings} is not valid JSON",
                          "fix or remove the file, then run `stdtel-install settings`")
