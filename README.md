@@ -1,4 +1,9 @@
-# standards-telemetry
+# skills-telemetry
+
+[![PyPI](https://img.shields.io/pypi/v/stdtel)](https://pypi.org/project/stdtel/)
+[![Python](https://img.shields.io/pypi/pyversions/stdtel)](https://pypi.org/project/stdtel/)
+[![CI](https://github.com/amiable-dev/skills-telemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/amiable-dev/skills-telemetry/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Telemetry and metadata capture for **standards-as-skills** — attributes token cost and outcomes to
 individual skills across Claude Code and GitHub Copilot, joined to policy (OPA/Rego), delivery
@@ -219,3 +224,24 @@ never loads a skill is still spend, and excluding it would silently understate c
 - Copilot granularity is per turn; use Claude Code's finer data for within-harness tuning only.
 - `load_tokens` uses a chars/4 heuristic on the Skill tool result.
 - `gen_ai.*` conventions are still *Development* upstream; extend `transform/normalise` as names move.
+
+## Contributing
+
+Bug reports, questions and PRs are all welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) — it covers the setup (`mise run ci` is the whole gate) and the
+conventions that the tests enforce, including the ones that will surprise you.
+
+| | |
+|---|---|
+| something is broken, or you have an idea | [issues](https://github.com/amiable-dev/skills-telemetry/issues) |
+| a question, or "is this supposed to happen" | [discussions](https://github.com/amiable-dev/skills-telemetry/discussions) |
+| getting it working at all | [SUPPORT.md](SUPPORT.md) |
+| a security vulnerability | **privately**, see [SECURITY.md](SECURITY.md) |
+| how to behave here | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
+
+This tool runs inside your coding sessions, so [SECURITY.md](SECURITY.md) is also where the honest
+answer to "what does it collect" lives — as a list, not an assurance.
+
+## License
+
+[MIT](LICENSE).

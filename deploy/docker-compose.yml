@@ -1,3 +1,14 @@
+# Local development stack. One developer, one machine.
+#
+# Every published port binds to ${STDTEL_BIND}, default 127.0.0.1, because this
+# stack is not hardened and is not meant to be: Grafana runs with anonymous
+# Admin, and Postgres, ClickHouse and MinIO are on the development passwords
+# written below. On 0.0.0.0 that is an open dashboard and an open database to
+# everyone on the network.
+#
+# STDTEL_BIND=0.0.0.0 docker compose up -d   # only on a network you trust
+#
+# See SECURITY.md.
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.118.0
@@ -12,29 +23,29 @@ services:
       # Derived from the two keys in .env, so it cannot live there. Passed
       # through from the shell; empty unless the langfuse overlay is selected.
       LANGFUSE_AUTH: "${LANGFUSE_AUTH:-}"
-    ports: ["4317:4317", "4318:4318", "8888:8888"]   # 8888 = the collector's own metrics
+    ports: ["${STDTEL_BIND:-127.0.0.1}:4317:4317", "${STDTEL_BIND:-127.0.0.1}:4318:4318", "${STDTEL_BIND:-127.0.0.1}:8888:8888"]   # 8888 = the collector's own metrics
     depends_on: [tempo, prometheus]
   tempo:
     image: grafana/tempo:2.7.0
     command: ["-config.file=/etc/tempo.yaml"]
     volumes: ["./tempo.yaml:/etc/tempo.yaml:ro", "tempo-data:/var/tempo"]
-    ports: ["3200:3200"]
+    ports: ["${STDTEL_BIND:-127.0.0.1}:3200:3200"]
   prometheus:
     image: prom/prometheus:v3.2.0
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-remote-write-receiver"]
     volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
-    ports: ["9090:9090"]
+    ports: ["${STDTEL_BIND:-127.0.0.1}:9090:9090"]
   grafana:
     image: grafana/grafana:11.5.0
     environment: { GF_AUTH_ANONYMOUS_ENABLED: "true", GF_AUTH_ANONYMOUS_ORG_ROLE: Admin }
     volumes: ["./grafana/provisioning:/etc/grafana/provisioning:ro"]
-    ports: ["3000:3000"]
+    ports: ["${STDTEL_BIND:-127.0.0.1}:3000:3000"]
     depends_on: [tempo, prometheus]
   postgres:
     image: postgres:16
     environment: { POSTGRES_PASSWORD: stdtel, POSTGRES_DB: stdtel }
     volumes: ["../warehouse/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro"]
-    ports: ["5432:5432"]
+    ports: ["${STDTEL_BIND:-127.0.0.1}:5432:5432"]
 
   # --- Langfuse (opt-in): docker compose --profile langfuse up -d ---
   # Ports are remapped: upstream defaults collide with Grafana (3000),
@@ -47,7 +58,7 @@ services:
       langfuse-clickhouse: { condition: service_healthy }
       langfuse-redis: { condition: service_healthy }
       langfuse-minio: { condition: service_healthy }
-    ports: ["3001:3000"]
+    ports: ["${STDTEL_BIND:-127.0.0.1}:3001:3000"]
     env_file: [".env"]
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse

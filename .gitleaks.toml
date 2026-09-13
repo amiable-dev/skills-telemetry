@@ -1,0 +1,24 @@
+# gitleaks configuration.
+#
+# The local stack ships development credentials on purpose: `deploy/` brings up
+# Grafana, Postgres, ClickHouse and MinIO for one developer on loopback, and the
+# passwords are in the compose file so that `mise run up` works with no setup.
+# They are allowlisted here rather than removed — a secret scanner that people
+# routinely override is worse than one with a written-down exception.
+#
+# SECURITY.md says what this stack is and is not. Nothing here is a real secret.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local development stack credentials and generated fixtures"
+paths = [
+  '''deploy/docker-compose\.yml''',
+  '''deploy/\.env\.example''',
+  '''deploy/grafana/provisioning/datasources/ds\.yaml''',
+  '''docs/local-stack\.md''',
+]
+# Claude Code tool-use ids captured in test fixtures look like API keys and are
+# not. They are opaque, session-scoped, and already public in this repo.
+regexes = ['''toolu_[A-Za-z0-9]{20,}''']

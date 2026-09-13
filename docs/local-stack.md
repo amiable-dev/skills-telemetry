@@ -17,6 +17,19 @@ missing flag.
 
 ## Endpoints and credentials
 
+Every port below binds to **127.0.0.1**. The stack is a development one and is not hardened: Grafana
+runs with anonymous Admin, and Postgres, ClickHouse and MinIO use the passwords committed in
+`deploy/docker-compose.yml`. On `0.0.0.0` that is an open dashboard and an open database to everyone
+on the network, which is why loopback is the default rather than a suggestion.
+
+```bash
+STDTEL_BIND=0.0.0.0 make up     # only on a network you trust
+```
+
+Reaching Grafana from a phone or another machine is the usual reason to want it. Prefer an SSH tunnel
+(`ssh -L 3000:localhost:3000 ...`) — it costs one flag and leaves nothing listening.
+
+
 | service | URL | credentials | notes |
 |---|---|---|---|
 | Grafana | http://localhost:3000 | **none — anonymous admin** | Prometheus and Tempo are already provisioned as datasources; do not add them |

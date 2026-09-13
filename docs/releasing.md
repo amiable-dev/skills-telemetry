@@ -25,7 +25,7 @@ The environment name must match, or the publish is rejected with a mismatched-cl
 
 > Use a **pending** publisher while the project does not exist yet on that index. PyPI creates the
 > project on first successful publish. The name `stdtel` is unregistered at the time of writing;
-> if someone takes it first, the name in `pyproject.toml` and all three plugin manifests must change
+> if someone takes it first, the name in `pyproject.toml` and the three plugin manifests must change
 > together — a test enforces that they agree.
 
 Then create the matching GitHub environments — Settings → Environments → `pypi` and `testpypi`. Their
@@ -40,8 +40,9 @@ gives you a human gate on every publish, which is worth having.
 ## Every release
 
 ```bash
-# 1. bump the version in all four places (a test asserts they agree)
-#    pyproject.toml · plugin.json · .claude-plugin/plugin.json · .claude-plugin/marketplace.json
+# 1. bump the version in all five places (a test asserts they agree)
+#    pyproject.toml · plugin.json · .claude-plugin/plugin.json ·
+#    .claude-plugin/marketplace.json · CITATION.cff
 # 2. update CHANGELOG.md
 # 3. merge to main, then:
 gh release create v0.3.0 --title "0.3.0" --notes-file <(sed -n '/## 0.3.0/,/^## /p' CHANGELOG.md)
@@ -85,8 +86,10 @@ once the real release is out, rather than leaving a rehearsal install as the wor
 Test PyPI is the only way to find out that a package is broken *before* the version number is burned:
 PyPI does not allow re-uploading a version, even after deletion.
 
-## Why the version appears in four files
+## Why the version appears in five files
 
 The Python package and the plugin ship together, and the marketplace serves a cached copy until the
 version changes. A mismatch means someone installs the plugin and gets code from a different release.
-`tests/test_distribution.py::test_versions_agree_across_manifests` fails if they drift.
+`CITATION.cff` is the fifth: a citation naming a version nobody can install is wrong in a place that
+outlives the release. `tests/test_distribution.py::test_versions_agree_across_manifests` fails if any
+of them drift.

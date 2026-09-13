@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+title: skills-telemetry
+message: >-
+  If you use this software or its method in research, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - name: Amiable Dev
+    email: dev@amiable.dev
+repository-code: https://github.com/amiable-dev/skills-telemetry
+url: https://github.com/amiable-dev/skills-telemetry
+abstract: >-
+  Telemetry and metadata capture for standards-as-skills. Attributes token cost
+  and outcomes to individual coding-agent skills across Claude Code and GitHub
+  Copilot, joined to OPA policy results, delivery data and quality signals, so
+  that keep / refine / merge / deprecate decisions about a skill catalogue rest
+  on measurement rather than impression. Metadata only: no prompt, response or
+  file content is ever emitted. Includes the power analysis that sets how much
+  data is needed before a comparative claim is supportable.
+keywords:
+  - telemetry
+  - opentelemetry
+  - observability
+  - claude-code
+  - github-copilot
+  - developer-productivity
+  - policy-as-code
+  - open-policy-agent
+license: MIT
+version: 0.2.3
+date-released: 2026-09-13
