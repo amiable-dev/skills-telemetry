@@ -237,7 +237,13 @@ def stop(p: dict, exporter=None) -> int:
     if not invocations and not session_attrs:
         return 0
     provider = build_provider(st.resource, exporter=exporter)
-    emitted = emit_invocations(provider, invocations, sid) if invocations else 0
+    try:
+        emitted = emit_invocations(provider, invocations, sid) if invocations else 0
+        st.last_export_ok = True
+    except Exception:
+        st.last_export_ok = False
+        st.save()
+        raise
     if session_attrs:
         # Session start comes from state, not the transcript: transcript timestamps
         # can be absent or unparseable, and a start near the epoch turns the span's
@@ -245,6 +251,7 @@ def stop(p: dict, exporter=None) -> int:
         now = time.time()
         started = st.started_at or min((i["started_at"] for i in invocations), default=now)
         emitted += emit_session_cost(provider, session_attrs, sid, started, now)
+    st.save()
     return emitted
 
 

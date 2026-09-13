@@ -33,6 +33,7 @@ stdtel-validate = "stdtel.manifest:cli"
 stdtel-install = "stdtel.install:main"
 stdtel-policy-report = "stdtel.policy_report:main"
 stdtel-doctor = "stdtel.doctor:main"
+stdtel-statusline = "stdtel.statusline:main"
 stdtel-hook = "stdtel.hooks.cli:main"
 stdtel-eval = "eval.run_eval:main"
 

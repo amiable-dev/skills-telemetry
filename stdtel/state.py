@@ -42,6 +42,9 @@ class SessionState:
     # prompt, per-call spans would multiply telemetry volume for a metric that
     # only needs counts.
     tool_calls: dict = field(default_factory=dict)
+    # outcome of the last export, so the statusline can say "spans are dropping"
+    # from local state rather than probing the collector on every render
+    last_export_ok: bool | None = None
 
     @property
     def path(self) -> Path:
@@ -54,7 +57,8 @@ class SessionState:
             return cls(session_id=session_id)
         raw = json.loads(p.read_text())
         st = cls(session_id=session_id, transcript_offset=raw.get("transcript_offset", 0),
-                 started_at=raw.get("started_at", 0.0), resource=raw.get("resource", {}))
+                 started_at=raw.get("started_at", 0.0), resource=raw.get("resource", {}),
+                 last_export_ok=raw.get("last_export_ok"))
         st.windows = [SkillWindow(**w) for w in raw.get("windows", [])]
         st.tool_calls = {k: list(v) for k, v in (raw.get("tool_calls") or {}).items()}
         return st
@@ -73,6 +77,7 @@ class SessionState:
             "resource": self.resource,
             "windows": [asdict(w) for w in self.windows],
             "tool_calls": self.tool_calls,
+            "last_export_ok": self.last_export_ok,
         }, indent=1))
 
     def open_window(self, skill: str, version: str, trigger: str, tool_use_id: str | None,
