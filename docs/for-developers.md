@@ -96,6 +96,17 @@ make up && mise run smoke
 docker exec deploy-postgres-1 psql -U postgres -d stdtel -c 'SELECT * FROM skill_invocation LIMIT 1;'
 ```
 
+## Seeing it in your status bar
+
+```json
+{ "statusLine": { "type": "command", "command": "stdtel-statusline" } }
+```
+
+It shows only faults you can act on — `no ticket`, `N unversioned`, `spans dropping` — and stays quiet
+otherwise. **It shows no cost or token total**, by design: see the note in
+[reference.md](reference.md#stdtel-statusline). `STDTEL_STATUSLINE=off` turns it off without turning
+telemetry off.
+
 ## When it is not working
 
 Telemetry failing must never block you, so hooks **always exit 0** and write errors to stderr, which

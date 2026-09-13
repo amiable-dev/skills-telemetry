@@ -161,6 +161,40 @@ happening**. A branch renamed tomorrow does not retroactively attribute today's 
 
 ---
 
+## `stdtel-statusline`
+
+A status bar line carrying the data-quality faults you can still fix. Wired via the `statusLine`
+setting; Claude Code sends session JSON on stdin.
+
+```json
+{ "statusLine": { "type": "command", "command": "stdtel-statusline" } }
+```
+
+```
+stdtel STDTEL-16                        everything fine
+stdtel ⚠ no ticket                      this branch yields no ticket key
+stdtel ⚠ no ticket · 1 unversioned      ...and a skill is not in the catalogue
+stdtel ⚠ spans dropping                 the last export failed
+```
+
+Silent when there is nothing worth saying, and when `STDTEL_DISABLED=1` or `STDTEL_STATUSLINE=off`.
+
+**It shows no cost and no token total, deliberately.** The payload offers both. This project commits
+to per-skill analysis rather than individual measurement, and a live running total of your own spend
+in your editor reads as surveillance however it is framed — a test asserts it stays out.
+
+It reads **local session state only**: no network call, and no catalogue parse unless a skill window
+is open. Claude Code debounces at 300ms and cancels an in-flight script, so a slow statusline renders
+nothing at all. Measured at ~30ms.
+
+The faults it shows are the ones that cannot be fixed later — a branch renamed tomorrow does not
+retroactively attribute today's PRs.
+
+Exit code: always `0`, including on a malformed payload. A statusline that fails must not take the
+status bar down with it.
+
+---
+
 ## `stdtel-hook`
 
 Invoked by the harness, one process per event, reading the payload as JSON on stdin.
@@ -193,6 +227,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_HARNESS` | `claude-code` | enrich | harness label. **Required in Copilot's hook `env`**, because its snake_case payload is indistinguishable from Claude Code's |
 | `STDTEL_HARNESS_MODE` | `agent` | enrich | `agent` / `interactive`, for a fair cross-harness split |
 | `STDTEL_HOOK_BIN` | *(searched)* | plugin launcher | absolute path to `stdtel-hook`, overriding the launcher's search |
+| `STDTEL_STATUSLINE` | unset | statusline | `off`/`0`/`false`/`no` hides the status line without disabling telemetry |
 | `STDTEL_DISABLED` | unset | hooks | `1`/`true`/`yes`/`on` disables telemetry entirely; checked before the payload is read |
 | `STDTEL_STATE_DIR` | `~/.stdtel/sessions` | state | per-session state between hook processes |
 | `STDTEL_BRANCH` | *(git)* | enrich | overrides branch detection; the ticket key is parsed from it |
