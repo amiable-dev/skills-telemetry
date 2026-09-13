@@ -73,7 +73,7 @@ jobs:
           fi
           echo "stdtel $VERSION is free on $INDEX"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: dist, path: dist/ }
 
   testpypi:
