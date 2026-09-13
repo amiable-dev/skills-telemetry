@@ -1,6 +1,6 @@
 ---
 title: "ADR-008: Spool spans to disk; the hook never opens a socket"
-status: proposed
+status: accepted
 date: 2026-09-12
 tags: [adr, hooks, reliability, telemetry]
 links: ["003-hook-execution-constraints.md", "005-data-integrity.md", "../for-developers.md"]
@@ -61,6 +61,12 @@ treats the symptom; the coupling is the disease.
 - The failure mode moves from "data lost, silently" to "data queued, visibly" — which is the point.
 - New state appears on the developer's disk, so it must be documented where they will look and covered
   by the uninstall instructions.
+
+### Measured
+
+Three sessions against a dead collector: **501ms total** while spooling, against roughly 900ms *each*
+before, with the data lost either way. Draining to a live collector afterwards landed all six spans in
+Tempo. The hot path is unchanged at ~20ms.
 
 ### Known limitations
 

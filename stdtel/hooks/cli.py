@@ -236,6 +236,24 @@ def stop(p: dict, exporter=None) -> int:
     st.save()
     if not invocations and not session_attrs:
         return 0
+    # ADR-008: when spooling, the hook writes to disk and opens no socket at all.
+    # stdtel-export drains it. A hook that never talks to the network cannot stall
+    # on one, which is what "never block the developer" was reaching for.
+    if exporter is None and _spooling():
+        from stdtel.exporter import SESSION_SPAN_NAME, SPAN_NAME
+        from stdtel.spool import append
+        rows = [{"name": SPAN_NAME, "session_id": sid, "resource": st.resource,
+                 "started_at": i["started_at"], "ended_at": i["ended_at"],
+                 "attributes": i["attributes"], "error": i.get("error", False)}
+                for i in invocations]
+        if session_attrs:
+            rows.append({"name": SESSION_SPAN_NAME, "session_id": sid, "resource": st.resource,
+                         "started_at": (st.started_at or time.time()), "ended_at": time.time(),
+                         "attributes": session_attrs})
+        st.last_export_ok = True          # spooled successfully; export is someone else's job
+        st.save()
+        return append(rows)
+
     provider = build_provider(st.resource, exporter=exporter)
     try:
         emitted = emit_invocations(provider, invocations, sid) if invocations else 0
@@ -253,6 +271,11 @@ def stop(p: dict, exporter=None) -> int:
         emitted += emit_session_cost(provider, session_attrs, sid, started, now)
     st.save()
     return emitted
+
+
+def _spooling() -> bool:
+    """Write spans to disk rather than exporting inline (ADR-008)."""
+    return os.environ.get("STDTEL_SPOOL", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def disabled() -> bool:
