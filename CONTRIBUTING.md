@@ -72,6 +72,19 @@ Worth knowing before you are surprised by them:
 
 ## Pull requests
 
+`main` is protected, and the rules bind maintainers too — there is no admin bypass, deliberately:
+
+- **every change arrives by pull request.** A direct push is rejected.
+- **six checks must pass**: `test`, `distribution` on Ubuntu and macOS, `policy-results`,
+  `no secrets in the history`, `codeql`.
+- **your branch must be up to date with `main`** before merging, so the checks that passed are the
+  checks for the code that lands.
+- **no force-pushes and no deletion** of `main`; history stays linear, which is why we squash.
+- **comment threads must be resolved** before merge.
+
+If a rule ever blocks something that genuinely needs to happen, change the rule in the repository
+settings and say so in the PR. Do not look for a way around it.
+
 - One concern per PR, with the reasoning in the description. What broke, why this fix, what it costs.
 - Update `CHANGELOG.md` for anything user-facing.
 - Say what you verified and how. "Tests pass" is weaker than "reproduced the failure, fixed it, the

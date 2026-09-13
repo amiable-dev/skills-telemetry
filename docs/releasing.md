@@ -52,6 +52,21 @@ The workflow then builds, checks the tag matches the version, **installs the whe
 and runs every console script**, and publishes. A wheel that cannot be installed fails on someone
 else's machine rather than ours, so that check is not optional.
 
+## Release tags cannot be moved
+
+A ruleset makes `refs/tags/v*` immutable: creating one is allowed, **moving or deleting one is
+rejected**, for everyone including admins.
+
+This closes the shortest path to publishing arbitrary code as `stdtel`. The `pypi` environment
+deploys from the `v*` tag pattern, so anyone able to move a tag could have pointed it at any commit
+and had Trusted Publishing mint a credential for it. Tags being immutable is what makes "release-only
+publishing" mean something.
+
+The practical consequence: **a release tagged wrongly is fixed by bumping the version, never by
+re-tagging.** That is the same rule PyPI enforces on version numbers, now enforced one step earlier.
+If you genuinely must remove a tag, disable the ruleset in Settings → Rules, do it, and re-arm it —
+the point is that it takes a deliberate act, not a `git push --delete`.
+
 ## Safety properties
 
 These are enforced by `tests/test_publish_workflow.py`, because the cost of getting them wrong is
@@ -67,8 +82,14 @@ permanent — PyPI never allows re-uploading a version, even after deletion.
 - **No long-lived token** exists in the repository; `id-token: write` is granted to the publishing jobs
   only, not the whole workflow.
 
+- **Release tags are immutable**, so the commit a published version was built from cannot change
+  after the fact.
+- **`testpypi` deploys only from `main`**, by an explicit branch policy rather than by the
+  "protected branches only" setting — which, with no branch protected, permits every branch.
+
 One more is worth adding on the GitHub side, which cannot be asserted from here: a **required
-reviewer** on the `pypi` environment. Its deployment rule is already restricted to `v*` tags.
+reviewer** on the `pypi` environment. Its deployment rule is already restricted to `v*` tags, and
+those tags can no longer be moved.
 
 ## Rehearse first
 
