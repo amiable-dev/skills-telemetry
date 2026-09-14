@@ -4,6 +4,18 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.3.1 — 2026-09-14
+
+### Fixed
+- **`stdtel-doctor` reported `0 attributed by overlay` while two skills were being attributed by one.**
+  It counted manifests whose *file* sat in an overlay root, but `fill_gaps` returns a manifest based on
+  the skill's own file, so a filled skill never matched. It now counts what the overlay actually
+  contributed. Found by reading the number against a real overlay rather than trusting it.
+- **Test isolation now clears every `STDTEL_*` variable** rather than a list of known ones. Once
+  `STDTEL_SKILLS_OVERLAY` existed, a developer who had configured one saw two unrelated tests fail,
+  because their real overlay leaked into assertions about an empty catalogue. Enumerating the
+  environment cannot go stale; a list can.
+
 ## 0.3.0 — 2026-09-14
 
 A minor rather than a patch: a new span attribute, a new environment variable and a new warehouse
