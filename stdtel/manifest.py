@@ -93,6 +93,17 @@ def _flatten(data: dict) -> dict:
     return out
 
 
+def _fail(errors: list[str], path: Path | None) -> None:
+    """Raise with the file named.
+
+    The path was always available here and was thrown away, so `stdtel-validate`
+    on a directory of skills said a manifest was invalid without saying which
+    (#49) — leaving the reader to bisect by hand.
+    """
+    where = f"{path}: " if path is not None else ""
+    raise ManifestError(where + "; ".join(errors))
+
+
 def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
     data, _ = split_front_matter(text)
     data = _flatten(data)
@@ -101,24 +112,37 @@ def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
         if key not in data:
             errors.append(f"missing required field: {key}")
     if errors:
-        raise ManifestError("; ".join(errors))
-    if not SEMVER.match(str(data["version"])):
-        errors.append(f"version must be semver, got {data['version']!r}")
-    if not STANDARD_ID.match(data["standard_id"]):
-        errors.append(f"standard_id must match STD-XXX-000, got {data['standard_id']!r}")
-    if not isinstance(data["policy_ids"], list) or not data["policy_ids"]:
-        errors.append("policy_ids must be a non-empty list")
-    bad = set(data["harness_support"]) - HARNESSES
-    if bad:
-        errors.append(f"unknown harness(es): {sorted(bad)}")
+        if "metadata" not in data:
+            # The single most common shape of a first attempt: contract fields at
+            # the top level, or absent entirely. Saying which field is missing
+            # does not tell a newcomer that these live under `metadata:`.
+            errors.append("contract fields live under `metadata:` — see skills/stdtel-onboard")
+        _fail(errors, path)
     tel = data.get("telemetry", {}) or {}
     if not isinstance(tel, dict):
         tel = {}
     signal = str(tel.get("success_signal", "policy"))
+    if not SEMVER.match(str(data["version"])):
+        errors.append(f"version must be semver, got {data['version']!r}")
+    if not STANDARD_ID.match(data["standard_id"]):
+        errors.append(f"standard_id must match STD-XXX-000, got {data['standard_id']!r}")
+    if not isinstance(data["policy_ids"], list):
+        errors.append("policy_ids must be a list")
+    elif not data["policy_ids"] and signal == "policy":
+        # Empty is honest for a skill nothing verifies; claiming a policy signal
+        # and naming no policy is not. Requiring one unconditionally pushed people
+        # to cite an unrelated policy to pass the gate, which `stdtel-onboard`
+        # forbids and which makes the primary metric score a skill against a rule
+        # it has nothing to do with.
+        errors.append("policy_ids is empty, so telemetry.success_signal cannot be `policy` — "
+                      "name the policies, or set success_signal to test/manual")
+    bad = set(data["harness_support"]) - HARNESSES
+    if bad:
+        errors.append(f"unknown harness(es): {sorted(bad)}")
     if signal not in SUCCESS_SIGNALS:
         errors.append(f"telemetry.success_signal must be one of {sorted(SUCCESS_SIGNALS)}")
     if errors:
-        raise ManifestError("; ".join(errors))
+        _fail(errors, path)
     known = SPEC_KEYS | set(CONTRACT_KEYS) | {"description"}
     return SkillManifest(
         name=data["name"],
@@ -165,18 +189,23 @@ def load_catalogue(root: Path, strict: bool = True) -> dict[str, SkillManifest]:
     cannot silence telemetry for every other skill (first definition wins).
     """
     out: dict[str, SkillManifest] = {}
+    problems: list[str] = []
     for p in iter_skill_files(root):
         try:
             m = load_manifest(p)
-        except (ManifestError, OSError, yaml.YAMLError):
-            if strict:
-                raise
+        except (ManifestError, OSError, yaml.YAMLError) as e:
+            # Every failure, not the first. A gate that reports one problem per
+            # run turns onboarding ten skills into ten runs whose output all
+            # looks the same (#49).
+            problems.append(str(e) if isinstance(e, ManifestError) else f"{p}: {e}")
             continue
         if m.name in out:
-            if strict:
-                raise ManifestError(f"duplicate skill name {m.name!r}: {p} and {out[m.name].path}")
+            problems.append(f"{p}: duplicate skill name {m.name!r}, already defined in "
+                            f"{out[m.name].path}")
             continue
         out[m.name] = m
+    if problems and strict:
+        raise ManifestError("\n".join(problems))
     return out
 
 
@@ -204,7 +233,10 @@ def cli(argv: list[str] | None = None) -> int:
     try:
         cat = load_catalogue(root)
     except ManifestError as e:
-        print(f"INVALID: {e}", file=sys.stderr)
+        # One line per failing manifest, each naming its file. --quiet suppresses
+        # the passes, never the failures: the failures are the point.
+        for line in str(e).splitlines():
+            print(f"INVALID  {line}", file=sys.stderr)
         return 1
     if not a.quiet:
         for name, m in cat.items():

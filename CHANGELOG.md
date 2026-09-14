@@ -4,6 +4,25 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.2.5 — 2026-09-14
+
+### Fixed
+- **`stdtel-validate` said a manifest was invalid without saying which one**, and stopped at the first
+  failure. Onboarding a directory of skills meant one run per problem, each run's output identical to
+  the last. The path was available where the error was raised and was being thrown away. Every failure
+  now names its file, all of them are reported in one run, and a manifest with no `metadata:` block at
+  all is told that the contract fields live there — the thing "missing required field: version" does
+  not convey to someone seeing it for the first time. (#49)
+
+### Changed
+- **`policy_ids` may be empty when the skill does not claim a policy signal.** It was required to be
+  non-empty on every skill, which is a rule nobody can satisfy honestly: plenty of useful skills have
+  no deterministic check, and the gate pushed people to cite an unrelated policy to get past it — worse
+  than an empty list, because the scorecard would then score the skill against a rule it has nothing to
+  do with. The rule now binds the pair: empty `policy_ids` is accepted only with
+  `telemetry.success_signal: test` or `manual`, and the signal still defaults to `policy`.
+  ADR-004 carries the reasoning; `skills/stdtel-onboard` is at 1.1.0 because its guidance changed.
+
 ## 0.2.4 — 2026-09-13
 
 ### Fixed

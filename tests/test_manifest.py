@@ -110,3 +110,110 @@ def test_shipped_catalogue_is_spec_conformant():
     for skill in Path("skills").glob("*/SKILL.md"):
         data, _ = split_front_matter(skill.read_text())
         assert set(data) <= SPEC_KEYS, f"{skill}: non-spec keys {set(data) - SPEC_KEYS}"
+
+
+# --- #49: a contract gate that will not say which file broke ---
+
+def _write(root, name: str, front: str):
+    d = root / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(f"---\n{front}---\n\n# {name}\n")
+    return d / "SKILL.md"
+
+
+VALID = """name: good
+description: fine
+metadata:
+  version: "1.0.0"
+  standard_id: STD-OK-001
+  policy_ids: "pkg.rule"
+  owner: platform
+  harness_support: "claude-code"
+"""
+NO_METADATA = "name: bare\ndescription: has nothing else\n"
+
+
+def test_the_error_names_the_file(tmp_path):
+    from stdtel.manifest import ManifestError, load_catalogue
+    path = _write(tmp_path, "bare", NO_METADATA)
+    with pytest.raises(ManifestError) as e:
+        load_catalogue(tmp_path)
+    assert str(path) in str(e.value), "a gate that will not say which file is a bisect, not a gate"
+
+
+def test_every_invalid_manifest_is_reported_in_one_run(tmp_path):
+    """Onboarding ten skills should take one run, not ten.
+
+    Strict mode used to re-raise on the first failure, so each run revealed one
+    more problem and every run's output looked the same as the last.
+    """
+    from stdtel.manifest import ManifestError, load_catalogue
+    a = _write(tmp_path, "bare", NO_METADATA)
+    b = _write(tmp_path, "alsobare", "name: alsobare\ndescription: nor this\n")
+    with pytest.raises(ManifestError) as e:
+        load_catalogue(tmp_path)
+    message = str(e.value)
+    assert str(a) in message and str(b) in message
+
+
+def test_one_bad_manifest_still_fails_a_root_that_is_otherwise_valid(tmp_path):
+    from stdtel.manifest import ManifestError, load_catalogue
+    _write(tmp_path, "good", VALID)
+    bad = _write(tmp_path, "bare", NO_METADATA)
+    with pytest.raises(ManifestError) as e:
+        load_catalogue(tmp_path)
+    assert str(bad) in str(e.value)
+
+
+def test_lenient_mode_is_unchanged_by_any_of_this(tmp_path):
+    """Hooks must never let one broken SKILL.md silence every other skill."""
+    from stdtel.manifest import load_catalogue
+    _write(tmp_path, "good", VALID)
+    _write(tmp_path, "bare", NO_METADATA)
+    assert set(load_catalogue(tmp_path, strict=False)) == {"good"}
+
+
+# --- policy_ids may be empty only when the skill does not claim a policy signal ---
+
+NO_POLICIES = """name: unscored
+description: nothing verifies this one
+metadata:
+  version: "1.0.0"
+  standard_id: STD-OK-001
+  policy_ids: ""
+  owner: platform
+  harness_support: "claude-code"
+  telemetry.success_signal: {signal}
+"""
+
+
+def test_empty_policy_ids_is_allowed_when_the_signal_is_not_policy(tmp_path):
+    """Some skills genuinely have no deterministic check.
+
+    Requiring a policy id unconditionally forced people to name an unrelated
+    policy to get past the gate — which `stdtel-onboard` explicitly forbids, and
+    which is worse than an honest empty list: it makes the primary metric score a
+    skill against a rule it has nothing to do with.
+    """
+    from stdtel.manifest import load_manifest
+    path = _write(tmp_path, "unscored", NO_POLICIES.format(signal="manual"))
+    m = load_manifest(path)
+    assert m.policy_ids == [] and m.success_signal == "manual"
+
+
+def test_empty_policy_ids_is_still_rejected_when_the_signal_is_policy(tmp_path):
+    """`success_signal: policy` is a claim that policies verify it. Name them."""
+    from stdtel.manifest import ManifestError, load_manifest
+    path = _write(tmp_path, "unscored", NO_POLICIES.format(signal="policy"))
+    with pytest.raises(ManifestError) as e:
+        load_manifest(path)
+    assert "success_signal" in str(e.value), "the message must say which claim conflicts"
+
+
+def test_the_default_signal_still_requires_policies(tmp_path):
+    """success_signal defaults to `policy`, so omitting it keeps the old rule."""
+    from stdtel.manifest import ManifestError, load_manifest
+    front = NO_POLICIES.format(signal="policy").replace("  telemetry.success_signal: policy\n", "")
+    path = _write(tmp_path, "unscored", front)
+    with pytest.raises(ManifestError):
+        load_manifest(path)

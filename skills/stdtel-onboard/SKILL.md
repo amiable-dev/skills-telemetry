@@ -3,7 +3,7 @@ name: stdtel-onboard
 description: Bring an existing SKILL.md up to the standards-telemetry contract so the skill can be measured — adds the metadata block, picks a standard_id and policy_ids, and validates. Use when onboarding a skill to telemetry, when stdtel-validate fails, or when a skill reports as unversioned in the data.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -33,7 +33,7 @@ license: MIT
 metadata:
   version: "1.2.0"                  # semver, quoted
   standard_id: STD-XXX-000          # the standard this skill operationalises
-  policy_ids: "pkg.rule, pkg.other" # OPA packages that verify it — never empty
+  policy_ids: "pkg.rule, pkg.other" # OPA packages that verify it; empty only with a non-policy signal
   owner: <team>
   harness_support: "claude-code, copilot-vscode, copilot-cli"
   telemetry.emit: "true"
@@ -47,7 +47,12 @@ metadata:
    they must reflect what the body actually says, not be invented to satisfy the validator.
 2. **Find or create the policies.** `policy_ids` names OPA packages under `policies/`. If none verifies
    this skill, say so: a skill whose effect cannot be checked has no `success_signal: policy`, and
-   `manual` is the honest value. Do not point at an unrelated policy to make the gate pass.
+   `manual` is the honest value. Do not point at an unrelated policy to make the gate pass — that
+   makes the primary metric score the skill against a rule it has nothing to do with.
+
+   The validator enforces the pair, not the field: `policy_ids: ""` is accepted **only** alongside
+   `telemetry.success_signal: test` or `manual`. `success_signal` defaults to `policy`, so a manifest
+   that names no policies must say which other signal it is claiming.
 3. **Rewrite the front-matter** into the shape above, preserving the body verbatim.
 4. **Validate**: `stdtel-validate <skills-root>` — the same gate CI runs. Fix what it reports.
 5. **Check conformance** with `data.telemetry.manifest_valid.deny`, which catches contract fields
@@ -59,4 +64,7 @@ metadata:
 - **Plugin-provided skills arrive namespaced** (`my-plugin:my-skill`). Telemetry resolves the segment
   after the last `:`, so the catalogue entry stays the bare name — do not rename it to match the plugin.
 - **`version` must be quoted.** Unquoted `1.0` is a YAML float and fails the semver check.
-- **`policy_ids` must be non-empty.** An empty list means the skill can never be scored.
+- **An empty `policy_ids` means the skill can never be scored.** `scorecard.sql` derives a skill's
+  accountable policies by `unnest(policy_ids)`, so an empty list produces no rows in that join and the
+  skill reads `insufficient-data` for ever, at any volume. That is the correct answer for a skill
+  nothing verifies — but it is a decision, not a default. If you want a verdict, write the policy.
