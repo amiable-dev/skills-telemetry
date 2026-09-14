@@ -4,6 +4,39 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.3.0 — 2026-09-14
+
+A minor rather than a patch: a new span attribute, a new environment variable and a new warehouse
+column. Nothing is removed and no existing field changes meaning.
+
+### Added
+- **`std.skill.content_hash`** — SHA-256 of the SKILL.md body, truncated. Every version this system
+  records is *asserted* by whoever wrote the front-matter; nothing ever checked it against the
+  instruction the model was given, which ADR-005 forbids. The hash is observed: same version with two
+  hashes is an edit that skipped the bump, and that scorecard row is aggregating two populations. The
+  data-quality panel counts them. Deliberately not a spanmetrics dimension — a series per edit is #42
+  again. (#52)
+- **`STDTEL_SKILLS_OVERLAY`** — roots of front-matter-only stubs that attribute skills you do not own
+  without editing them. Editing a third-party `SKILL.md` survives until the next upstream release,
+  plugin reinstall or new machine, and fails silently each time. Overlays **fill gaps and never
+  override**, the reverse of `STDTEL_SKILLS_ROOT`: an overlay that overrode would keep asserting its
+  pinned version after upstream declared a real one, with nothing to notice it by. A stub may omit
+  `version`, and never supplies a content hash — its body is the operator's note, not the skill's
+  instruction. (#51)
+
+### Changed
+- **A manifest that fails the contract is kept in degraded form** rather than dropped by lenient
+  loading, carrying its name and content hash. Dropping it cost us the only thing about an
+  un-onboarded skill that can be observed rather than asserted.
+- **Empty contract fields are omitted from spans** instead of emitted blank. A blank `std.standard_id`
+  reads as a value in every dashboard that groups by it.
+- `stdtel-doctor` reports unversioned and overlay-attributed counts.
+
+### Fixed
+- **`warehouse/schema.sql` now migrates an existing database.** `CREATE TABLE IF NOT EXISTS` does
+  nothing to a table that already exists, so `content_hash` would have reached new warehouses only and
+  the loader would have failed on its first INSERT after the upgrade.
+
 ## 0.2.5 — 2026-09-14
 
 ### Fixed
