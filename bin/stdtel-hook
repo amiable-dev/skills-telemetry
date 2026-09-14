@@ -36,5 +36,18 @@ find_bin() {
     printf '%s' "${resolved}"
 }
 
-bin=$(find_bin) || exit 0
+if ! bin=$(find_bin); then
+    # The plugin ships hooks and this launcher; the Python package ships
+    # everything that runs. With the package absent nothing of ours executes —
+    # `stdtel-doctor` does not exist either — so this launcher is the only part
+    # of the install that can say so, and SessionStart output is the only place
+    # a developer will see it.
+    #
+    # SessionStart only. The same line on every tool call is not information, it
+    # is noise on every keystroke, which is how people learn to ignore it.
+    if [ "${1:-}" = "session-start" ]; then
+        printf 'stdtel: the plugin is installed but the `stdtel` package is not, so no telemetry is being recorded.\nInstall it with: uv tool install stdtel   (then restart Claude Code)\n'
+    fi
+    exit 0
+fi
 exec "${bin}" "$@"

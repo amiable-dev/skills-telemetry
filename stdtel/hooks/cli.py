@@ -142,13 +142,25 @@ def _resolve(name: str, cat: dict):
 
 
 def session_start(p: dict) -> None:
+    import stdtel
     from stdtel.enrich import resource_attributes
+    from stdtel.plugin import skew_notice
     from stdtel.state import SessionState
 
     st = SessionState.load(p.get("session_id", "unknown"))
     st.resource = resource_attributes(Path(p.get("cwd", ".")), payload=p)
     st.started_at = st.started_at or time.time()
     st.save()
+    # Once per session, on the only event whose output the developer sees. The
+    # plugin and the package are separate installs and neither updates the
+    # other, so drift is normal and silent: the hooks a stale plugin registers
+    # still work, while the skills it ships quietly lag the release.
+    try:
+        notice = skew_notice(stdtel.__version__)
+    except Exception:                    # noqa: BLE001 - never block the developer
+        notice = ""
+    if notice:
+        print(notice)
 
 
 def pre_tool_use(p: dict) -> None:

@@ -34,15 +34,26 @@ succeeded while doing nothing.
    start, so a session that predates the install runs no hooks for the rest of its life, however
    long that is. Restart Claude Code. This is the most common cause by a distance, and the one that
    looks least like a cause.
-2. `stdtel-doctor` — does it say the hook is resolvable and the package installed, and that the
-   last session state came **from this project**? The plugin's launcher exits 0 in silence when it
+2. **Did you install both halves?** The plugin ships hook registration, the launcher, the skills and
+   the agent. The **package** ships everything that runs. Neither updates the other, and the plugin's
+   launcher exits 0 in silence when it cannot find the package — so a plugin-only install produces no
+   data and no error. From 0.3.2 it says so once at session start, which is the only place it can:
+   with the package absent, `stdtel-doctor` does not exist either.
+
+   ```bash
+   uv tool install stdtel --force --refresh          # the package
+   claude plugin update stdtel@amiable-standards     # the plugin
+   ```
+
+3. `stdtel-doctor` — does it say the hook is resolvable and the package installed, that the plugin is
+   in step, and that the last session state came **from this project**? The plugin's launcher exits 0 in silence when it
    cannot find the CLI, by design, so an uninstalled package looks exactly like a working one; and
    state from a different project is not evidence that this one is recording.
-3. Is there a file in `~/.stdtel/sessions/` named after your session id? If not, the hooks are not
+4. Is there a file in `~/.stdtel/sessions/` named after your session id? If not, the hooks are not
    firing for it.
-4. Is your branch ticket-prefixed? Unattributed sessions are kept for cost analysis and **excluded**
+5. Is your branch ticket-prefixed? Unattributed sessions are kept for cost analysis and **excluded**
    from outcome analysis, so they will not appear in the scorecard.
-5. Below the floor — 30 merged PRs per arm — the scorecard returns `insufficient-data` on purpose.
+6. Below the floor — 30 merged PRs per arm — the scorecard returns `insufficient-data` on purpose.
    That is the correct answer, not a fault. `mise run demo` loads a synthetic fleet if you want to
    see what the dashboards look like with enough data behind them.
 
