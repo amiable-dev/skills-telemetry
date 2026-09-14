@@ -150,10 +150,11 @@ stdtel-doctor [--quiet]
 |---|---|
 | hook resolvable | a hook cannot run `stdtel-hook`; probed under `/bin/sh -c`, not your interactive shell |
 | hooks registered | not registered, or registered **twice** (settings *and* plugin), which double-counts every skill window |
+| plugin in step | the plugin and the package are different releases. They are separate installs and neither updates the other; a stale plugin keeps working while the skills it ships lag |
 | ticket key | this branch yields `unattributed`, so the work is excluded from outcome analysis |
 | skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
 | collector reachable | spans are being dropped right now |
-| hooks running | registered but never fired — no session state has been written |
+| hooks running | registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up |
 
 `--quiet` shows only problems. Exit `0` when everything passes, `1` otherwise, so it can gate
 onboarding.

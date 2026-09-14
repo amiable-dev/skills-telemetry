@@ -227,7 +227,31 @@ def recent_state() -> Check:
                  "stdtel was installed never picks it up — restart Claude Code in this project")
 
 
-CHECKS = (hook_resolvable, hooks_registered, ticket_key, catalogue_ok, collector_ok, recent_state)
+def plugin_in_step() -> Check:
+    """Plugin and package are two installs, and neither updates the other.
+
+    Not having the plugin is fine — `stdtel-install settings` is a supported
+    install. Having a *stale* one is not: the hooks it registers still work, so
+    nothing breaks, while the skills it ships quietly lag the release.
+    """
+    import stdtel
+    from stdtel.plugin import installed_plugin, skew_notice
+
+    found = installed_plugin()
+    if found is None:
+        return Check("plugin in step", True,
+                     f"package {stdtel.__version__}; no plugin installed")
+    marketplace, plugin_version = found
+    notice = skew_notice(stdtel.__version__)
+    if not notice:
+        return Check("plugin in step", True,
+                     f"plugin and package both {plugin_version} ({marketplace})")
+    return Check("plugin in step", False,
+                 f"plugin {plugin_version}, package {stdtel.__version__}",
+                 notice.split("run: ", 1)[1] if "run: " in notice else notice)
+
+
+CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, ticket_key, catalogue_ok, collector_ok, recent_state)
 
 
 def check_all() -> list[Check]:

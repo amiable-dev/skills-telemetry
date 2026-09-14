@@ -4,6 +4,28 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.3.2 — 2026-09-14
+
+### Added
+- **Drift between the plugin and the package is now reported, in both directions.** They are separate
+  installs and neither updates the other, so a developer updates one and assumes the other followed.
+  Both failures are quiet: a missing package leaves the launcher exiting 0 in silence, and a stale
+  plugin keeps working while the skills it ships lag the release.
+  - `stdtel-doctor` gains a **plugin in step** check. Not having the plugin passes —
+    `stdtel-install settings` is a supported install — but a version mismatch fails, naming the
+    command that fixes it, which differs by direction.
+  - `session_start` prints the same line once per session, on the only hook whose output a developer
+    reads.
+  - The plugin's launcher announces a **missing package** at session start. This closes a
+    circularity: with the package absent nothing of ours runs, `stdtel-doctor` included, so the
+    launcher is the only part of the install that can report it. Every other event stays silent — the
+    same line on every tool call is noise, not information.
+
+### Fixed
+- **`stdtel.__version__` said `0.1.0`.** Hardcoded in the first commit and wrong for every release
+  since; nothing read it, so nothing noticed. It is now derived from the installed package metadata,
+  and the version-agreement test covers it — the skew check above depends on it being true.
+
 ## 0.3.1 — 2026-09-14
 
 ### Fixed

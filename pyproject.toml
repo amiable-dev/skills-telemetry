@@ -1,6 +1,6 @@
 [project]
 name = "stdtel"
-version = "0.3.1"
+version = "0.3.2"
 description = "Telemetry and metadata capture for standards-as-skills (Claude Code + Copilot)"
 readme = "README.md"
 license = "MIT"

@@ -278,3 +278,14 @@ def test_launcher_execs_the_cli_when_present(tmp_path):
              "STDTEL_STATE_DIR": str(state)})
     assert r.returncode == 0, r.stderr
     assert (state / "lw.json").is_file(), "the launcher did not reach the CLI"
+
+
+def test_the_package_reports_the_version_it_actually_is():
+    """`stdtel.__version__` was hardcoded `0.1.0` from the first commit and was
+    wrong for every release. Nothing read it, so nothing noticed — and the
+    plugin-skew check now depends on it being true."""
+    import tomllib
+
+    import stdtel
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert stdtel.__version__ == version
