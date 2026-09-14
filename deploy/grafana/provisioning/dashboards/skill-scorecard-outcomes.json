@@ -127,7 +127,7 @@
             "uid": "Warehouse"
           },
           "format": "table",
-          "rawSql": "SELECT 'unattributed sessions (no ticket key on the branch)' AS issue,\n       count(*) FILTER (WHERE ticket_id = 'unattributed') AS affected,\n       count(*) AS total\nFROM session_cost\nUNION ALL\nSELECT 'unversioned skills (not in the catalogue)',\n       count(*) FILTER (WHERE skill_version = 'unversioned'), count(*)\nFROM skill_invocation"
+          "rawSql": "SELECT 'unattributed sessions (no ticket key on the branch)' AS issue,\n       count(*) FILTER (WHERE ticket_id = 'unattributed') AS affected,\n       count(*) AS total\nFROM session_cost\nUNION ALL\nSELECT 'unversioned skills (not in the catalogue)',\n       count(*) FILTER (WHERE skill_version = 'unversioned'), count(*)\nFROM skill_invocation\nUNION ALL\n-- The version is asserted by the front-matter; content_hash is observed. More\n-- than one hash under one version means the guidance changed without a bump, so\n-- that row of the scorecard is aggregating two different populations.\nSELECT 'skills edited without a version bump',\n       count(*) FILTER (WHERE v.hashes > 1), count(*)\nFROM (SELECT skill_name, skill_version, count(DISTINCT content_hash) AS hashes\n      FROM skill_invocation WHERE content_hash IS NOT NULL\n      GROUP BY 1, 2) v"
         }
       ],
       "options": {

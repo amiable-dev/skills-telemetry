@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
   invoked_as         TEXT,                   -- raw invocation string; namespaced when plugin-provided
   plugin             TEXT,                   -- namespace of invoked_as, NULL for a bare skill
   skill_version      TEXT NOT NULL,
+  content_hash       TEXT,                   -- SHA-256 of the SKILL.md body: asserted version vs observed content
   standard_id        TEXT,
   policy_ids         TEXT[],
   trigger            TEXT,                   -- caller.type from the transcript ("direct"), or unknown

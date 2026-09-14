@@ -22,6 +22,7 @@ One span per skill invocation and one per turn, containing only these fields:
 | repo, team, harness | `payments-api`, `payments`, `claude-code` | git remote and configuration |
 | a pseudonymous id for you | `3f9a1c7e0b2d4a86` | SHA-256 of your uid and hostname, hashed **before** it leaves the process. It answers "how many people used this skill", which the reporting floor needs; it is not reversible to your name, and the same person on two machines counts as two |
 | duration | `3ms` | the harness |
+| a fingerprint of the skill | `a1b2c3d4e5f60718` | SHA-256 of the skill's own instructions, truncated — the file the skill ships, never anything you wrote. It exists so a skill edited without a version bump is visible rather than silently mixed into the previous version's numbers |
 
 That is the whole list. You can print it yourself — see [verify it](#verify-it-yourself).
 
