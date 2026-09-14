@@ -58,6 +58,20 @@ attributes, the warehouse and the scorecard. Three facts constrain how it can wo
 6. **The scanner follows symlinked directories.** `Path.rglob` does not, which silently broke the
    documented `ln -s` into `~/.claude/skills` workflow.
 
+## Amendment (2026-09-14): `policy_ids` may be empty, `success_signal: policy` may not
+
+The contract originally required a non-empty `policy_ids` on every skill. In practice that is a rule
+nobody can satisfy honestly: plenty of useful skills — an indexing tool, a viewer, a research aid —
+have no deterministic check, and the gate pushed people to cite an unrelated policy to get past it.
+That is worse than an empty list, because `scorecard.sql` would then score the skill against a rule it
+has nothing to do with, and the number would look like evidence.
+
+The rule now binds the **pair**: `policy_ids` may be empty only when `telemetry.success_signal` is
+`test` or `manual`. The signal defaults to `policy`, so a manifest naming no policies must say what it
+is claiming instead. An empty list still means the skill reads `insufficient-data` for ever — which is
+the correct answer for something nothing verifies, and is now a decision the manifest states rather
+than a gap it hides.
+
 ## Consequences
 
 - The shipped catalogue is spec-conformant and uploadable, while remaining fully validated by our own
@@ -75,7 +89,8 @@ attributes, the warehouse and the scorecard. Three facts constrain how it can wo
   unique within an organisation's catalogue — which nothing enforces.
 - **Lenient loading hides broken manifests from the developer.** They surface only in CI, so a skill
   can be quietly `unversioned` locally for a long time. `stdtel-onboard` exists partly to shorten that
-  loop.
+  loop — and until #49, the strict gate reported one failure at a time without naming the file, so
+  the loop it shortened was still a bisect.
 - `metadata:` values are strings, so `policy_ids` round-trips through comma splitting; a policy id
   containing a comma would break, and nothing validates against that.
 
