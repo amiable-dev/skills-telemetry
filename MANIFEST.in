@@ -1,0 +1,9 @@
+# The sdist shipped tests/*.py without conftest.py or tests/fixtures/, so the
+# suite it carried could not be collected, let alone run. Shipping a suite that
+# errors on collection is worse than shipping none: it reads as a broken
+# package. The tests live in the repository, which is where anyone who wants to
+# run them is already looking.
+prune tests
+prune deploy
+prune graft
+exclude .gitleaks.toml

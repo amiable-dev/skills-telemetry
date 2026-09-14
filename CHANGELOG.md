@@ -4,6 +4,25 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.3.3 — 2026-09-14
+
+### Changed
+- **Every GitHub Action is pinned to a commit SHA**, with the version in a trailing comment. A tag is a
+  pointer somebody else can move, and the job that publishes holds `id-token: write` — so whoever
+  controlled `pypa/gh-action-pypi-publish@release/v1` controlled what shipped as `stdtel`,
+  permanently. Two tests enforce it: no mutable reference anywhere, and every pin carrying the version
+  it came from. (#34)
+- **The published artefact is now verified after it lands.** A new `verify` job installs
+  `stdtel==<tag>` from PyPI, runs its console scripts, checks the reported version, and verifies the
+  PEP 740 attestation. Everything before it proved the wheel *we built* worked; nothing proved the one
+  on the index did, and the two have differed before. It is not granted `id-token: write` — reading an
+  attestation does not require minting a credential.
+- **A release must have a matching section in `CHANGELOG.md`** or the build fails. Release notes are
+  written from there, and a missing section means they are being improvised at the moment of shipping.
+- **The sdist no longer ships `tests/`.** It carried `tests/*.py` without `conftest.py` or the
+  fixtures, so the suite could not even be collected — worse than shipping none, because it reads as a
+  broken package.
+
 ## 0.3.2 — 2026-09-14
 
 ### Added

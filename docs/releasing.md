@@ -80,7 +80,17 @@ permanent — PyPI never allows re-uploading a version, even after deletion.
 - **The wheel is installed into a clean venv and every console script is run** before anything
   publishes.
 - **No long-lived token** exists in the repository; `id-token: write` is granted to the publishing jobs
-  only, not the whole workflow.
+  only, not the whole workflow — and not to the job that verifies the result, which reads an
+  attestation rather than minting a credential.
+- **Every action is pinned to a commit SHA**, with the version in a trailing comment so a Dependabot
+  bump is legible in the diff. A tag is a pointer somebody else can move, and the publishing job holds
+  `id-token: write`. Repository settings enforce this too (`sha_pinning_required`), so an unpinned
+  action fails before it runs.
+- **The published artefact is installed from PyPI and exercised** after the upload, and its PEP 740
+  attestation verified. Everything earlier proves the wheel *we built* works; only this proves the one
+  a user would get does.
+- **A release must have a `## <version>` section in `CHANGELOG.md`**, or the build fails. Release notes
+  come from there, and a missing section means they are being improvised at the moment of shipping.
 
 - **Release tags are immutable**, so the commit a published version was built from cannot change
   after the fact.
