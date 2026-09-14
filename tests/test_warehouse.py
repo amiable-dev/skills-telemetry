@@ -233,3 +233,21 @@ def test_content_hash_is_not_a_spanmetrics_dimension():
     cfg = yaml.safe_load((ROOT / "collector" / "otel-collector.yaml").read_text())
     dimensions = {d["name"] for d in cfg["connectors"]["spanmetrics"]["dimensions"]}
     assert "std.skill.content_hash" not in dimensions
+
+
+def test_every_loader_column_exists_in_the_schema():
+    """Including the ones added by ALTER after the table was first created.
+
+    `CREATE TABLE IF NOT EXISTS` does nothing to an existing database, so a
+    column added only to the CREATE reaches new warehouses and no others — and
+    the loader discovers that on its first INSERT after an upgrade.
+    """
+    schema = (ROOT / "warehouse" / "schema.sql").read_text()
+    create = schema.split("CREATE TABLE IF NOT EXISTS skill_invocation (")[1].split(");")[0]
+    declared = {line.strip().split()[0] for line in create.splitlines() if line.strip()
+                and not line.strip().startswith("--")}
+    added = set(re.findall(r"ALTER TABLE skill_invocation ADD COLUMN IF NOT EXISTS (\w+)", schema))
+    for column in loader().COLS:
+        assert column in declared, f"{column} is not in the CREATE TABLE"
+    # anything added after the first release must also be reachable by migration
+    assert "content_hash" in added, "a column added later needs an ALTER for existing warehouses"

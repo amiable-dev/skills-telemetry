@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
   team               TEXT,
   user_hash          TEXT
 );
+-- Migrations for warehouses created before a column existed. CREATE TABLE IF NOT
+-- EXISTS does nothing to a table that is already there, so a new column reaches
+-- an existing database only here — and without it the loader fails on its first
+-- INSERT after an upgrade, which is the worst possible moment to find out.
+ALTER TABLE skill_invocation ADD COLUMN IF NOT EXISTS content_hash TEXT;
+
 CREATE INDEX IF NOT EXISTS ix_inv_ticket ON skill_invocation (ticket_id);
 CREATE INDEX IF NOT EXISTS ix_inv_skill  ON skill_invocation (skill_name, skill_version, harness);
 
