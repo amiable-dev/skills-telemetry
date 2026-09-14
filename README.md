@@ -208,6 +208,7 @@ never loads a skill is still spend, and excluding it would silently understate c
 |---|---|
 | `std.skill.name/version/trigger`, `std.standard_id`, `std.policy.ids` | hook + manifest |
 | `std.skill.invoked_as`, `std.skill.plugin` | raw invocation string (plugin skills are namespaced) |
+| `std.skill.content_hash` | SHA-256 of the SKILL.md **body**, truncated. The version is asserted; this is observed — one version with two hashes is an edit that skipped the bump |
 | `std.skill.load_tokens`, `std.skill.tail_tokens`, `std.skill.tail_tokens_first_only`, `std.skill.llm_requests` | transcript attribution |
 | `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens`, `gen_ai.request.model` | transcript |
 | `std.ticket.id`, `std.repo`, `std.team`, `std.harness`, `std.harness.mode` | resource (SessionStart) |

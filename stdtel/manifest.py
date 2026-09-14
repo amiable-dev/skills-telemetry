@@ -1,6 +1,7 @@
 """Parse and validate SKILL.md front-matter (the standards-repo contract)."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sys
@@ -25,6 +26,7 @@ class SkillManifest:
     harness_support: list[str]
     telemetry_emit: bool = True
     success_signal: str = "policy"
+    content_hash: str = ""
     path: Path | None = None
     extra: dict = field(default_factory=dict)
 
@@ -36,6 +38,13 @@ class SkillManifest:
             "std.standard_id": self.standard_id,
             "std.policy.ids": ",".join(self.policy_ids),
             "std.skill.owner": self.owner,
+            # The version is asserted by whoever wrote the front-matter; this is
+            # observed. Same version, different hash means the guidance changed
+            # without a bump, and every comparison drawn from that skill is
+            # aggregating two populations (ADR-005: never record an unobserved
+            # value). Deliberately NOT a spanmetrics dimension — a new series per
+            # edit is #42 again.
+            "std.skill.content_hash": self.content_hash,
         }
 
 
@@ -104,8 +113,18 @@ def _fail(errors: list[str], path: Path | None) -> None:
     raise ManifestError(where + "; ".join(errors))
 
 
+def body_hash(text: str) -> str:
+    """Fingerprint of the instruction, not of the file.
+
+    The body only: onboarding a skill edits its `metadata:` block, and that must
+    not read as a change to what the skill tells the model.
+    """
+    _, body = split_front_matter(text)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
 def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
-    data, _ = split_front_matter(text)
+    data, body = split_front_matter(text)
     data = _flatten(data)
     errors = []
     for key in ("name", "version", "standard_id", "policy_ids", "owner", "harness_support"):
@@ -153,6 +172,7 @@ def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
         harness_support=list(data["harness_support"]),
         telemetry_emit=str(tel.get("emit", True)).lower() not in ("false", "0", "no"),
         success_signal=signal,
+        content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
         path=path,
         extra={k: v for k, v in data.items() if k not in known},
     )

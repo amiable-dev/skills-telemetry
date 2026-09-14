@@ -217,3 +217,61 @@ def test_the_default_signal_still_requires_policies(tmp_path):
     path = _write(tmp_path, "unscored", front)
     with pytest.raises(ManifestError):
         load_manifest(path)
+
+
+# --- #52: a version is asserted; the hash is observed ---
+
+BODY_A = """name: hashme
+description: d
+metadata:
+  version: "1.0.0"
+  standard_id: STD-OK-001
+  policy_ids: "pkg.rule"
+  owner: platform
+  harness_support: "claude-code"
+---
+
+Always prefer the index over grep.
+"""
+
+
+def _skill(tmp_path, front_and_body: str):
+    p = tmp_path / "hashme" / "SKILL.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("---\n" + front_and_body)
+    return p
+
+
+def test_the_content_hash_changes_when_the_instruction_changes(tmp_path):
+    """The failure with no symptom: a skill edited without a version bump makes
+    the scorecard aggregate two different populations into one row."""
+    from stdtel.manifest import load_manifest
+    before = load_manifest(_skill(tmp_path, BODY_A)).content_hash
+    after = load_manifest(_skill(tmp_path, BODY_A.replace("index over grep", "grep over the index"))).content_hash
+    assert before and after and before != after
+
+
+def test_editing_only_the_metadata_block_does_not_change_the_hash(tmp_path):
+    """Otherwise onboarding a skill would read as a change to its guidance."""
+    from stdtel.manifest import load_manifest
+    before = load_manifest(_skill(tmp_path, BODY_A)).content_hash
+    after = load_manifest(_skill(tmp_path, BODY_A.replace('"1.0.0"', '"2.0.0"'))).content_hash
+    assert before == after
+
+
+def test_the_hash_is_short_and_opaque(tmp_path):
+    from stdtel.manifest import load_manifest
+    import re
+    assert re.fullmatch(r"[0-9a-f]{16}", load_manifest(_skill(tmp_path, BODY_A)).content_hash)
+
+
+def test_the_hash_is_emitted_as_a_span_attribute(tmp_path):
+    from stdtel.manifest import load_manifest
+    m = load_manifest(_skill(tmp_path, BODY_A))
+    assert m.as_attributes()["std.skill.content_hash"] == m.content_hash
+
+
+def test_a_manifest_parsed_without_a_file_still_has_a_hash():
+    """parse_manifest is used on text in tests and in the skill map."""
+    from stdtel.manifest import parse_manifest
+    assert parse_manifest("---\n" + BODY_A).content_hash

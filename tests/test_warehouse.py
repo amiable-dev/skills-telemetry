@@ -214,3 +214,22 @@ def test_user_hash_is_read_from_the_resource():
     row = mod.parse_span({"std.skill.name": "s"}, {"std.user.hash": "3f9a1c7e0b2d4a86"},
                          {"spanID": "s", "traceID": "t", "startTimeUnixNano": "0"})
     assert row["user_hash"] == "3f9a1c7e0b2d4a86"
+
+
+def test_content_hash_reaches_the_warehouse():
+    mod = loader()
+    row = mod.parse_span({"std.skill.name": "s", "std.skill.content_hash": "a1b2c3d4e5f60718"}, {},
+                         {"spanID": "s", "traceID": "t", "startTimeUnixNano": "0"})
+    assert row["content_hash"] == "a1b2c3d4e5f60718"
+
+
+def test_content_hash_is_not_a_spanmetrics_dimension():
+    """A new Prometheus series per skill edit is #42 again.
+
+    The hash belongs in traces and the warehouse, where cardinality costs
+    nothing, and nowhere near a metric label.
+    """
+    import yaml
+    cfg = yaml.safe_load((ROOT / "collector" / "otel-collector.yaml").read_text())
+    dimensions = {d["name"] for d in cfg["connectors"]["spanmetrics"]["dimensions"]}
+    assert "std.skill.content_hash" not in dimensions

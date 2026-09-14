@@ -41,6 +41,7 @@ def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
         "invoked_as": g("std.skill.invoked_as", g("std.skill.name")),
         "plugin": g("std.skill.plugin"),
         "skill_version": g("std.skill.version", "unversioned"),
+        "content_hash": g("std.skill.content_hash"),
         "standard_id": g("std.standard_id"), "policy_ids": [p for p in (g("std.policy.ids", "") or "").split(",") if p],
         "trigger": g("std.skill.trigger"), "model": g("gen_ai.request.model"),
         "load_tokens": int(g("std.skill.load_tokens", 0)), "tail_tokens": int(g("std.skill.tail_tokens", 0)),
@@ -83,7 +84,7 @@ def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
 
 
 COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","harness_mode","skill_name",
-        "invoked_as","plugin","skill_version",
+        "invoked_as","plugin","skill_version","content_hash",
         "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
         "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","ticket_id","repo","team","user_hash"]
 
