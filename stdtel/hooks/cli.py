@@ -26,22 +26,20 @@ def _payload() -> dict:
         return {}
 
 
-def skills_roots() -> list[Path]:
-    """Directories to scan for SKILL.md, in precedence order.
+def _roots_from(var: str, extra: list[Path] | None = None) -> list[Path]:
+    """Existing directories named by an os.pathsep list, in order, deduplicated.
 
-    STDTEL_SKILLS_ROOT may name several roots separated by os.pathsep; a relative
-    one is resolved against CLAUDE_PROJECT_DIR (the project the hook fired in),
-    not the process cwd, so `skills` in a project settings file keeps working.
-    The user-level catalogue is always searched last, which is what makes hooks
-    registered once in ~/.claude/settings.json useful from every project.
+    A relative entry resolves against CLAUDE_PROJECT_DIR (the project the hook
+    fired in), not the process cwd, so `skills` in a project settings file keeps
+    working.
     """
     base = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
     roots = []
-    for raw in os.environ.get("STDTEL_SKILLS_ROOT", "").split(os.pathsep):
+    for raw in os.environ.get(var, "").split(os.pathsep):
         if raw.strip():
             root = Path(raw).expanduser()
             roots.append(root if root.is_absolute() else base / root)
-    roots.append(Path.home() / ".claude" / "skills")
+    roots.extend(extra or [])
     out, seen = [], set()
     for root in roots:
         try:
@@ -54,9 +52,35 @@ def skills_roots() -> list[Path]:
     return out
 
 
+def skills_roots() -> list[Path]:
+    """Directories to scan for SKILL.md, in precedence order.
+
+    The user-level catalogue is always searched last, which is what makes hooks
+    registered once in ~/.claude/settings.json useful from every project.
+    """
+    return _roots_from("STDTEL_SKILLS_ROOT", [Path.home() / ".claude" / "skills"])
+
+
+def overlay_roots() -> list[Path]:
+    """Directories of contract stubs for skills we do not own (ADR-004, #51).
+
+    Editing somebody else's SKILL.md to onboard it works exactly once: the next
+    upstream release overwrites it, a plugin reinstall replaces the directory,
+    and a new machine has none of it — all silently. An overlay lives somewhere
+    the operator controls and fills in what those skills do not state.
+    """
+    return _roots_from("STDTEL_SKILLS_OVERLAY")
+
+
 def _catalogue():
-    """Merged catalogue across roots; earlier roots win on name collisions."""
-    from stdtel.manifest import load_catalogue          # pulls in PyYAML
+    """Merged catalogue across roots, then overlays applied to fill gaps.
+
+    Roots are winner-takes-all: the earliest one wins a name collision. Overlays
+    are the opposite and deliberately so — they supply only what a skill does not
+    state itself. An overlay that overrode would keep asserting its pinned value
+    after upstream started declaring a real one, and nothing would notice (#51).
+    """
+    from stdtel.manifest import fill_gaps, load_catalogue, load_overlay   # pulls in PyYAML
 
     cat: dict = {}
     for root in skills_roots():
@@ -66,6 +90,13 @@ def _catalogue():
             continue
         for name, manifest in found.items():
             cat.setdefault(name, manifest)
+    for root in overlay_roots():
+        try:
+            stubs = load_overlay(root)
+        except Exception:
+            continue
+        for name, stub in stubs.items():
+            cat[name] = fill_gaps(cat[name], stub) if name in cat else stub
     return cat
 
 

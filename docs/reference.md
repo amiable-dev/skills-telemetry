@@ -249,6 +249,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_OTLP_ENDPOINT` | `http://localhost:4318` | exporter | collector base URL. **Use this, not `OTEL_EXPORTER_OTLP_ENDPOINT`** — Claude Code strips `OTEL_*` from every subprocess, so the OTel name cannot reach a hook |
 | `STDTEL_OTLP_TIMEOUT` | `2` | exporter | seconds before a flush gives up. Bounds a dead-collector stall; measured 7.34s unbounded |
 | `STDTEL_SKILLS_ROOT` | `~/.claude/skills` | hooks | `os.pathsep` list of catalogue roots. Relative entries resolve against `CLAUDE_PROJECT_DIR`; the user directory is always searched last; earliest root wins |
+| `STDTEL_SKILLS_OVERLAY` | unset | hooks | `os.pathsep` list of **overlay** roots: front-matter-only stubs that attribute skills you do not own, without editing them. Opposite precedence to `STDTEL_SKILLS_ROOT` — an overlay fills only what a skill does not state itself, so upstream wins the day it declares its own value |
 | `STDTEL_TEAM` | `unknown` | enrich | owning team, on every span |
 | `STDTEL_HARNESS` | `claude-code` | enrich | harness label. **Required in Copilot's hook `env`**, because its snake_case payload is indistinguishable from Claude Code's |
 | `STDTEL_HARNESS_MODE` | `agent` | enrich | `agent` / `interactive`, for a fair cross-harness split |

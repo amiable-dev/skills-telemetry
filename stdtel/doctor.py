@@ -120,7 +120,7 @@ def catalogue_ok() -> Check:
     An empty or unfindable catalogue does not fail loudly: skills are simply
     recorded as `unversioned`, with no standard_id and no policy_ids.
     """
-    from stdtel.hooks.cli import _catalogue, skills_roots
+    from stdtel.hooks.cli import _catalogue, overlay_roots, skills_roots
     roots = skills_roots()
     cat = _catalogue()
     if not roots:
@@ -131,7 +131,18 @@ def catalogue_ok() -> Check:
                      f"{len(roots)} root(s) searched, 0 skills found",
                      "skills will record as `unversioned` with no standard_id; check "
                      "STDTEL_SKILLS_ROOT and run `stdtel-validate` on it")
-    return Check("skill catalogue", True, f"{len(cat)} skill(s) across {len(roots)} root(s)")
+    detail = f"{len(cat)} skill(s) across {len(roots)} root(s)"
+    unversioned = sum(1 for m in cat.values() if m.version == "unversioned")
+    if unversioned:
+        # Not a failure — a skill can be used without being onboarded — but it is
+        # the reason a scorecard row is missing, and it is invisible otherwise.
+        detail += f", {unversioned} unversioned"
+    overlays = overlay_roots()
+    if overlays:
+        attributed = sum(1 for m in cat.values() if m.path and any(
+            str(m.path).startswith(str(r.resolve())) for r in overlays))
+        detail += f"; {attributed} attributed by overlay across {len(overlays)} overlay root(s)"
+    return Check("skill catalogue", True, detail)
 
 
 def collector_ok() -> Check:

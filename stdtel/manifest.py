@@ -5,7 +5,7 @@ import hashlib
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -35,9 +35,12 @@ class SkillManifest:
         return {
             "std.skill.name": self.name,
             "std.skill.version": self.version,
-            "std.standard_id": self.standard_id,
-            "std.policy.ids": ",".join(self.policy_ids),
-            "std.skill.owner": self.owner,
+            # Omitted rather than emitted empty. A blank std.standard_id reads as
+            # a value in every dashboard that groups by it; absent reads as what
+            # it is. Partial manifests (#51) make this reachable.
+            **({"std.standard_id": self.standard_id} if self.standard_id else {}),
+            **({"std.policy.ids": ",".join(self.policy_ids)} if self.policy_ids else {}),
+            **({"std.skill.owner": self.owner} if self.owner else {}),
             # The version is asserted by whoever wrote the front-matter; this is
             # observed. Same version, different hash means the guidance changed
             # without a bump, and every comparison drawn from that skill is
@@ -201,6 +204,81 @@ def iter_skill_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
+UNVERSIONED = "unversioned"
+
+
+def partial_manifest(text: str, path: Path | None = None) -> SkillManifest | None:
+    """What can be known about a SKILL.md that does not meet the contract.
+
+    Lenient loading used to drop these entirely, so a skill nobody had onboarded
+    contributed nothing at all — not even its content hash, which is the one
+    thing about it that can be observed rather than asserted. Returns None only
+    when the file cannot be parsed far enough to find a name.
+    """
+    try:
+        data, body = split_front_matter(text)
+    except (ManifestError, yaml.YAMLError):
+        return None
+    data = _flatten(data)
+    name = data.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    policy_ids = data.get("policy_ids") or []
+    return SkillManifest(
+        name=name,
+        version=str(data["version"]) if SEMVER.match(str(data.get("version", ""))) else UNVERSIONED,
+        standard_id=data.get("standard_id") or "",
+        policy_ids=list(policy_ids) if isinstance(policy_ids, list) else [],
+        owner=data.get("owner") or "",
+        harness_support=[h for h in (data.get("harness_support") or []) if h in HARNESSES],
+        content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
+        path=path,
+    )
+
+
+def fill_gaps(base: SkillManifest, overlay: SkillManifest) -> SkillManifest:
+    """Overlay values for fields `base` does not state. Never the reverse.
+
+    The direction is the whole point (#51). If an overlay overrode, then the day
+    upstream starts declaring its own version our data would keep reporting the
+    pinned one — stability that does not exist, with nothing to notice it by.
+    """
+    merged = replace(base)
+    if merged.version in ("", UNVERSIONED):
+        merged.version = overlay.version
+    for attr in ("standard_id", "owner"):
+        if not getattr(merged, attr):
+            setattr(merged, attr, getattr(overlay, attr))
+    for attr in ("policy_ids", "harness_support"):
+        if not getattr(merged, attr):
+            setattr(merged, attr, list(getattr(overlay, attr)))
+    # content_hash is never filled from an overlay. A stub's body is the
+    # operator's note, not the skill's instruction, and hashing it would put a
+    # meaningful-looking value where there is nothing to observe — every stub
+    # with an empty body sharing one hash, reading as "these skills are
+    # identical". Absent is the truthful answer.
+    return merged
+
+
+def load_overlay(root: Path) -> dict[str, SkillManifest]:
+    """Contract fragments keyed by skill name.
+
+    An overlay stub carries only what the operator can honestly state — usually
+    standard_id, policy_ids and owner. It is not required to meet the contract,
+    because the operator has no honest `version` for somebody else's artifact.
+    """
+    out: dict[str, SkillManifest] = {}
+    for p in iter_skill_files(root):
+        try:
+            m = partial_manifest(p.read_text(encoding="utf-8"), p)
+        except OSError:
+            continue
+        if m is not None:
+            m.content_hash = ""      # see fill_gaps: a stub observes nothing
+            out.setdefault(m.name, m)
+    return out
+
+
 def load_catalogue(root: Path, strict: bool = True) -> dict[str, SkillManifest]:
     """All SKILL.md files under root, keyed by skill name.
 
@@ -218,6 +296,16 @@ def load_catalogue(root: Path, strict: bool = True) -> dict[str, SkillManifest]:
             # run turns onboarding ten skills into ten runs whose output all
             # looks the same (#49).
             problems.append(str(e) if isinstance(e, ManifestError) else f"{p}: {e}")
+            if not strict:
+                # Keep what can be known. Dropping the file entirely cost us the
+                # content hash too, so an un-onboarded skill had no observable
+                # identity at all (#51).
+                try:
+                    degraded = partial_manifest(p.read_text(encoding="utf-8"), p)
+                except OSError:
+                    degraded = None
+                if degraded is not None:
+                    out.setdefault(degraded.name, degraded)
             continue
         if m.name in out:
             problems.append(f"{p}: duplicate skill name {m.name!r}, already defined in "
