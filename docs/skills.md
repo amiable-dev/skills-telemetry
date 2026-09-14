@@ -90,6 +90,56 @@ rather than a measurement.
 
 ---
 
+## Attributing a skill you do not own
+
+Editing somebody else's `SKILL.md` to add the `metadata:` block works exactly once. The next upstream
+release overwrites it; a plugin reinstall replaces the whole directory; a new machine has none of it.
+Each of those is silent — the skill keeps emitting spans, they just arrive `unversioned`, which looks
+identical to a skill nobody has onboarded yet.
+
+Two routes avoid touching the file. Pick by who needs the answer.
+
+### One developer, or skills only you use: an overlay root
+
+```bash
+export STDTEL_SKILLS_OVERLAY=~/skills-overlay      # a directory you control, in git
+```
+
+Each entry is a stub with front-matter and **no body**:
+
+```yaml
+---
+name: graft                         # must match the skill's own front-matter name
+metadata:
+  standard_id: STD-CTX-001
+  policy_ids: ""
+  owner: platform
+  telemetry.success_signal: manual
+---
+```
+
+An overlay **fills gaps and never overrides**. If the skill states its own `version`, the skill wins —
+so the day upstream starts declaring one, your data follows it instead of reporting a pinned value
+that stopped being true. That is the opposite of `STDTEL_SKILLS_ROOT`, where the earliest root wins
+outright.
+
+A stub may omit `version`: you usually have no honest one for someone else's artifact.
+`std.skill.content_hash` identifies it instead, and unlike a version it cannot go stale.
+
+> Do not put the overlay inside a directory the harness scans for skills — `~/.claude/skills` above
+> all. The stubs would become empty skills offered to the model.
+
+### A team: the collector
+
+`collector/copilot-skill-map.yaml` is the same idea applied centrally: a name → contract table the
+collector uses to fill `std.*` attributes that arrived without them. One table, held once, applying to
+everyone, surviving every client change, and requiring nothing installed on a developer's machine. It
+already uses the correct `where attributes[...] == nil` guard, so it fills gaps rather than
+overriding.
+
+Prefer this whenever more than one person needs the attribution. An overlay root is per machine and
+will be forgotten on the next one.
+
 ## Opting a skill out
 
 A skill author can suppress named attribution for their skill:

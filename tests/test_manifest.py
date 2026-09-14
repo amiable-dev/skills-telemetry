@@ -165,12 +165,17 @@ def test_one_bad_manifest_still_fails_a_root_that_is_otherwise_valid(tmp_path):
     assert str(bad) in str(e.value)
 
 
-def test_lenient_mode_is_unchanged_by_any_of_this(tmp_path):
-    """Hooks must never let one broken SKILL.md silence every other skill."""
+def test_one_broken_manifest_cannot_silence_the_others(tmp_path):
+    """The property hooks depend on. #51 changed the shape: a manifest that
+    fails the contract is no longer dropped, it is kept in degraded form so its
+    content hash is still observable — but it must stay clearly un-onboarded."""
     from stdtel.manifest import load_catalogue
     _write(tmp_path, "good", VALID)
     _write(tmp_path, "bare", NO_METADATA)
-    assert set(load_catalogue(tmp_path, strict=False)) == {"good"}
+    cat = load_catalogue(tmp_path, strict=False)
+    assert cat["good"].version == "1.0.0" and cat["good"].standard_id == "STD-OK-001"
+    assert cat["bare"].version == "unversioned" and not cat["bare"].standard_id
+    assert cat["bare"].content_hash
 
 
 # --- policy_ids may be empty only when the skill does not claim a policy signal ---

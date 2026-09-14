@@ -72,6 +72,28 @@ is claiming instead. An empty list still means the skill reads `insufficient-dat
 the correct answer for something nothing verifies, and is now a decision the manifest states rather
 than a gap it hides.
 
+## Amendment (2026-09-14): overlays fill gaps; they never override
+
+Onboarding a skill by editing its `SKILL.md` assumes we own the file. For third-party and
+plugin-provided skills we do not, and the edit survives exactly until the next upstream release,
+plugin reinstall, or new machine — silently, because the skill keeps emitting spans and they simply
+arrive `unversioned` again.
+
+`STDTEL_SKILLS_OVERLAY` names roots of front-matter-only stubs that supply what a skill does not state
+about itself. The precedence is deliberately the reverse of `STDTEL_SKILLS_ROOT`, where the earliest
+root wins outright: an overlay that overrode would keep asserting its pinned version after upstream
+began declaring a real one, and nothing would notice. Filling gaps means upstream wins the moment it
+has something to say.
+
+Two consequences worth stating. A stub may omit `version`, because the operator has no honest one for
+somebody else's artifact — `std.skill.content_hash` identifies it instead, and cannot go stale. And a
+stub never supplies a content hash: its body is the operator's note, not the skill's instruction, so
+hashing it would put a meaningful-looking value where nothing was observed.
+
+Lenient loading changed with it. A manifest that fails the contract is no longer dropped; it is kept
+in degraded form, carrying its name and content hash. Dropping it cost us the one thing about an
+un-onboarded skill that can be observed rather than asserted.
+
 ## Consequences
 
 - The shipped catalogue is spec-conformant and uploadable, while remaining fully validated by our own
