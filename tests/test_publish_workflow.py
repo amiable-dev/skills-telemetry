@@ -4,6 +4,8 @@ PyPI never allows re-uploading a version, even after deletion, so a bad publish
 burns the number permanently. These are the properties that keep that from
 happening by accident.
 """
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -62,3 +64,63 @@ def test_id_token_is_granted_only_where_it_is_needed():
         "id-token: write belongs on the publishing jobs, not the whole workflow"
     for job in ("pypi", "testpypi"):
         assert JOBS[job]["permissions"]["id-token"] == "write"
+
+
+# --- #34: the publish job holds id-token: write, so what it runs must be fixed ---
+
+def _uses(workflow: dict) -> list[str]:
+    return [step["uses"] for job in workflow.get("jobs", {}).values()
+            for step in job.get("steps", []) if "uses" in step]
+
+
+def _all_workflows():
+    import yaml
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        yield path, yaml.safe_load(path.read_text())
+
+
+def test_every_action_is_pinned_to_a_commit():
+    """A tag is a pointer somebody else can move.
+
+    `pypa/gh-action-pypi-publish@release/v1` runs in the job that holds
+    `id-token: write`, so whoever controls that tag controls what gets published
+    as `stdtel` — permanently, since PyPI never allows re-uploading a version.
+    """
+    for path, workflow in _all_workflows():
+        for ref in _uses(workflow):
+            _, _, version = ref.partition("@")
+            assert re.fullmatch(r"[0-9a-f]{40}", version), \
+                f"{path.name}: {ref} is a mutable reference"
+
+
+def test_each_pin_records_the_version_it_came_from():
+    """A bare SHA is unreadable and un-reviewable; the comment is what makes a
+    Dependabot bump legible in a diff."""
+    for path, _ in _all_workflows():
+        for line in path.read_text().splitlines():
+            if "uses:" in line and "@" in line:
+                assert "#" in line.split("@", 1)[1], f"{path.name}: {line.strip()} has no version comment"
+
+
+def test_the_published_artefact_is_verified_after_it_lands():
+    """Everything else proves the wheel we built works, not the one on the index."""
+    jobs = WF["jobs"]
+    assert "verify" in jobs and jobs["verify"]["needs"] == "pypi"
+    body = json.dumps(jobs["verify"])
+    assert "stdtel==" in body, "it must install the exact published version"
+    assert "attestation verify" in body
+
+
+def test_verification_does_not_get_the_publishing_credential():
+    """Reading an attestation does not require minting one."""
+    assert "id-token" not in (WF["jobs"]["verify"].get("permissions") or {})
+
+
+def test_a_release_must_be_described_in_the_changelog():
+    steps = json.dumps(WF["jobs"]["build"]["steps"])
+    assert "CHANGELOG.md" in steps
+
+
+def test_the_sdist_does_not_ship_an_unrunnable_test_suite():
+    manifest = (ROOT / "MANIFEST.in").read_text()
+    assert "prune tests" in manifest
