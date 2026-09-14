@@ -130,3 +130,30 @@ def test_the_strict_gate_is_unaffected(tmp_path):
     _write(tmp_path, "third-party", BARE)
     with pytest.raises(ManifestError):
         load_catalogue(tmp_path)
+
+
+def test_a_filled_skill_is_counted_as_overlay_attributed(roots):
+    """Doctor reported 0 while two skills were being attributed by overlay.
+
+    It counted manifests whose *file* sat in an overlay root — but fill_gaps
+    returns a manifest based on the skill's own file, so a filled skill never
+    matched. The question is what the overlay contributed, not where it lives.
+    """
+    skills, overlay = roots
+    _write(skills, "third-party", BARE)
+    _stub(overlay, "third-party", 'metadata:\n  standard_id: STD-CTX-001\n')
+    assert _catalogue()["third-party"].overlay_path is not None
+
+
+def test_a_skill_the_overlay_could_not_improve_is_not_counted(roots):
+    """Otherwise the count measures stubs, not attribution."""
+    skills, overlay = roots
+    _write(skills, "owned", FULL)
+    _stub(overlay, "owned", 'metadata:\n  standard_id: STD-WRONG-999\n')
+    assert _catalogue()["owned"].overlay_path is None
+
+
+def test_an_overlay_only_skill_is_counted(roots):
+    _, overlay = roots
+    _stub(overlay, "builtin", 'metadata:\n  standard_id: STD-BLT-001\n')
+    assert _catalogue()["builtin"].overlay_path is not None

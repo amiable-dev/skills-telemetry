@@ -139,8 +139,7 @@ def catalogue_ok() -> Check:
         detail += f", {unversioned} unversioned"
     overlays = overlay_roots()
     if overlays:
-        attributed = sum(1 for m in cat.values() if m.path and any(
-            str(m.path).startswith(str(r.resolve())) for r in overlays))
+        attributed = sum(1 for m in cat.values() if m.overlay_path is not None)
         detail += f"; {attributed} attributed by overlay across {len(overlays)} overlay root(s)"
     return Check("skill catalogue", True, detail)
 

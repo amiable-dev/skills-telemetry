@@ -28,6 +28,11 @@ class SkillManifest:
     success_signal: str = "policy"
     content_hash: str = ""
     path: Path | None = None
+    # Set when an overlay supplied something this manifest did not state (#51).
+    # Not "the file lives in an overlay root": fill_gaps returns a manifest based
+    # on the skill's own file, so that test counted nothing and reported 0 while
+    # two skills were being attributed.
+    overlay_path: Path | None = None
     extra: dict = field(default_factory=dict)
 
     def as_attributes(self) -> dict:
@@ -244,14 +249,20 @@ def fill_gaps(base: SkillManifest, overlay: SkillManifest) -> SkillManifest:
     pinned one — stability that does not exist, with nothing to notice it by.
     """
     merged = replace(base)
-    if merged.version in ("", UNVERSIONED):
+    filled = False
+    if merged.version in ("", UNVERSIONED) and overlay.version != UNVERSIONED:
         merged.version = overlay.version
+        filled = True
     for attr in ("standard_id", "owner"):
-        if not getattr(merged, attr):
+        if not getattr(merged, attr) and getattr(overlay, attr):
             setattr(merged, attr, getattr(overlay, attr))
+            filled = True
     for attr in ("policy_ids", "harness_support"):
-        if not getattr(merged, attr):
+        if not getattr(merged, attr) and getattr(overlay, attr):
             setattr(merged, attr, list(getattr(overlay, attr)))
+            filled = True
+    if filled:
+        merged.overlay_path = overlay.path
     # content_hash is never filled from an overlay. A stub's body is the
     # operator's note, not the skill's instruction, and hashing it would put a
     # meaningful-looking value where there is nothing to observe — every stub
@@ -275,6 +286,7 @@ def load_overlay(root: Path) -> dict[str, SkillManifest]:
             continue
         if m is not None:
             m.content_hash = ""      # see fill_gaps: a stub observes nothing
+            m.overlay_path = p
             out.setdefault(m.name, m)
     return out
 
