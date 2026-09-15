@@ -8,7 +8,15 @@ from pathlib import Path
 
 from stdtel.identity import developer_hash
 
-TICKET = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d{1,6})\b")
+#: A ticket key begins a branch name or a branch segment. Anchoring on `\b`
+#: instead looked equivalent and was not: `dependabot/github_actions/actions/
+#: upload-artifact-7` upper-cased contains `ARTIFACT-7` after a hyphen, so every
+#: Dependabot branch stamped a phantom ticket on every span it produced (#62).
+#: The delivery loader carries the same expression deliberately — `warehouse/`
+#: is standalone and imports nothing from this package — and
+#: `tests/test_delivery_tickets.py` asserts the two agree, because the ADR-002
+#: join is exactly a comparison between what this stamps and what that parses.
+TICKET = re.compile(r"(?:^|/)([A-Z][A-Z0-9]{1,9}-\d{1,6})")
 
 
 def _git(args: list[str], cwd: Path | None) -> str:
@@ -19,7 +27,14 @@ def _git(args: list[str], cwd: Path | None) -> str:
 
 
 def ticket_from_branch(branch: str) -> str:
-    m = TICKET.search(branch.upper())
+    """The ticket key a branch is named for, or 'unattributed'.
+
+    Must stay identical to `warehouse.load_delivery.ticket_from_branch`: one
+    stamps `std.ticket.id` on a span, the other derives `ticket_id` from a PR,
+    and ADR-002 joins the two on equality. A difference between them does not
+    fail anywhere — it just silently stops rows matching.
+    """
+    m = TICKET.search((branch or "").upper())
     return m.group(1) if m else "unattributed"
 
 

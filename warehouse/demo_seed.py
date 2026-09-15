@@ -21,12 +21,19 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import random
 import sys
 from pathlib import Path
 
 DEMO_MARKER = "DEMO"
-TABLES = ("ticket", "pull_request", "policy_result", "skill_invocation", "session_cost", "defect")
+TABLES = ("ticket", "pull_request", "policy_result", "skill_invocation", "session_cost",
+          "defect", "artefact_activation")
+
+#: Sub-agent types the demo fleet spawns, with how expensive each is per call.
+#: Deliberately uneven: the point of the efficiency queries is that one artefact
+#: usually dominates, and a flat distribution would hide that.
+DEMO_SUBAGENTS = [("general-purpose", 3.0), ("Explore", 1.0), ("code-reviewer", 0.6)]
 
 # one skill that helps, one barely used — so the demo shows a refusal as well as a finding
 SKILLS = [
@@ -135,6 +142,104 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "user_hash": f"demo-user-{dev}",
             })
 
+        # --- ADR-009 artefact activations -------------------------------------
+        # Without these `make demo` leaves every efficiency query empty, and a
+        # newcomer following the docs sees four blank panels that look exactly
+        # like a broken install. Same DEMO markers, same mixed picture.
+        act = dict(session_id=session_id, harness="claude-code", harness_mode="agent",
+                   repo="demo-org/demo-repo", team=team, ticket_id=sc_ticket,
+                   user_hash=f"demo-user-{dev}")
+        turns = rng.randint(2, 9)
+        for turn_no in range(turns):
+            at = opened + dt.timedelta(minutes=turn_no * rng.uniform(1, 12))
+            turn_in = int(total_in / turns * rng.uniform(0.6, 1.4))
+            hooks = {"cc-status": rng.randint(30, 90), "stdtel-hook": rng.randint(4, 40)}
+            out["artefact_activation"].append({
+                **act,
+                "span_id": f"demoact-{n:06d}-t{turn_no}", "trace_id": f"demotrace{n:06d}",
+                "started_at": _iso(at), "ended_at": _iso(at + dt.timedelta(seconds=rng.uniform(5, 300))),
+                "kind": "turn", "name": None, "source": "transcript",
+                "prompt_id": f"demo-prompt-{n}-{turn_no}", "parent_prompt_id": None,
+                "model": "claude-opus-5", "input_tokens": turn_in,
+                "output_tokens": int(turn_in * 0.1),
+                "cache_read_tokens": int(turn_in * rng.uniform(1.5, 6.0)),
+                "cache_creation_tokens": int(turn_in * rng.uniform(0.05, 0.3)),
+                "llm_requests": rng.randint(1, 20), "tool_calls": rng.randint(0, 40),
+                "duration_ms": int(rng.uniform(4_000, 400_000)), "is_error": False,
+                "subagent_type": None, "subagent_id": None, "subagent_depth": None,
+                "compaction_reason": None, "compaction_tokens_before": None,
+                "compaction_tokens_after": None, "compaction_turns_since_previous": None,
+                "hook_ms": sum(hooks.values()), "hook_ms_by_hook": json.dumps(hooks),
+            })
+        # the same skill invocation as an activation. The loader writes kind=skill
+        # to both tables, so the demo must too, or the skill-side efficiency
+        # query reads empty while the scorecard reads full — which looks like a
+        # broken query rather than a half-seeded fleet.
+        if used_skill:
+            si = out["skill_invocation"][-1]
+            out["artefact_activation"].append({
+                **act,
+                "span_id": f"demoact-{n:06d}-k0", "trace_id": si["trace_id"],
+                "started_at": si["started_at"], "ended_at": si["ended_at"],
+                "kind": "skill", "name": si["skill_name"], "source": "hook",
+                "prompt_id": f"demo-prompt-{n}-0", "parent_prompt_id": None,
+                "model": si["model"], "input_tokens": si["input_tokens"],
+                "output_tokens": si["output_tokens"],
+                "cache_read_tokens": si["cache_read_tokens"],
+                "cache_creation_tokens": si["cache_creation_tokens"],
+                "llm_requests": si["llm_requests"], "tool_calls": None,
+                "duration_ms": None, "is_error": si["is_error"],
+                "subagent_type": None, "subagent_id": None, "subagent_depth": None,
+                "compaction_reason": None, "compaction_tokens_before": None,
+                "compaction_tokens_after": None, "compaction_turns_since_previous": None,
+                "hook_ms": None, "hook_ms_by_hook": None,
+            })
+
+        # roughly a third of sessions spawn sub-agents, and they are expensive
+        for k in range(rng.choice([0, 0, 1, 2, 4])):
+            agent, weight = rng.choice(DEMO_SUBAGENTS)
+            at = opened + dt.timedelta(minutes=rng.uniform(1, 40))
+            sub_in = int(total_in * weight * rng.uniform(0.4, 1.6))
+            out["artefact_activation"].append({
+                **act,
+                "span_id": f"demoact-{n:06d}-s{k}", "trace_id": f"demotrace{n:06d}",
+                "started_at": _iso(at), "ended_at": _iso(at + dt.timedelta(seconds=rng.uniform(20, 900))),
+                "kind": "subagent", "name": agent, "source": "hook",
+                "prompt_id": None, "parent_prompt_id": f"demo-prompt-{n}-0",
+                "model": rng.choice(["claude-haiku-4-5-20251001", "claude-opus-5"]),
+                "input_tokens": sub_in, "output_tokens": int(sub_in * 0.08),
+                # a sub-agent re-reads the parent context on every request, so its
+                # cache_read dwarfs everything else — the trap the analyst brief names
+                "cache_read_tokens": int(sub_in * rng.uniform(8, 40)),
+                "cache_creation_tokens": int(sub_in * rng.uniform(0.1, 0.5)),
+                "llm_requests": rng.randint(3, 60), "tool_calls": rng.randint(1, 40),
+                "duration_ms": int(rng.uniform(20_000, 900_000)), "is_error": rng.random() < 0.04,
+                "subagent_type": agent, "subagent_id": f"demo-agent-{n}-{k}",
+                "subagent_depth": 1,
+                "compaction_reason": None, "compaction_tokens_before": None,
+                "compaction_tokens_after": None, "compaction_turns_since_previous": None,
+                "hook_ms": None, "hook_ms_by_hook": None,
+            })
+        # ~12% of sessions compact at least once
+        if rng.random() < 0.12:
+            at = opened + dt.timedelta(minutes=rng.uniform(10, 90))
+            before = rng.randint(400_000, 980_000)
+            out["artefact_activation"].append({
+                **act,
+                "span_id": f"demoact-{n:06d}-c0", "trace_id": f"demotrace{n:06d}",
+                "started_at": _iso(at), "ended_at": _iso(at),
+                "kind": "compaction", "name": "auto", "source": "hook",
+                "prompt_id": None, "parent_prompt_id": None, "model": None,
+                "input_tokens": None, "output_tokens": None,
+                "cache_read_tokens": None, "cache_creation_tokens": None,
+                "llm_requests": None, "tool_calls": None, "duration_ms": None, "is_error": False,
+                "subagent_type": None, "subagent_id": None, "subagent_depth": None,
+                "compaction_reason": "auto", "compaction_tokens_before": before,
+                "compaction_tokens_after": int(before * rng.uniform(0.01, 0.05)),
+                "compaction_turns_since_previous": turns,
+                "hook_ms": None, "hook_ms_by_hook": None,
+            })
+
         if rng.random() < 0.06:
             out["defect"].append({
                 "defect_id": f"demo-org/demo-repo#{1000 + n}", "ticket_id": ticket_id,
@@ -147,7 +252,8 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
 def load(dsn: str, data: dict[str, list[dict]]) -> dict[str, int]:
     import psycopg
     from warehouse.load_delivery import CONFLICT_KEYS, TABLES as DELIVERY_COLS
-    conflict = dict(CONFLICT_KEYS, skill_invocation="span_id", session_cost="session_id")
+    conflict = dict(CONFLICT_KEYS, skill_invocation="span_id", session_cost="session_id",
+                    artefact_activation="span_id")
     counts = {}
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         for table, rows in data.items():
@@ -171,6 +277,7 @@ def clear(dsn: str) -> dict[str, int]:
             ("defect", "defect_id", "demo-org/%"), ("policy_result", "pr_id", "demo-org/%"),
             ("pull_request", "pr_id", "demo-org/%"), ("skill_invocation", "span_id", "demo%"),
             ("session_cost", "session_id", "demo-session-%"), ("ticket", "ticket_id", f"{DEMO_MARKER}-%"),
+            ("artefact_activation", "span_id", "demoact-%"),
         ):
             cur.execute(f"DELETE FROM {table} WHERE {column} LIKE %s", (pattern,))
             counts[table] = cur.rowcount

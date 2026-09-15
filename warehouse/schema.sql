@@ -42,7 +42,8 @@ CREATE INDEX IF NOT EXISTS ix_inv_skill  ON skill_invocation (skill_name, skill_
 CREATE TABLE IF NOT EXISTS session_cost (           -- harness-native token metrics rolled up per session
   session_id TEXT PRIMARY KEY, harness TEXT, model TEXT, ticket_id TEXT, team TEXT,
   input_tokens BIGINT, output_tokens BIGINT, cache_read_tokens BIGINT, cache_creation_tokens BIGINT,
-  cost_usd NUMERIC(12,4), active_seconds INT, started_at TIMESTAMPTZ
+  cost_usd NUMERIC(12,4), active_seconds INT, started_at TIMESTAMPTZ,
+  api_ms BIGINT, tool_ms BIGINT, duration_ms BIGINT   -- harness wall time, cumulative per session
 );
 
 CREATE TABLE IF NOT EXISTS ticket (                  -- from Linear
@@ -73,3 +74,83 @@ CREATE TABLE IF NOT EXISTS skill_eval (              -- offline evals (design §
 );
 
 CREATE INDEX IF NOT EXISTS idx_skill_invocation_plugin ON skill_invocation (plugin);
+
+-- ADR-009: the unit of capture is an artefact activation, not a skill invocation.
+-- One span name (std.artefact.activation) discriminated by kind, so "where did
+-- the tokens go" is a GROUP BY rather than a union over four tables. The token
+-- columns carry NO DEFAULT on purpose: a missing attribute must arrive as NULL,
+-- because 0 is a measurement ("this subagent read no cached tokens") and NULL is
+-- the absence of one (ADR-005). skill_invocation keeps its DEFAULT 0 because
+-- rows written before ADR-009 were loaded that way and changing it would make
+-- old and new rows mean different things.
+CREATE TABLE IF NOT EXISTS artefact_activation (
+  span_id            TEXT PRIMARY KEY,
+  trace_id           TEXT NOT NULL,
+  session_id         TEXT NOT NULL,
+  started_at         TIMESTAMPTZ NOT NULL,
+  ended_at           TIMESTAMPTZ NOT NULL,
+  kind               TEXT NOT NULL,          -- skill | subagent | compaction | turn
+  name               TEXT,                   -- catalogue name / agent type / compaction reason;
+                                             -- NULL on a turn, whose identity is prompt_id and
+                                             -- which must never contribute a metrics dimension
+  source             TEXT,                   -- hook | transcript: observed, or inferred (ADR-005)
+  harness            TEXT,                   -- claude-code | copilot-vscode | copilot-cli
+  harness_mode       TEXT,
+  prompt_id          TEXT,                   -- join key to native claude_code.* telemetry
+  parent_prompt_id   TEXT,                   -- the turn that spawned a sub-agent
+  model              TEXT,
+  input_tokens          BIGINT,
+  output_tokens         BIGINT,
+  cache_read_tokens     BIGINT,
+  cache_creation_tokens BIGINT,
+  llm_requests       INT,
+  tool_calls         INT,
+  duration_ms        BIGINT,
+  is_error           BOOLEAN,
+  subagent_type      TEXT,                   -- kind = subagent
+  subagent_id        TEXT,
+  subagent_depth     INT,
+  compaction_reason  TEXT,                   -- kind = compaction
+  compaction_tokens_before BIGINT,           -- the harness's own estimates, recorded as received
+  compaction_tokens_after  BIGINT,
+  compaction_turns_since_previous INT,
+  hook_ms            BIGINT,                 -- kind = turn: every hook that fired, summed
+  hook_ms_by_hook    JSONB,                  -- {hook basename: ms}; basenames only, never paths
+  ticket_id          TEXT NOT NULL DEFAULT 'unattributed',
+  repo               TEXT,
+  team               TEXT,
+  user_hash          TEXT
+);
+-- Migrations. A CREATE TABLE guarded by IF NOT
+-- EXISTS does nothing to a table that is already there, so every column added
+-- after a table's first release reaches an existing warehouse only through an
+-- ALTER; without one the loader discovers the gap on its first INSERT after an
+-- upgrade (#55).
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS hook_ms_by_hook JSONB;
+
+CREATE INDEX IF NOT EXISTS ix_act_session ON artefact_activation (session_id, started_at);
+CREATE INDEX IF NOT EXISTS ix_act_kind    ON artefact_activation (kind, started_at);
+CREATE INDEX IF NOT EXISTS ix_act_ticket  ON artefact_activation (ticket_id);
+CREATE INDEX IF NOT EXISTS ix_act_prompt  ON artefact_activation (session_id, prompt_id);
+
+-- Real money and real wall time, from the harness's own cost-state entry. These
+-- are cumulative for the session, which is why they are here and not on a turn.
+ALTER TABLE session_cost ADD COLUMN IF NOT EXISTS api_ms BIGINT;
+ALTER TABLE session_cost ADD COLUMN IF NOT EXISTS tool_ms BIGINT;
+ALTER TABLE session_cost ADD COLUMN IF NOT EXISTS duration_ms BIGINT;
+
+-- ADR-009 decision 7: the loaders run on a schedule, and a warehouse that lags
+-- Tempo is a finding rather than a surprise. A run that failed writes a row too;
+-- a loader that only records its successes cannot be distinguished from one that
+-- was never run at all.
+CREATE TABLE IF NOT EXISTS loader_run (
+  run_id        TEXT PRIMARY KEY,
+  started_at    TIMESTAMPTZ NOT NULL,
+  finished_at   TIMESTAMPTZ,
+  loader        TEXT NOT NULL,               -- load_traces | load_delivery
+  rows_loaded   INT,
+  source_max_ts TIMESTAMPTZ,                 -- newest source timestamp seen: the lag measurement
+  ok            BOOLEAN,
+  error         TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_loader_run_recent ON loader_run (loader, started_at DESC);
