@@ -169,6 +169,15 @@ warehouse nobody loads changes nothing.
 - **A sub-agent that is still running at Stop has no span yet.** `SubagentStop` fires when it ends;
   background agents end after the turn. The span is emitted at the next Stop, so a session's last
   turn can under-count until the following one.
+- **A sub-agent that finished long before that Stop may be lost entirely.** Its span carries the
+  sub-agent's own start and end, so it is written in the past; measured against Tempo 2.7.0, a span
+  stamped 90 minutes back never became searchable and never reached the warehouse, while one stamped
+  15 minutes back did. Tempo discarded nothing — every discard counter was zero — and no component
+  reported an error, which makes this exactly the failure shape ADR-005 exists for. The exposure is
+  biased toward background agents, which are the expensive ones. Stamping the span at emit time
+  instead was rejected: it would place the work on the timeline at a moment it was not running.
+  Tracked as #67, and it must be settled before [ADR-008](008-spool-spans-to-disk.md) ships, because
+  spooling widens the gap between when work happens and when its span is sent.
 - **`token_count_estimate_*` are estimates**, and the harness says so in the field name. They are
   recorded as received and never adjusted.
 - **The Stop hook does more work per turn.** One extra span in the ordinary case, plus a sub-agent

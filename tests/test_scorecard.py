@@ -139,3 +139,54 @@ def test_review_single_user_fires_when_only_one_person_used_a_skill(seeded):
     rows = {r["skill_name"]: r for r in scorecard_rows()}
     assert int(rows[skill]["distinct_users"]) == 1
     assert rows[skill]["recommended_action"] == "review-single-user", rows[skill]
+
+
+# --- ADR-009: the demo fleet must populate every efficiency query -------------
+
+def _efficiency_files():
+    return sorted((ROOT / "warehouse" / "efficiency").glob("[0-9]*.sql"))
+
+
+def _run_efficiency(path, **params):
+    """Run one efficiency query with its `:name` parameters bound."""
+    sql = path.read_text()
+    bound = dict(params)
+    for name in bound:
+        sql = sql.replace(f":{name}", f"%({name})s")
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, bound)
+        cols = [d.name for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def test_there_are_efficiency_queries_to_run():
+    assert _efficiency_files(), "no efficiency queries found to exercise"
+
+
+@pytest.mark.parametrize("path", _efficiency_files(), ids=lambda p: p.stem)
+def test_the_demo_fleet_answers_every_efficiency_question(path, seeded):
+    """`make demo` exists so a newcomer sees a populated dashboard rather than a
+    blank one they cannot tell from a broken install.
+
+    Caught a real gap: the seeder wrote `skill_invocation` rows but no
+    `kind=skill` activations, so the skill-side query returned zero rows while
+    the scorecard returned plenty — which reads as a broken query rather than a
+    half-seeded fleet.
+    """
+    session_id = psql("SELECT session_id FROM artefact_activation "
+                      "WHERE kind = 'turn' AND span_id LIKE 'demoact-%' LIMIT 1")
+    assert session_id, "the demo fleet seeded no turn activations"
+    rows = _run_efficiency(path, session_id=session_id,
+                           since="2026-06-01", until="2026-10-01")
+    assert rows, f"{path.name} returns nothing against the demo fleet"
+
+
+def test_turns_are_counted_distinctly_not_per_row(seeded):
+    """A turn emits one activation per Stop carrying that slice's delta, so two
+    Stops inside one turn are two rows. `count(*)` would report twice the turns
+    that happened."""
+    rows = _run_efficiency(ROOT / "warehouse" / "efficiency" / "01_tokens_by_artefact_kind.sql",
+                           session_id=psql("SELECT session_id FROM artefact_activation "
+                                           "WHERE kind='turn' AND span_id LIKE 'demoact-%' LIMIT 1"))
+    turn_row = next(r for r in rows if r["kind"] == "turn")
+    assert turn_row["n_turns"] <= turn_row["n_activations"]

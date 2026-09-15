@@ -133,6 +133,60 @@
       "options": {
         "showHeader": true
       }
+    },
+    {
+      "id": 5,
+      "title": "Tokens by artefact kind (never sum these rows)",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "description": "ADR-009. Sub-agent cache reads are large by construction \u2014 the agent re-reads its parent's context on every request \u2014 so they are shown apart from everything else. `without_usage` is how many rows carried no token figures at all; a total over three observed rows is a different claim from one over three hundred.",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawSql": "-- Where the spend goes, by artefact. Kinds overlap deliberately: a skill's\n-- tail is inside the turn that loaded it, and a sub-agent's tokens are inside\n-- the turn that spawned it. Compare the rows; never add them up.\nSELECT kind,\n       count(*)                                   AS activations,\n       count(DISTINCT prompt_id) FILTER (WHERE kind = 'turn') AS turns,\n       count(*) FILTER (WHERE input_tokens IS NULL)           AS without_usage,\n       sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0)\n           + coalesce(cache_creation_tokens, 0))  AS tokens_excl_cache_read,\n       sum(coalesce(cache_read_tokens, 0))        AS cache_read_tokens\nFROM artefact_activation\nWHERE started_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY kind\nORDER BY tokens_excl_cache_read DESC NULLS LAST;"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Loader freshness \u2014 how old is everything above?",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "description": "Every panel on this dashboard is as old as the last successful loader run. A run that failed still writes a row, because a loader that records only its successes cannot be told from one nobody ever ran.",
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawSql": "-- How stale is this dashboard? Spans reach Tempo when a hook fires; they reach\n-- this warehouse only when a loader runs. Tempo once held four days of spans\n-- Postgres had never seen, and every component reported success throughout.\nSELECT loader,\n       max(finished_at)                                        AS last_run,\n       round(extract(epoch FROM (now() - max(finished_at))) / 60) AS minutes_ago,\n       max(source_max_ts)                                      AS newest_row_loaded,\n       (SELECT count(*) FROM loader_run r2\n         WHERE r2.loader = loader_run.loader AND NOT r2.ok\n           AND r2.started_at > now() - interval '24 hours')    AS failures_24h\nFROM loader_run\nGROUP BY loader\nORDER BY loader;"
+        }
+      ]
     }
   ]
 }
