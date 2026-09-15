@@ -225,10 +225,24 @@ quietly:
 - until an event fires, that kind falls back to reading the session directory and is flagged
   `std.artefact.source = transcript`, so an inference is never mistaken for an observation.
 
-Also outstanding: whether `SubagentStop` fires for an interrupted sub-agent, whether the sub-agent
-transcript is fully flushed when it does, and the measured Stop-hook wall time on a session with
-dozens of finished sub-agents. The first two are why the directory fallback exists at all; the third
-is measured on the next real session and tracked on #63.
+**Stop-hook wall time was measured** rather than left open, against this repository's own largest
+session — a 16 MB, 9,643-line transcript with 23 finished sub-agent runs:
+
+| case | time |
+|---|---|
+| steady state: one new turn, sub-agents already drained | 2.6 ms median |
+| worst case: cold state, whole transcript re-read, all 23 sub-agents summed | 137 ms |
+
+The steady-state figure is the one a developer experiences and it sits well inside the ~40 ms budget
+in [ADR-003](003-hook-execution-constraints.md). The worst case exceeds it and is accepted: it occurs
+once, when stdtel is installed into a session that already has a large transcript, and the alternative
+is discarding that session's sub-agent costs entirely. It is bounded by transcript size, not by
+session length, because the offset advances afterwards. Under [ADR-008](008-spool-spans-to-disk.md)
+this work moves behind the spool and stops being in the developer's path at all.
+
+Still outstanding, and only answerable from a live session: whether `SubagentStop` fires for an
+interrupted or cancelled sub-agent, and whether the sub-agent's transcript is fully flushed when it
+does. Both are why the directory fallback exists. Tracked on #63.
 
 ## Related
 
