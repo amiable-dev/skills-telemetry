@@ -252,3 +252,37 @@ def test_the_installer_says_open_sessions_must_be_restarted(capsys, tmp_path, mo
     assert install.main(["settings", "--path", str(settings)]) == 0
     out = capsys.readouterr().out.lower()
     assert "restart" in out and "already open" in out
+
+
+def test_artefact_events_are_reported_as_unobserved_until_they_fire(tmp_path, monkeypatch):
+    """Registration is not observation.
+
+    The sub-agent and compaction payload shapes come from documentation, not
+    from a captured session, so the doctor must say which events have never
+    fired rather than letting silence read as working capture (ADR-005).
+    """
+    import json
+
+    from stdtel import doctor
+
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path))
+    (tmp_path / "s1.json").write_text(json.dumps({"observed_events": ["subagent-start"]}))
+    check = doctor.artefacts_observed()
+    assert not check.ok
+    assert "subagent-stop" in check.detail and "post-compact" in check.detail
+    assert "subagent-start" not in check.detail, "an observed event must not be reported missing"
+    assert "restart" in check.remedy.lower()
+
+    (tmp_path / "s2.json").write_text(json.dumps(
+        {"observed_events": ["subagent-stop", "post-compact"]}))
+    assert doctor.artefacts_observed().ok
+
+
+def test_artefact_events_survive_a_half_written_state_file(tmp_path, monkeypatch):
+    """Hooks write state on every event, so a truncated file is normal and must
+    not take the diagnostic down with it."""
+    from stdtel import doctor
+
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path))
+    (tmp_path / "broken.json").write_text('{"observed_events": [')
+    assert doctor.artefacts_observed().ok is False      # reports, does not raise

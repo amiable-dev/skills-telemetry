@@ -86,7 +86,7 @@ echo "5. tempo made it searchable"
 start=$(( $(date +%s) - 900 )); end=$(( $(date +%s) + 60 ))
 found=0
 for _ in 1 2 3 4 5 6 7 8; do
-  found=$(curl -s --get "$TEMPO/api/search" --data-urlencode 'q={ name = "std.skill.invocation" }' \
+  found=$(curl -s --get "$TEMPO/api/search" --data-urlencode 'q={ name = "std.artefact.activation" }' \
           --data-urlencode "start=$start" --data-urlencode "end=$end" \
           | grep -o '"traceID"' | wc -l | tr -d ' ')
   [ "${found:-0}" -gt 0 ] && break
@@ -112,7 +112,7 @@ retry 12 5 have_metrics && ok "$series span-metric series" \
 promq() { curl -s --get "$PROM/api/v1/query" --data-urlencode "query=$1" \
           | sed -n 's/.*"value":\[[^,]*,"\([^"]*\)"\].*/\1/p'; }
 counter_accumulates() {
-    peak=$(promq 'max(traces_span_metrics_calls_total{span_name="std.skill.invocation"})')
+    peak=$(promq 'max(traces_span_metrics_calls_total{span_name="std.artefact.activation"})')
     peak=${peak%%.*}
     [ "${peak:-0}" -ge 2 ]
 }
@@ -120,7 +120,7 @@ retry 12 5 counter_accumulates && ok "counter reached $peak across separate hook
   || bad "counter never exceeded ${peak:-0} after two invocations" \
         "each hook process is opening its own series - check service.instance.id is pinned (stdtel/identity.py) and that the metrics pipeline drops it (#42)"
 
-instances=$(promq 'count(count by (instance) (traces_span_metrics_calls_total{span_name="std.skill.invocation"}))')
+instances=$(promq 'count(count by (instance) (traces_span_metrics_calls_total{span_name="std.artefact.activation"}))')
 instances=${instances%%.*}
 [ "${instances:-0}" -le 1 ] && ok "one series per skill, not one per process" \
   || bad "$instances distinct instance labels" "cardinality is growing per hook process; stale series clear after ~5m, so re-run if you have just fixed it (#42)"

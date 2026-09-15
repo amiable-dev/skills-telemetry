@@ -64,7 +64,7 @@ echo '{"session_id":"demo"}' | stdtel-hook stop
 
 # 4. read it back — note start/end, they are NOT optional
 curl -s --get http://localhost:3200/api/search \
-  --data-urlencode 'q={ name = "std.skill.invocation" }' \
+  --data-urlencode 'q={ name = "std.artefact.activation" }' \
   --data-urlencode "start=$(( $(date +%s) - 900 ))" --data-urlencode "end=$(date +%s)"
 
 # 5. load traces into the warehouse, then query it
@@ -104,11 +104,11 @@ it is the first thing to check when a query "finds nothing":
 
 ```bash
 # wrong — always returns nothing
-curl -s 'http://localhost:3200/api/search?q=%7B%20name%3D%22std.skill.invocation%22%20%7D'
+curl -s 'http://localhost:3200/api/search?q=%7B%20name%3D%22std.artefact.activation%22%20%7D'
 
 # right
 curl -s --get http://localhost:3200/api/search \
-  --data-urlencode 'q={ name = "std.skill.invocation" }' \
+  --data-urlencode 'q={ name = "std.artefact.activation" }' \
   --data-urlencode "start=$(( $(date +%s) - 3600 ))" --data-urlencode "end=$(date +%s)"
 ```
 
@@ -180,11 +180,11 @@ both with `curl -s localhost:8888/metrics | grep otelcol_exporter`.
 
 **Langfuse names our spans after the tool, not the OTel span name.** An invocation appears as
 `Skill`, because Langfuse takes the observation name from `gen_ai.tool.name`. Searching the UI for
-`std.skill.invocation` finds nothing. Look for:
+`std.artefact.activation` finds nothing. Look for:
 
 | in the Langfuse UI | is our |
 |---|---|
-| `Skill` | `std.skill.invocation` |
+| `Skill` | `std.artefact.activation` with `std.artefact.kind=skill` |
 | `std.session.cost` | `std.session.cost` (no tool name, so the span name survives) |
 
 Filter and group on the keys the overlay promotes — `skill_name`, `skill_version`, `skill_plugin`,

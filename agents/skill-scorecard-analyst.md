@@ -16,7 +16,8 @@ the objective on its own. A skill that is expensive and lifts first-time pass ra
 Query paths, in order of preference:
 
 - **Postgres** (`warehouse/schema.sql`, `warehouse/scorecard.sql`) — the weekly scorecard. Start here.
-- **Tempo** — individual `std.skill.invocation` spans, when you need to see a specific session.
+- **Tempo** — individual `std.artefact.activation` spans, when you need to see a specific session.
+  Filter on `std.artefact.kind`: `skill`, `subagent`, `compaction` or `turn`.
 - **Prometheus** — `traces_span_metrics_*`, dimensioned by `std_skill_name`, `std_skill_version`,
   `std_skill_plugin`, `std_harness`, `std_team`.
 

@@ -16,6 +16,13 @@ processors:
       - { pattern: ^gen_ai\.input\..*,  action: delete }
       - { pattern: ^gen_ai\.output\..*, action: delete }
       - { pattern: ^tool\.(input|output|arguments|result).*, action: delete }
+      # ADR-009. The SubagentStop payload carries the sub-agent's final reply and
+      # the path to its transcript. Neither has a code path to a span, but the
+      # rule is that metadata-only is enforced here rather than trusted upstream
+      # (ADR-005), and this collector also receives spans from harnesses we do
+      # not write.
+      - { key: last_assistant_message, action: delete }
+      - { pattern: ^std\.subagent\.(transcript|path|message).*, action: delete }
 
   # 2. Normalise semconv drift across SDKs/harnesses (rename map; extend as spec moves).
   transform/normalise:
@@ -68,6 +75,15 @@ connectors:
   spanmetrics:
     histogram: { explicit: { buckets: [1s, 5s, 15s, 60s, 300s] } }
     dimensions:
+      # ADR-009: kind and name are the two dimensions "where did the tokens go,
+      # by artefact" needs. Both are bounded — kind is a four-value enum, name is
+      # a catalogue name, an agent type or a compaction reason. std.prompt.id is
+      # deliberately NOT here: it is unbounded, and a dimension per turn is the
+      # same defect as #42 one layer up.
+      - { name: std.artefact.kind }
+      - { name: std.artefact.name }
+      - { name: std.artefact.source }
+      - { name: std.subagent.type }
       - { name: std.skill.name }
       - { name: std.skill.version }
       - { name: std.skill.trigger }

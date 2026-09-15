@@ -1,6 +1,6 @@
 ---
 title: "ADR-009: Artefact activation as the unit of capture — sub-agents, compaction and per-turn cost beside skills"
-status: proposed
+status: accepted
 date: 2026-09-15
 tags: [adr, telemetry, capture, efficiency, subagents]
 links: ["001-distribution-and-capture-surface.md", "003-hook-execution-constraints.md", "005-data-integrity.md", "006-langfuse-as-an-optional-trace-backend.md", "../evaluation-power.md"]
@@ -114,8 +114,12 @@ warehouse nobody loads changes nothing.
    observed in the transcript slice since the previous Stop, which is one turn in the ordinary case,
    so there is no batch to parse. Usage is summed from the slice's per-request `usage` blocks, which
    are deltas by construction; `durationMs` is copied where the harness recorded it and omitted
-   otherwise. A turn with no observed `prompt_id` is not emitted. The dedupe key is
-   (`session.id`, `std.prompt.id`), so a repeated Stop cannot produce a second row. The turn is the
+   otherwise. A turn with no observed `prompt_id` is not emitted. Each span carries **that slice's
+   delta**, not a running total, so the rare case of two Stops inside one turn adds a second row that
+   sums correctly rather than overwriting the first or losing its tokens; anything counting turns
+   counts `DISTINCT std.prompt.id`. (The draft said the dedupe key would make a second row
+   impossible. Implementation showed that costs either accumulated per-turn state in the session file
+   or silently dropped the second slice's tokens — both worse than a row that sums.) The turn is the
    join key to native `claude_code.*` metrics and the denominator for per-turn ratios; it is not the
    denominator for skill effectiveness, which stays the PR.
 6. **Hook latency is recorded on the turn**, as `std.turn.hook_ms` summed from `hookInfos`, with the
@@ -185,32 +189,46 @@ below. Not accepted: per-kind span names, for the reason recorded under options;
 the transcript at all", because the tail rule already depends on the existing metadata-only reader
 and the sub-agent read uses the same one.
 
-## To verify before acceptance
+## What verification found
 
-Per ADR-005, none of the following is assumed; each is checked against a live session and the
-payload committed to `tests/fixtures/hook_payloads.json`:
+Five of the listed checks were answered against real transcripts before any of this was coded, and
+**two of them contradicted the draft**:
 
-- the `SubagentStop` payload fields as documented, in particular `agent_transcript_path` resolving
-  to `subagents/<agent_id>.jsonl` under the session directory;
-- which transcript entry carries `totalCostUSD` and `modelUsage`, and whether it is per turn or
-  cumulative (it was observed once in the session that motivated this ADR, on an entry that also
-  carried `durationMs`);
-- that `PostCompact` fires for both `auto` and `manual`, and the estimate fields are present on the
-  installed harness version; and that when they are absent the attributes are omitted, not zero;
-- that the sub-agent transcript is fully flushed when `SubagentStop` fires, and whether the hook
-  fires at all for a sub-agent that was interrupted or killed;
-- that `usage` blocks in a sub-agent transcript are per request, as in the parent transcript, and
-  not cumulative, so summing them cannot over-count;
-- that `agent_id` is unique across sessions, or must be joined with `session.id`;
-- that compaction appends to the parent transcript rather than rewriting it, so `transcript_offset`
-  survives a compaction and no turn is read twice;
-- the measured Stop-hook wall time on a session with dozens of finished sub-agents and a large
-  transcript, against the ADR-003 budget;
-- a leak test: content placed in every documented payload field and one undocumented field, and
-  in a sub-agent transcript's message bodies, with the exported spans asserted free of all of it;
-- a before/after run of `scorecard.sql` over the demo fleet proving the primary metric's cohorts,
-  denominators and verdicts are byte-identical once the loader writes `skill_invocation` from
-  kind `skill`.
+| checked | result |
+|---|---|
+| where `prompt_id` lives | On `user` entries, 1069 of 1069 — and on **no** `assistant` entry. The user entry is the only observable turn boundary. Every tool result is also a `user` entry carrying the same id, so the first occurrence marks the turn and the rest are ignored. |
+| `totalCostUSD` / `modelUsage` | On a `cost-state` entry, **cumulative for the session and carrying no timestamp**. The draft implied a per-turn figure. It is therefore the session span's, never a turn's — and it fills `session_cost.cost_usd`, NULL for every row since the schema was written because nothing read it. |
+| sub-agent `usage` blocks | Per request, not cumulative: output tokens move both up and down between consecutive requests across three real transcripts. Summing them cannot over-count. |
+| compaction vs the read offset | Compaction **appends** a `compact_boundary` entry; entries continue after it in the same file. `transcript_offset` survives and no turn is read twice. |
+| `agent_transcript_path` shape | `subagents/agent-<agent_id>.jsonl` beside the session transcript, and the id inside each file matched its filename for every file checked. Only one session on this machine had sub-agents, so cross-session `agent_id` uniqueness is **not** established; the loader joins on `session_id` too. |
+
+Two further turn-level signals were found while looking and are now captured: `system`/`turn_duration`
+carries the harness's own `durationMs`, and `system`/`stop_hook_summary` carries each hook's
+`durationMs` with its command line.
+
+The leak test and the scorecard-equivalence check were written rather than deferred, and each
+guarantee was mutation-tested — the allowlist, the path suppression and the omit-don't-zero rule were
+each deliberately broken to confirm a test fails.
+
+## Still unverified, and why acceptance did not wait
+
+**Hook configuration is read at session start**, so a session cannot observe a hook it has just
+registered. The `SubagentStop` and `PostCompact` payloads therefore could not be captured before
+shipping the code that registers them — the gate as drafted was unsatisfiable. Rather than weaken it
+quietly:
+
+- their payloads live in `tests/fixtures/hook_payloads_documented.json`, which states in the file
+  that it is transcribed from documentation and **not** captured, and a test asserts they have not
+  been moved into the captured fixture;
+- `stdtel-doctor` reports each event as `not yet observed` on a machine where it has never fired,
+  so silence cannot read as working capture;
+- until an event fires, that kind falls back to reading the session directory and is flagged
+  `std.artefact.source = transcript`, so an inference is never mistaken for an observation.
+
+Also outstanding: whether `SubagentStop` fires for an interrupted sub-agent, whether the sub-agent
+transcript is fully flushed when it does, and the measured Stop-hook wall time on a session with
+dozens of finished sub-agents. The first two are why the directory fallback exists at all; the third
+is measured on the next real session and tracked on #63.
 
 ## Related
 

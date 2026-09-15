@@ -251,7 +251,47 @@ def plugin_in_step() -> Check:
                  notice.split("run: ", 1)[1] if "run: " in notice else notice)
 
 
-CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, ticket_key, catalogue_ok, collector_ok, recent_state)
+def artefacts_observed() -> Check:
+    """Which ADR-009 events have actually fired on this machine?
+
+    Registration is not observation. The three newest hook events are the ones
+    that capture the largest unmeasured costs — sub-agent runs and compaction —
+    and a settings file that mentions them proves only that somebody edited a
+    settings file. Until one has fired, the payload shapes stdtel codes against
+    are documentation, not evidence, and this check says so rather than letting
+    silence read as success.
+    """
+    import json
+
+    from stdtel.state import state_dir
+
+    wanted = {"subagent-start", "subagent-stop", "post-compact"}
+    seen: set[str] = set()
+    try:
+        files = sorted(state_dir().glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    except Exception as e:                        # noqa: BLE001
+        return Check("artefact events", False, f"cannot read state dir: {e}", "check STDTEL_STATE_DIR")
+    for f in files[:50]:
+        try:
+            seen |= set(json.loads(f.read_text()).get("observed_events") or [])
+        except Exception:                         # noqa: BLE001 - a half-written state file
+            continue
+    missing = sorted(wanted - seen)
+    if not missing:
+        return Check("artefact events", True, "sub-agent and compaction capture both observed")
+    if not files:
+        return Check("artefact events", False, "no session state written yet",
+                     "start a session with the hooks installed")
+    return Check("artefact events", False,
+                 f"not yet observed: {', '.join(missing)}",
+                 "expected until a session runs with these hooks registered AND spawns a "
+                 "sub-agent or compacts. Re-run `stdtel-install settings`, restart Claude Code, "
+                 "then spawn a sub-agent. Until then those kinds fall back to reading the "
+                 "transcript and are flagged std.artefact.source=transcript")
+
+
+CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, ticket_key, catalogue_ok,
+          collector_ok, recent_state, artefacts_observed)
 
 
 def check_all() -> list[Check]:
