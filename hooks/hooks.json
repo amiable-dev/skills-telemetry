@@ -53,6 +53,45 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "subagent-start"
+            ]
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "subagent-stop"
+            ]
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook",
+            "args": [
+              "post-compact"
+            ]
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

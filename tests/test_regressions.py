@@ -36,7 +36,8 @@ def test_stop_without_transcript_still_emits(tmp_path):
     e = InMemorySpanExporter()
     # invocation + session cost (the Skill call itself counts as a tool call)
     assert hooks.stop({"session_id": sid}, exporter=e) == 2      # was 0, silently
-    span = next(s for s in e.get_finished_spans() if s.name == "std.skill.invocation")
+    span = next(s for s in e.get_finished_spans()
+                if s.attributes.get("std.artefact.kind") == "skill")
     assert span.attributes["std.skill.load_tokens"] == 0
 
 
@@ -117,7 +118,8 @@ def test_namespaced_invocation_keeps_plugin_and_version(tmp_path):
     hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
     e = InMemorySpanExporter()
     hooks.stop({"session_id": sid}, exporter=e)
-    span = next(s for s in e.get_finished_spans() if s.name == "std.skill.invocation")
+    span = next(s for s in e.get_finished_spans()
+                if s.attributes.get("std.artefact.kind") == "skill")
     assert span.attributes["std.skill.name"] == "structured-logging"
     assert span.attributes["std.skill.invoked_as"] == "my-plugin:structured-logging"
     assert span.attributes["std.skill.plugin"] == "my-plugin"
@@ -193,8 +195,9 @@ def test_session_cost_is_the_total_not_the_tail(tmp_path):
     e = InMemorySpanExporter()
     hooks.stop({"session_id": sid, "transcript_path": str(t)}, exporter=e)
     by_name = {s.name: s for s in e.get_finished_spans()}
+    by_kind = {s.attributes.get("std.artefact.kind"): s for s in e.get_finished_spans()}
     total = by_name["std.session.cost"].attributes["gen_ai.usage.input_tokens"]
-    tail = by_name["std.skill.invocation"].attributes["gen_ai.usage.input_tokens"]
+    tail = by_kind["skill"].attributes["gen_ai.usage.input_tokens"]
     assert total >= tail > 0
 
 
@@ -328,5 +331,6 @@ def test_skill_with_telemetry_emit_false_is_not_attributed(tmp_path, monkeypatch
     e = InMemorySpanExporter()
     hooks.stop({"session_id": sid, "transcript_path": ""}, exporter=e)
     names = [s.name for s in e.get_finished_spans()]
-    assert "std.skill.invocation" not in names, "opted-out skill was still attributed"
+    kinds = {s.attributes.get("std.artefact.kind") for s in e.get_finished_spans()}
+    assert "skill" not in kinds, "opted-out skill was still attributed"
     assert "std.session.cost" in names, "session cost is an aggregate and still reported"

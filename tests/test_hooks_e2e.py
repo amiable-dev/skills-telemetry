@@ -22,9 +22,9 @@ def test_lifecycle(tmp_path, monkeypatch):
     n = hooks.stop({"session_id": sid, "transcript_path": str(transcript)}, exporter=exp)
     assert n == 3          # 2 skill invocations + 1 std.session.cost
     spans = {s.attributes["std.skill.name"]: s for s in exp.get_finished_spans()
-             if s.name == "std.skill.invocation"}
+             if s.attributes.get("std.artefact.kind") == "skill"}
     sl = spans["structured-logging"]
-    assert sl.name == "std.skill.invocation"
+    assert sl.name == "std.artefact.activation"
     assert sl.attributes["std.skill.version"] == "2.3.0"
     assert sl.attributes["std.standard_id"] == "STD-LOG-001"
     assert sl.attributes["std.policy.ids"] == "logging.required_fields,logging.no_pii"

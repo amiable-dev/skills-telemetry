@@ -50,7 +50,7 @@ def test_full_lifecycle_replay_produces_a_span(tmp_path):
     e = InMemorySpanExporter()
     assert hooks.stop({**PAYLOADS["Stop"], "transcript_path": ""}, exporter=e) == 2
     a = next(s for s in e.get_finished_spans()
-             if s.name == "std.skill.invocation").attributes
+             if s.attributes.get("std.artefact.kind") == "skill").attributes
     assert a["std.skill.name"] == "telemetry-probe"
     assert a["std.prompt.id"] == PAYLOADS["PreToolUse"]["prompt_id"]
     assert a["std.harness.permission_mode"] == "bypassPermissions"

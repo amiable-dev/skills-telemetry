@@ -24,7 +24,7 @@ def spool(tmp_path, monkeypatch):
 
 
 def record(n=1):
-    return {"name": "std.skill.invocation", "session_id": f"s{n}",
+    return {"name": "std.artefact.activation", "kind": "skill", "session_id": f"s{n}",
             "started_at": 1.0, "ended_at": 2.0,
             "attributes": {"std.skill.name": "x"}, "resource": {"std.team": "t"}}
 
@@ -135,7 +135,7 @@ def test_stop_spools_instead_of_exporting_when_asked(spool, tmp_path, monkeypatc
     assert hooks.stop({"session_id": sid, "transcript_path": ""}) > 0
     rows = read_all()
     assert rows, "nothing was spooled"
-    assert any(r["name"] == "std.skill.invocation" for r in rows)
+    assert any(r["name"] == "std.artefact.activation" for r in rows)
 
 
 def test_spooled_records_carry_what_the_exporter_needs(spool, tmp_path, monkeypatch):
@@ -147,7 +147,7 @@ def test_spooled_records_carry_what_the_exporter_needs(spool, tmp_path, monkeypa
                         "tool_input": {"skill": "structured-logging"}})
     hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
     hooks.stop({"session_id": sid, "transcript_path": ""})
-    row = next(r for r in read_all() if r["name"] == "std.skill.invocation")
+    row = next(r for r in read_all() if r["name"] == "std.artefact.activation")
     for field in ("session_id", "started_at", "ended_at", "attributes", "resource"):
         assert field in row, f"spooled record lacks {field}"
 
@@ -168,8 +168,9 @@ def test_export_from_spool_round_trips_to_real_spans(spool, tmp_path, monkeypatc
     n = drain(lambda batch: export_batch(batch, exporter=exp))
     assert n > 0
     names = {s.name for s in exp.get_finished_spans()}
-    assert "std.skill.invocation" in names
-    span = next(s for s in exp.get_finished_spans() if s.name == "std.skill.invocation")
+    assert "std.artefact.activation" in names
+    span = next(s for s in exp.get_finished_spans()
+                if s.attributes.get("std.artefact.kind") == "skill")
     assert span.attributes["std.skill.name"] == "structured-logging"
     assert not read_all(), "a successful export must clear the spool"
 
