@@ -29,6 +29,10 @@ was rejected and what the decision costs, which is what you need before re-litig
 - **[ADR-008](docs/adrs/008-spool-spans-to-disk.md)** (proposed) — `stop` should append NDJSON to a
   spool and never open a socket; a separate process drains it. Auto-starting the stack was rejected:
   the collector is shared infrastructure, and the coupling is the problem, not the symptom. Issue #14.
+- **[ADR-009](docs/adrs/009-artefact-activation-as-the-unit-of-capture.md)** (proposed) — the unit of
+  capture becomes an artefact activation (`kind` ∈ skill, subagent, compaction, turn), so efficiency
+  is answerable per session at any volume. Skills keep the primary metric; sub-agents and compaction
+  get spans via `SubagentStop`/`PostCompact`; loaders run on a schedule. Issue #63.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
