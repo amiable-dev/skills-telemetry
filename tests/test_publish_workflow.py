@@ -108,12 +108,27 @@ def test_the_published_artefact_is_verified_after_it_lands():
     assert "verify" in jobs and jobs["verify"]["needs"] == "pypi"
     body = json.dumps(jobs["verify"])
     assert "stdtel==" in body, "it must install the exact published version"
-    assert "attestation verify" in body
+    assert "pypi_attestations" in body or "pypi-attestations" in body
+
+
+def test_the_attestation_checked_is_pypis_own_not_githubs():
+    """`gh attestation verify` reads GitHub's own Artifact Attestations store,
+    which pypa/gh-action-pypi-publish's `attestations: true` never populates —
+    it uploads a PEP 740 attestation to PyPI itself instead. Checking the wrong
+    store 404s even when the real attestation is fine (issue #65, run
+    34899394376). `pypi_attestations verify pypi` reads PyPI's own copy."""
+    body = json.dumps(WF["jobs"]["verify"])
+    assert "gh attestation verify" not in body
+    assert "verify pypi" in body
 
 
 def test_verification_does_not_get_the_publishing_credential():
     """Reading an attestation does not require minting one."""
-    assert "id-token" not in (WF["jobs"]["verify"].get("permissions") or {})
+    permissions = WF["jobs"]["verify"].get("permissions") or {}
+    assert "id-token" not in permissions
+    # Nor does it read GitHub's attestation store any more (see above) — that
+    # permission would now be a dead, misleading grant.
+    assert "attestations" not in permissions
 
 
 def test_a_release_must_be_described_in_the_changelog():

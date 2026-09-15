@@ -122,7 +122,10 @@ jobs:
     runs-on: ubuntu-latest
     # No id-token here: verification reads an attestation, it does not mint a
     # credential. The scope that publishes belongs only to the job that publishes.
-    permissions: { contents: read, attestations: read }
+    # No attestations:read either: the attestation checked below is PyPI's PEP 740
+    # one (fetched from PyPI's integrity API), not a GitHub-native one — see the
+    # note on the verify step.
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4   # v10.1.0
@@ -145,9 +148,25 @@ jobs:
           stdtel-doctor --quiet || true          # reports, never gates
           python -c "import stdtel, sys; sys.exit(stdtel.__version__ != '${GITHUB_REF_NAME#v}')"
       - name: the attestation must verify
-        env:
-          GH_TOKEN: ${{ github.token }}
+        # `pypa/gh-action-pypi-publish`'s `attestations: true` (in the `pypi` job)
+        # signs a PEP 740 attestation and uploads it to PyPI itself — it never
+        # touches GitHub's own Artifact Attestations store. `gh attestation
+        # verify` only ever reads that GitHub-native store (predicate type
+        # `https://slsa.dev/provenance/v1`, populated by actions/attest-build-
+        # provenance), so it 404s on a perfectly valid release: issue #65.
+        # `pypi_attestations verify pypi` reads the actual attestation PyPI
+        # holds, via PyPI's integrity API, which is the one docs/releasing.md
+        # describes as verified here.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           pip download --no-deps --no-binary :none: "stdtel==${VERSION}" -d /tmp/dl
-          gh attestation verify "/tmp/dl/stdtel-${VERSION}-py3-none-any.whl" --repo "${GITHUB_REPOSITORY}"
+          # Same CDN-lag risk as the install step above, now against the
+          # integrity API instead of the simple index: retry rather than fail
+          # on a race we already know PyPI has.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            uvx pypi-attestations==0.0.30 verify pypi "/tmp/dl/stdtel-${VERSION}-py3-none-any.whl" \
+              --repository "https://github.com/${GITHUB_REPOSITORY}" && break
+            echo "attempt ${attempt}: attestation not available yet"; sleep 20
+          done
+          uvx pypi-attestations==0.0.30 verify pypi "/tmp/dl/stdtel-${VERSION}-py3-none-any.whl" \
+            --repository "https://github.com/${GITHUB_REPOSITORY}"
