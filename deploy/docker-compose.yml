@@ -47,6 +47,42 @@ services:
     volumes: ["../warehouse/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro"]
     ports: ["${STDTEL_BIND:-127.0.0.1}:5432:5432"]
 
+  # --- Scheduled loader (opt-in): docker compose --profile loader up -d ---
+  # ADR-009 decision 7. Tempo held four days of spans the warehouse had never
+  # seen, because load_traces.py is run by hand; the policy artefact in #21 had
+  # never been ingested at all. Opt-in rather than default because it needs a
+  # GitHub token to do the delivery half, and a loader that half-works on every
+  # `make up` is worse than one you started deliberately.
+  #
+  # No image is built: the repo is mounted and dependencies are installed on
+  # start. That is slower than a built image and much easier to keep honest —
+  # there is no second copy of the loader to go stale.
+  loader:
+    profiles: ["loader"]
+    image: python:3.13-slim
+    working_dir: /app
+    volumes: ["..:/app:ro"]
+    environment:
+      STDTEL_DSN: postgresql://postgres:stdtel@postgres:5432/stdtel
+      STDTEL_TEMPO: http://tempo:3200
+      STDTEL_LOAD_INTERVAL: "${STDTEL_LOAD_INTERVAL:-900}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      STDTEL_LOAD_REPO: "${STDTEL_LOAD_REPO:-}"
+    command:
+      - sh
+      - -c
+      - |
+        pip install --quiet --no-cache-dir psycopg[binary] requests || exit 1
+        while true; do
+          python -m warehouse.load_traces || echo "loader: traces failed" >&2
+          if [ -n "$$STDTEL_LOAD_REPO" ] && [ -n "$$GITHUB_TOKEN" ]; then
+            python -m warehouse.load_delivery --repo "$$STDTEL_LOAD_REPO" --since 30d \
+              || echo "loader: delivery failed" >&2
+          fi
+          sleep "$$STDTEL_LOAD_INTERVAL"
+        done
+    depends_on: [postgres, tempo]
+
   # --- Langfuse (opt-in): docker compose --profile langfuse up -d ---
   # Ports are remapped: upstream defaults collide with Grafana (3000),
   # our warehouse Postgres (5432) and Prometheus (9090).

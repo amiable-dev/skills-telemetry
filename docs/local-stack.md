@@ -6,14 +6,34 @@ of both, and Postgres for the warehouse. `make up` starts them; nothing needs co
 ```bash
 make up          # start the base stack
 make up-langfuse # base stack + the optional Langfuse profile
-make down        # stop everything, including the langfuse profile (data survives)
+make down        # stop everything, including the optional profiles (data survives)
 mise run smoke   # verify every hop and name the one that broke
+mise run load    # load Tempo spans and delivery data into the warehouse, once
 ```
 
-`make down` passes `--profile langfuse` deliberately. A plain `docker compose down` ignores
-profiled services, so it leaves the Langfuse containers running and then cannot remove the
-network — reported as `Resource is still in use`, which looks like a Docker fault rather than a
-missing flag.
+`make down` names every optional profile deliberately. A plain `docker compose down` ignores
+profiled services, so it leaves them running and then cannot remove the network — reported as
+`Resource is still in use`, which looks like a Docker fault rather than a missing flag.
+
+## Keeping the warehouse current
+
+Spans reach Tempo the moment a hook fires; they reach Postgres only when someone runs the loader.
+Nobody does, reliably. Tempo once held four days of spans the warehouse had never seen, and the
+`policy-results` artefact in #21 had been produced on every CI run and ingested by nothing — in both
+cases every component reported success.
+
+Two ways to stop that, one for a laptop and one for a deployment:
+
+```bash
+mise run load-watch                                   # loop in a terminal, STDTEL_LOAD_INTERVAL seconds
+docker compose -f deploy/docker-compose.yml --profile loader up -d   # the same loop in a container
+```
+
+The container form is opt-in because the delivery half needs a GitHub token: set `GITHUB_TOKEN` and
+`STDTEL_LOAD_REPO` (`owner/name`) or it loads traces only. It mounts the repo read-only and installs
+its two dependencies on start rather than shipping a second copy of the loader in a built image.
+
+Every run writes a `loader_run` row, so "when did this last work" is a query rather than a guess.
 
 ## Endpoints and credentials
 
