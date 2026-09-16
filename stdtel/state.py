@@ -1,11 +1,49 @@
 """Per-session state shared between hooks (start/stop of skill invocations)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+
+@contextlib.contextmanager
+def locked(session_id: str):
+    """Hold the session's lock for a read-modify-write.
+
+    Hooks are separate processes and several can run at once — a sub-agent's
+    start and stop fire while the parent is still calling tools — so two of them
+    read the same state, each adds its own change, and the later write silently
+    discards the earlier one. Worse, the writes can interleave in the file
+    itself: a shorter document landing inside a longer one leaves valid JSON
+    followed by a fragment, which `load()` then refuses for the rest of the
+    session (#73).
+
+    flock is advisory and process-local, which is exactly the scope needed: every
+    writer is a hook on this machine. A lock that cannot be taken is not worth
+    failing a turn over, so the timeout falls through to an unlocked write —
+    still atomic, just last-write-wins.
+    """
+    path = state_dir() / f"{session_id}.lock"
+    handle = None
+    try:
+        handle = path.open("a+")
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except Exception:                             # noqa: BLE001 - no fcntl, or no lock
+        handle = None
+    try:
+        yield
+    finally:
+        if handle is not None:
+            with contextlib.suppress(Exception):
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
 
 
 def state_dir() -> Path:
@@ -100,11 +138,29 @@ class SessionState:
         return state_dir() / f"{self.session_id}.json"
 
     @classmethod
+    def mutate(cls, session_id: str):
+        """Load, let the caller change it, save — all under the session lock.
+
+        Use this for every hook that adds to state. Loading and saving
+        separately is what loses a sub-agent whose window was written while
+        another hook held an older copy.
+        """
+        @contextlib.contextmanager
+        def _ctx():
+            with locked(session_id):
+                st = cls.load(session_id)
+                yield st
+                st.save(lock=False)
+        return _ctx()
+
+    @classmethod
     def load(cls, session_id: str) -> "SessionState":
         p = state_dir() / f"{session_id}.json"
         if not p.exists():
             return cls(session_id=session_id)
-        raw = json.loads(p.read_text())
+        raw = cls._read(p, session_id)
+        if raw is None:
+            return cls(session_id=session_id)
         st = cls(session_id=session_id, transcript_offset=raw.get("transcript_offset", 0),
                  started_at=raw.get("started_at", 0.0), resource=raw.get("resource", {}),
                  last_export_ok=raw.get("last_export_ok"))
@@ -120,7 +176,39 @@ class SessionState:
         st.observed_events = list(raw.get("observed_events") or [])
         return st
 
-    def save(self) -> None:
+    @staticmethod
+    def _read(path: Path, session_id: str) -> dict | None:
+        """Parse the state file, salvaging what a torn write left behind.
+
+        Before this, a corrupt file raised out of `load()` and the hook's
+        catch-all swallowed it — so telemetry for that session stopped dead and
+        exited 0 for the rest of its life. Found on a real session: 42 spans,
+        then silence for a day, with a valid document followed by 235 bytes of a
+        longer one. Repairing it by hand made the next Stop emit 47 spans.
+
+        A torn write leaves the *whole* of one document followed by the tail of
+        another, so the leading document is intact and is a real, slightly older
+        state. Taking it keeps `transcript_offset`, which starting fresh would
+        reset — re-reading the whole transcript and re-emitting turns already
+        recorded.
+        """
+        text = path.read_text()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        try:
+            salvaged, _end = json.JSONDecoder().raw_decode(text)
+        except ValueError:
+            print(f"stdtel: {path.name} is unreadable and could not be salvaged; "
+                  f"starting this session's state over. Spans already sent are unaffected; "
+                  f"the transcript will be re-read from the beginning.", file=sys.stderr)
+            return None
+        print(f"stdtel: {path.name} was torn by concurrent hooks and has been repaired from "
+              f"the intact leading document. Any state written after it is lost.", file=sys.stderr)
+        return salvaged if isinstance(salvaged, dict) else None
+
+    def save(self, lock: bool = True) -> None:
         """Every field must be listed here.
 
         Each hook is a separate process, so anything not written is lost between
@@ -128,7 +216,7 @@ class SessionState:
         fields were added without being persisted and produced plausible-looking
         zeros rather than an error.
         """
-        self.path.write_text(json.dumps({
+        payload = json.dumps({
             "transcript_offset": self.transcript_offset,
             "started_at": self.started_at,
             "resource": self.resource,
@@ -143,7 +231,32 @@ class SessionState:
             "turn_count": self.turn_count,
             "turns_at_last_compaction": self.turns_at_last_compaction,
             "observed_events": self.observed_events,
-        }, indent=1))
+        }, indent=1)
+        if lock:
+            with locked(self.session_id):
+                self._write(payload)
+        else:
+            self._write(payload)
+
+    def _write(self, payload: str) -> None:
+        """Replace the file in one step.
+
+        `write_text` truncates and then writes, so a reader — or a second writer
+        — can see a half-written file, and two writers can interleave into one
+        that parses as valid JSON followed by a fragment. Writing a temporary
+        file beside it and renaming is atomic on POSIX: a reader sees either the
+        old file or the new one, never a blend of both.
+        """
+        directory = self.path.parent
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{self.session_id}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write(payload)
+            os.replace(tmp, self.path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
 
     def open_window(self, skill: str, version: str, trigger: str, tool_use_id: str | None,
                     prompt_id: str = "", permission_mode: str = "") -> SkillWindow:
