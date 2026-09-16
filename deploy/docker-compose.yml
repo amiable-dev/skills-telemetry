@@ -67,16 +67,34 @@ services:
       STDTEL_TEMPO: http://tempo:3200
       STDTEL_LOAD_INTERVAL: "${STDTEL_LOAD_INTERVAL:-900}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      GH_TOKEN: "${GITHUB_TOKEN:-}"          # what the gh CLI itself reads
+      GH_VERSION: "${GH_VERSION:-2.63.2}"
       STDTEL_LOAD_REPO: "${STDTEL_LOAD_REPO:-}"
     command:
       - sh
       - -c
       - |
         pip install --quiet --no-cache-dir psycopg[binary] requests || exit 1
+        # The delivery half shells out to `gh` — for PRs, issues and the
+        # policy-results artefact — and python:slim has no gh and no curl. It
+        # was wired in before this was noticed, so the delivery half could never
+        # have run in the container and said only "delivery failed" when it
+        # didn't. Installed once at start; the traces half needs none of it.
+        if ! command -v gh >/dev/null 2>&1; then
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates >/dev/null
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION:-2.63.2}/gh_${GH_VERSION:-2.63.2}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp && cp /tmp/gh_${GH_VERSION:-2.63.2}_linux_amd64/bin/gh /usr/local/bin/gh \
+            || echo "loader: could not install gh; the delivery half will not run" >&2
+        fi
         while true; do
           python -m warehouse.load_traces || echo "loader: traces failed" >&2
           if [ -n "$$STDTEL_LOAD_REPO" ] && [ -n "$$GITHUB_TOKEN" ]; then
+            # The policy artefact is the primary metric's only input, and it was
+            # produced on every CI run and collected by nothing (#21).
+            python -m warehouse.fetch_policy_results --repo "$$STDTEL_LOAD_REPO" \
+              --out /tmp/policy.jsonl || echo "loader: policy fetch failed" >&2
             python -m warehouse.load_delivery --repo "$$STDTEL_LOAD_REPO" --since 30d \
+              --policy-results /tmp/policy.jsonl \
               || echo "loader: delivery failed" >&2
           fi
           sleep "$$STDTEL_LOAD_INTERVAL"
