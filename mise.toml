@@ -50,6 +50,14 @@ export STDTEL_COLLECTOR_OVERLAY=overlay-langfuse.yaml
 cd deploy && $(docker compose version >/dev/null 2>&1 && echo docker compose || echo docker-compose) --profile langfuse up -d
 """
 
+[tasks.load]
+description = "Load Tempo spans and GitHub delivery data into the warehouse once"
+run = "make load"
+
+[tasks.load-watch]
+description = "Keep the warehouse current on a loop (STDTEL_LOAD_INTERVAL seconds, default 900)"
+run = "make load-watch"
+
 [tasks.demo]
 description = "Load a synthetic fleet so the scorecard has something to show (all rows DEMO-prefixed)"
 run = "make demo"

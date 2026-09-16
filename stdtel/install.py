@@ -26,11 +26,19 @@ PLUGIN_LAUNCHER = "${CLAUDE_PLUGIN_ROOT}/bin/stdtel-hook"
 # PreToolUse stays matched to Skill: it only opens skill windows, and firing it on
 # every tool would be pure latency. PostToolUse is unmatched because tool-call
 # failure rate needs every tool, and the non-Skill path is a counter increment.
+# SubagentStart/SubagentStop and PostCompact are ADR-009: a sub-agent was the
+# largest unmeasured cost in a real session, and compaction the largest single
+# event. Both are rare next to PostToolUse and both only touch local state.
+# Copilot has no equivalent for either, so those columns are None — the hook is
+# simply not registered there rather than registered and silently never firing.
 EVENTS = (
     ("session-start",         "SessionStart",       None,    "sessionStart"),
     ("pre-tool-use",          "PreToolUse",         "Skill", "preToolUse"),
     ("post-tool-use",         "PostToolUse",        None,    "postToolUse"),
     ("post-tool-use-failure", "PostToolUseFailure", None,    "postToolUseFailure"),
+    ("subagent-start",        "SubagentStart",      None,    None),
+    ("subagent-stop",         "SubagentStop",       None,    None),
+    ("post-compact",          "PostCompact",        None,    None),
     ("stop",                  "Stop",               None,    "agentStop"),
 )
 
@@ -99,6 +107,8 @@ def copilot_hooks(binary: "Path | str", harness: str = "copilot-vscode",
     """
     hooks: dict = {}
     for event, _, matcher, cop_event in EVENTS:
+        if cop_event is None:
+            continue        # no Copilot equivalent; registering one would be a guess
         entry = _entry(binary, event, exec_form, {"STDTEL_HARNESS": harness}, None)
         group: dict = {"hooks": [entry]}
         if matcher:

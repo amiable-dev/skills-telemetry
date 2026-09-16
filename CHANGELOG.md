@@ -4,6 +4,57 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Changed
+- **The unit of capture is an artefact activation, not a skill invocation (ADR-009).** The span
+  `std.skill.invocation` is renamed to `std.artefact.activation`, discriminated by
+  `std.artefact.kind` ∈ `skill`, `subagent`, `compaction`, `turn`. **This is a wire-level rename** and
+  anyone querying Tempo or Prometheus for the old name must update; the shipped dashboards and
+  `deploy/smoke.sh` already have. There is deliberately no dual-emission period — two spans would have
+  doubled every `traces_span_metrics_calls_total` series and both dashboards. Compatibility lives one
+  layer down: `load_traces` still writes `skill_invocation` from kind `skill`, so `scorecard.sql`,
+  every existing query and every row recorded before the rename keep working unchanged, and spans
+  still in Tempo under the old name keep loading. (#63)
+
+### Added
+- **Sub-agent, compaction and turn capture.** A real session of this project's own spent $366, spawned
+  42 sub-agents and compacted twice, and recorded one skill row and session totals — the numbers being
+  collected could not answer "where did it go". New hooks `SubagentStart`, `SubagentStop` and
+  `PostCompact`; where a hook has never fired the value is read from the session directory instead and
+  flagged `std.artefact.source=transcript`, so an inference is never mistaken for an observation.
+- **The session's real cost.** `session_cost.cost_usd` has been NULL for every row since the schema was
+  written, because nothing read the harness's own `cost-state` entry. It and the harness's API and tool
+  wall-clock totals are now loaded.
+- **Per-hook latency on each turn**, as `std.turn.hook.<basename>.ms`. The basename only — the payload
+  carries an absolute path, which is filesystem layout rather than data.
+- **`warehouse/efficiency/`**: five versioned queries answering the named efficiency questions, and a
+  session-efficiency brief in `agents/skill-scorecard-analyst` that runs them rather than writing its
+  own. Efficiency is answerable for a single session at any volume; the primary effectiveness metric
+  and its 30-merged-PRs-per-arm floor are unchanged.
+- **Scheduled loaders.** `mise run load`, `mise run load-watch`, and an opt-in `loader` compose
+  profile. Tempo held four days of spans the warehouse had never seen because `load_traces.py` is run
+  by hand. Every run writes a `loader_run` row, including failures, and a dashboard panel shows how
+  stale everything else on the page is.
+- `stdtel-doctor` reports which of the new hook events have actually fired on this machine. Their
+  payload shapes are transcribed from documentation, not captured, because hook configuration is read
+  at session start and a session cannot observe a hook it just registered.
+
+### Fixed
+- **Dependabot branches minted phantom tickets** (`upload-artifact-7` → `ARTIFACT-7`), on spans as well
+  as in the `ticket` table, putting work no developer did into the without-skill cohort. Both the
+  capture and delivery parsers now anchor a ticket key to the start of a branch segment, bot-authored
+  PRs are skipped, and a test pins the two parsers together because ADR-002 joins them on equality.
+  (#62)
+- **`span_id()` silently mangled hex ids.** A 16-character hex span id from Tempo's search API is also
+  valid base64, so it was decoded into 12 bytes of a different id without raising. It now decodes only
+  when the result is the length an id actually is.
+
+### Known issue
+- A sub-agent span stamped more than roughly an hour in the past never becomes searchable in Tempo and
+  never reaches the warehouse, with no error anywhere. The exposure is background sub-agents, which are
+  the expensive ones. (#67)
+
 ## 0.3.3 — 2026-09-14
 
 ### Changed

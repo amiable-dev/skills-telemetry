@@ -1,7 +1,7 @@
 """Single entrypoint for Claude Code hooks: `stdtel-hook <event>`.
 
 Reads the hook JSON payload from stdin. Events: session-start, pre-tool-use,
-post-tool-use, stop. Always exits 0 so a telemetry failure never blocks the
+post-tool-use, subagent-start, subagent-stop, post-compact, stop. Always exits 0 so a telemetry failure never blocks the
 developer (design §7: memory is best-effort, telemetry likewise).
 
 Every stdtel import is deliberately function-local. PreToolUse and PostToolUse
@@ -201,8 +201,201 @@ def post_tool_use(p: dict, error: bool = False) -> None:
     st.save()
 
 
+def subagent_start(p: dict) -> None:
+    """A sub-agent was spawned. Records only when it began and what it is.
+
+    Nothing is exported here: the run's cost is only knowable once it ends, and
+    a hook that exported per sub-agent would put a socket in the spawn path.
+    """
+    from stdtel.state import SessionState
+
+    agent_id = str(p.get("agent_id") or "")
+    if not agent_id:
+        return
+    st = SessionState.load(p.get("session_id", "unknown"))
+    st.observe("subagent-start")
+    st.open_subagent(agent_id=agent_id, agent_type=str(p.get("agent_type") or ""),
+                     transcript_path=str(p.get("agent_transcript_path") or ""),
+                     parent_prompt_id=str(p.get("prompt_id") or ""))
+    st.save()
+
+
+def subagent_stop(p: dict) -> None:
+    """A sub-agent finished.
+
+    Five named scalars are taken from the payload. `last_assistant_message` is
+    the sub-agent's final reply and `agent_transcript_path` is this machine's
+    filesystem layout; neither is read into an attribute, and the raw payload is
+    never stored, logged or serialised anywhere (ADR-009).
+    """
+    from stdtel.state import SessionState
+
+    agent_id = str(p.get("agent_id") or "")
+    if not agent_id:
+        return
+    st = SessionState.load(p.get("session_id", "unknown"))
+    st.observe("subagent-stop")
+    st.close_subagent(agent_id=agent_id, agent_type=str(p.get("agent_type") or ""),
+                      transcript_path=str(p.get("agent_transcript_path") or ""),
+                      parent_prompt_id=str(p.get("prompt_id") or ""))
+    st.save()
+
+
+def post_compact(p: dict) -> None:
+    """Context was compacted. Queued for the next Stop to export.
+
+    The token figures are the harness's own estimates and reach the span
+    unchanged. Where a harness does not send them they are omitted: a
+    compaction recorded as dropping zero tokens is a fabricated measurement.
+    """
+    from stdtel.state import SessionState
+
+    st = SessionState.load(p.get("session_id", "unknown"))
+    st.observe("post-compact")
+    before = p.get("token_count_estimate_before")
+    after = p.get("token_count_estimate_after")
+    st.record_compaction(reason=str(p.get("compaction_reason") or "unknown"),
+                         tokens_before=before if isinstance(before, int) else None,
+                         tokens_after=after if isinstance(after, int) else None)
+    st.save()
+
+
+def _subagent_activations(st, sl, transcript: Path) -> list:
+    """Activations for every sub-agent that finished since the last Stop.
+
+    Two sources, and the span says which. The SubagentStop hook is an
+    observation and is preferred. Where that hook has never fired on this
+    machine — an older harness, or a settings file that predates it — the
+    session's `subagents/` directory is scanned instead, which is an inference
+    and is flagged `source=transcript` so no query can confuse the two.
+    """
+    from stdtel import artefact
+    from stdtel.transcript import summarise_subagent
+
+    out = []
+    for w in st.drain_subagents():
+        path = Path(w.transcript_path) if w.transcript_path else _subagent_path(transcript, w.agent_id)
+        summary = summarise_subagent(path) if path else None
+        if summary is None:
+            continue
+        duration = int((w.ended_at - w.started_at) * 1000) if w.ended_at and w.ended_at > w.started_at else None
+        out.append(artefact.subagent(
+            agent_id=w.agent_id, agent_type=w.agent_type or "unknown",
+            started_at=summary.started_at or w.started_at,
+            ended_at=summary.ended_at or (w.ended_at or w.started_at),
+            usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
+            tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
+            depth=w.depth or None, parent_prompt_id=w.parent_prompt_id,
+            duration_ms=duration, source=artefact.SOURCE_HOOK))
+    if "subagent-stop" in st.observed_events:
+        return out
+    for path in _subagent_transcripts(transcript):
+        agent_id = path.stem.replace("agent-", "")
+        if agent_id in st.seen_agent_ids:
+            continue
+        summary = summarise_subagent(path)
+        if summary is None:
+            continue
+        st.seen_agent_ids.append(agent_id)
+        out.append(artefact.subagent(
+            agent_id=agent_id, agent_type=_subagent_type(path) or "unknown",
+            started_at=summary.started_at, ended_at=summary.ended_at,
+            usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
+            tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
+            source=artefact.SOURCE_TRANSCRIPT))
+    return out
+
+
+def _subagent_dir(transcript: Path) -> Path | None:
+    """`<session dir>/subagents`, next to the session transcript.
+
+    Verified against real sessions: each run is `agent-<agent_id>.jsonl`, and
+    the id in the file matches the one in the name for every file checked.
+    """
+    if not transcript or not transcript.name.endswith(".jsonl"):
+        return None
+    d = transcript.parent / transcript.stem / "subagents"
+    return d if d.is_dir() else None
+
+
+def _subagent_path(transcript: Path, agent_id: str) -> Path | None:
+    d = _subagent_dir(transcript)
+    if d is None or not agent_id:
+        return None
+    path = d / f"agent-{agent_id}.jsonl"
+    return path if path.is_file() else None
+
+
+def _subagent_transcripts(transcript: Path) -> list:
+    d = _subagent_dir(transcript)
+    return sorted(d.glob("agent-*.jsonl")) if d else []
+
+
+def _subagent_type(path: Path) -> str:
+    """`agentType` from the sibling meta file, and nothing else from it.
+
+    That file also carries `description`, the task the agent was given, which is
+    a prompt in everything but name.
+    """
+    meta = path.with_suffix("").with_name(path.stem + ".meta.json")
+    try:
+        return str(json.loads(meta.read_text()).get("agentType") or "")
+    except Exception:
+        return ""
+
+
+def _compaction_activations(st, sl) -> list:
+    """Compactions, from the PostCompact hook or, failing that, the transcript."""
+    from stdtel import artefact
+
+    out = []
+    for c in st.drain_compactions():
+        out.append(artefact.compaction(
+            reason=c.reason, started_at=c.at, ended_at=c.at,
+            tokens_before=c.tokens_before, tokens_after=c.tokens_after,
+            turns_since_previous=c.turns_since_previous, source=artefact.SOURCE_HOOK))
+    if "post-compact" in st.observed_events:
+        return out
+    for m in sl.compactions:
+        out.append(artefact.compaction(
+            reason=m.reason, started_at=m.ts, ended_at=m.ts,
+            tokens_before=m.tokens_before, tokens_after=m.tokens_after,
+            source=artefact.SOURCE_TRANSCRIPT))
+    return out
+
+
+def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
+    """One activation per turn observed in this slice.
+
+    Each carries the slice's *delta*, not a running total, so the rare case of
+    two Stops inside one turn adds a second row rather than overwriting the
+    first or losing its tokens. Anything counting turns therefore counts
+    `DISTINCT std.prompt.id`, which `warehouse/efficiency/` does.
+    """
+    from stdtel import artefact
+    from stdtel.transcript import attribute_turns
+
+    out = []
+    turns = attribute_turns(sl, open_turn=st.open_prompt_id,
+                            open_turn_started_at=st.open_prompt_started_at, now=now)
+    for t in turns:
+        if not t.prompt_id or (t.request_count == 0 and not t.tool_calls):
+            continue
+        out.append(artefact.turn(
+            prompt_id=t.prompt_id, started_at=t.started_at or now, ended_at=t.ended_at or now,
+            usage_attrs=t.usage.as_attributes(), llm_requests=t.request_count,
+            tool_calls=t.tool_calls, model=(t.models or [""])[0],
+            duration_ms=t.duration_ms, hook_ms=t.hook_ms, permission_mode=permission_mode))
+    if sl.turns:
+        st.turn_count += len(sl.turns)
+        st.open_prompt_id = sl.turns[-1].prompt_id
+        st.open_prompt_started_at = sl.turns[-1].ts
+    return out
+
+
 def stop(p: dict, exporter=None) -> int:
-    from stdtel.exporter import build_provider, emit_invocations, emit_session_cost
+    from stdtel import artefact
+    from stdtel.exporter import build_provider, emit_activations, emit_session_cost
     from stdtel.state import SessionState
     from stdtel.transcript import attribute, read_slice
 
@@ -253,8 +446,15 @@ def stop(p: dict, exporter=None) -> int:
             attrs["std.skill.llm_requests"] = a.request_count
             attrs["gen_ai.request.model"] = a.models[0] if a.models else "unknown"
             attrs.update(a.tail.as_attributes())
-        invocations.append({"started_at": w.started_at, "ended_at": w.ended_at,
-                            "attributes": attrs, "error": w.error})
+        attrs["gen_ai.operation.name"] = "execute_tool"
+        attrs["gen_ai.tool.name"] = "Skill"
+        invocations.append(artefact.activation(
+            artefact.KIND_SKILL, w.started_at, w.ended_at or time.time(),
+            attrs, name=resolved, error=w.error))
+    now = time.time()
+    invocations.extend(_turn_activations(st, sl, str(p.get("permission_mode") or ""), now))
+    invocations.extend(_subagent_activations(st, sl, transcript))
+    invocations.extend(_compaction_activations(st, sl))
     # The session's whole cost, emitted whether or not a skill was ever loaded.
     # Without this a session that used no skill produces no telemetry at all, and
     # cost-per-PR has no denominator (CLAUDE.md: unattributed sessions are kept
@@ -276,6 +476,19 @@ def stop(p: dict, exporter=None) -> int:
             if failures:
                 session_attrs[f"std.session.tool.{name}.failures"] = failures
         st.tool_calls = {}          # drained with the windows
+    # Real money, from the harness's own `cost-state` entry. Cumulative for the
+    # session and carrying no timestamp, so it belongs to the session span and
+    # never to a turn. `session_cost.cost_usd` has been NULL since the schema
+    # was written because nothing read this.
+    if sl.cost_state:
+        cost = sl.cost_state.get("totalCostUSD")
+        if isinstance(cost, (int, float)):
+            session_attrs["std.session.cost_usd"] = float(cost)
+        for src, dst in (("totalDuration", "std.session.duration_ms"),
+                         ("totalAPIDuration", "std.session.api_ms"),
+                         ("totalToolDuration", "std.session.tool_ms")):
+            if isinstance(sl.cost_state.get(src), int):
+                session_attrs[dst] = sl.cost_state[src]
     st.save()
     if not invocations and not session_attrs:
         return 0
@@ -286,6 +499,7 @@ def stop(p: dict, exporter=None) -> int:
         from stdtel.exporter import SESSION_SPAN_NAME, SPAN_NAME
         from stdtel.spool import append
         rows = [{"name": SPAN_NAME, "session_id": sid, "resource": st.resource,
+                 "kind": i.get("kind"),
                  "started_at": i["started_at"], "ended_at": i["ended_at"],
                  "attributes": i["attributes"], "error": i.get("error", False)}
                 for i in invocations]
@@ -299,7 +513,7 @@ def stop(p: dict, exporter=None) -> int:
 
     provider = build_provider(st.resource, exporter=exporter)
     try:
-        emitted = emit_invocations(provider, invocations, sid) if invocations else 0
+        emitted = emit_activations(provider, invocations, sid) if invocations else 0
         st.last_export_ok = True
     except Exception:
         st.last_export_ok = False
@@ -309,7 +523,6 @@ def stop(p: dict, exporter=None) -> int:
         # Session start comes from state, not the transcript: transcript timestamps
         # can be absent or unparseable, and a start near the epoch turns the span's
         # duration into "seconds since 1970" rather than the session's length.
-        now = time.time()
         started = st.started_at or min((i["started_at"] for i in invocations), default=now)
         emitted += emit_session_cost(provider, session_attrs, sid, started, now)
     st.save()
@@ -345,13 +558,20 @@ def main(argv: list[str] | None = None) -> int:
             post_tool_use(p)
         elif event == "post-tool-use-failure":
             post_tool_use(p, error=True)
+        elif event == "subagent-start":
+            subagent_start(p)
+        elif event == "subagent-stop":
+            subagent_stop(p)
+        elif event == "post-compact":
+            post_compact(p)
         elif event == "stop":
             stop(p)
         else:
             # still exit 0: an unknown event must never block the developer
             print(f"stdtel-hook: unknown event {event!r}; expected one of "
                   f"session-start, pre-tool-use, post-tool-use, "
-                  f"post-tool-use-failure, stop", file=sys.stderr)
+                  f"post-tool-use-failure, subagent-start, subagent-stop, "
+                  f"post-compact, stop", file=sys.stderr)
     except Exception as e:   # never block the developer
         print(f"stdtel: {e}", file=sys.stderr)
     return 0

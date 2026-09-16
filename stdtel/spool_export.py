@@ -24,7 +24,7 @@ def export_batch(batch: list[dict], exporter=None) -> int:
     Grouped by resource so each group carries the session's own attributes;
     records from different sessions must not be merged under one resource.
     """
-    from stdtel.exporter import SESSION_SPAN_NAME, SPAN_NAME, build_provider, emit_invocations, emit_session_cost
+    from stdtel.exporter import SESSION_SPAN_NAME, SPAN_NAME, build_provider, emit_activations, emit_session_cost
 
     groups: dict[tuple, list[dict]] = {}
     for row in batch:
@@ -40,7 +40,7 @@ def export_batch(batch: list[dict], exporter=None) -> int:
             for r in invocations:
                 by_session.setdefault(r.get("session_id", ""), []).append(r)
             for session_id, rs in by_session.items():
-                total += emit_invocations(provider, rs, session_id)
+                total += emit_activations(provider, rs, session_id)
         for r in rows:
             if r.get("name") == SESSION_SPAN_NAME:
                 total += emit_session_cost(provider, r.get("attributes") or {},

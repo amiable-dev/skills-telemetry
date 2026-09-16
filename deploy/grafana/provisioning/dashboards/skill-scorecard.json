@@ -1,5 +1,5 @@
 {
-  "title": "Skill telemetry (operational)",
+  "title": "Artefact telemetry (operational)",
   "uid": "stdtel-operational",
   "schemaVersion": 39,
   "panels": [
@@ -14,7 +14,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.skill.invocation\"}[1h]))"
+          "expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h]))"
         }
       ]
     },
@@ -29,7 +29,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.skill.invocation\",status_code=\"STATUS_CODE_ERROR\"}[1h])) / sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.skill.invocation\"}[1h]))"
+          "expr": "sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\",status_code=\"STATUS_CODE_ERROR\"}[1h])) / sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h]))"
         }
       ]
     },
@@ -44,7 +44,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le, std_skill_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.skill.invocation\"}[1h])))"
+          "expr": "histogram_quantile(0.5, sum by (le, std_skill_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])))"
         }
       ]
     },
@@ -60,6 +60,70 @@
       "targets": [
         {
           "expr": "sum by (type) (rate(claude_code_token_usage_tokens_total[1h]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Activations / h by artefact kind",
+      "description": "Where the agent's work actually goes. Sub-agents and compaction were invisible before ADR-009; a session can have no skill activations at all and still be the most expensive one of the day.",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (std_artefact_kind) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sub-agent calls / h by type",
+      "description": "Rate only \u2014 a sub-agent's token cost is a span attribute, so read that from the warehouse (warehouse/efficiency/), not from here.",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (std_subagent_type) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"subagent\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p50 hook-observed turn duration",
+      "description": "The harness's own turn timing, not our clock.",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"turn\"}[1h])))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Compactions / h by reason",
+      "description": "A rising auto-compaction rate is context pressure: the session is spending tokens re-reading itself. Pair with tokens_before in the warehouse.",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"compaction\"}[1h]))"
         }
       ]
     }

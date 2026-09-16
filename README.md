@@ -57,7 +57,8 @@ skills/<name>/SKILL.md      skill catalogue with validated front-matter (the con
 stdtel/manifest.py          front-matter parser + `stdtel-validate` CI gate
 stdtel/hooks/cli.py         Claude Code hooks: session-start | pre-tool-use | post-tool-use | stop
 stdtel/transcript.py        incremental JSONL reader + token attribution (tail rule, first-only sensitivity)
-stdtel/exporter.py          std.skill.invocation spans via OTLP/HTTP (content scrubbed)
+stdtel/artefact.py          the capture contract: kinds and their attribute allowlists
+stdtel/exporter.py          std.artefact.activation spans via OTLP/HTTP (content scrubbed)
 stdtel/enrich.py            join keys: std.ticket.id from branch, std.repo, std.team, std.harness
 stdtel/skillmap.py          generates collector/copilot-skill-map.yaml for Copilot tool-call mapping
 collector/otel-collector.yaml  drop content → normalise gen_ai.* → map Copilot skills → pseudonymise → spanmetrics
@@ -180,7 +181,7 @@ Then verify the loop end to end:
 ```bash
 claude                                     # invoke a skill in the project
 cat ~/.stdtel/sessions/*.json              # a window with skill, version, tool_use_id
-curl -s 'http://localhost:3200/api/search?tags=name%3Dstd.skill.invocation' | jq '.traces[0]'
+curl -s 'http://localhost:3200/api/search?tags=name%3Dstd.artefact.activation' | jq '.traces[0]'
 ```
 
 A `std.skill.version` of `unversioned` means the name in the transcript matched no `SKILL.md` in any root
@@ -193,7 +194,7 @@ tool-calls onto `std.skill.*`.
 ## Span schema
 
 Two span types, emitted at `Stop`. **They overlap by design and must never be summed:**
-`std.session.cost` is the session's total spend, `std.skill.invocation` attributes a *share* of that
+`std.session.cost` is the session's total spend, `std.artefact.activation` attributes a *share* of that
 total to one skill. Use session cost as the denominator for cost-per-PR; use invocation tail tokens to
 compare skills with each other.
 
@@ -210,7 +211,24 @@ never loads a skill is still spend, and excluding it would silently understate c
 | `std.session.tool.<name>.{calls,failures}` | per tool; `failures` omitted when zero |
 | `std.ticket.id`, `std.repo`, `std.team`, `std.harness` | resource (SessionStart) |
 
-### `std.skill.invocation`
+### `std.artefact.activation`
+
+One span name for four artefacts, discriminated by `std.artefact.kind`. The per-kind attribute
+allowlist in `stdtel/artefact.py` is the contract — an attribute belonging to another kind is dropped
+and reported rather than emitted (ADR-009).
+
+| kind | `std.artefact.name` | what else it carries |
+|---|---|---|
+| `skill` | catalogue name | the contract fields below |
+| `subagent` | agent type (`Explore`, `general-purpose`) | `std.subagent.{id,type,depth,llm_requests,tool_calls,duration_ms}`, tokens summed from the sub-agent's own transcript |
+| `compaction` | reason (`auto`, `manual`) | `std.compaction.{reason,tokens_before,tokens_after,turns_since_previous}`, the harness's own estimates |
+| `turn` | **none** — a turn is identified by `std.prompt.id`, which is unbounded and must never become a metrics dimension | `std.turn.{llm_requests,tool_calls,duration_ms,hook_ms}` and `std.turn.hook.<basename>.ms` |
+
+Every kind also carries `std.artefact.source`: `hook` when the harness reported it, `transcript` when
+it was read from the session directory because the hook has never fired on this machine. An inference
+and an observation are not the same measurement and a query can tell them apart.
+
+`kind=skill` additionally carries:
 
 | attribute | source |
 |---|---|
@@ -232,6 +250,10 @@ never loads a skill is still spend, and excluding it would silently understate c
 - Tail attribution splits by load order; when several skills load in one turn compare against `tail_tokens_first_only`.
 - Copilot granularity is per turn; use Claude Code's finer data for within-harness tuning only.
 - `load_tokens` uses a chars/4 heuristic on the Skill tool result.
+- A turn emits one span per `Stop` carrying that slice's **delta**, so two Stops inside one turn
+  produce two rows that sum correctly. Count turns with `count(DISTINCT prompt_id)`, never `count(*)`.
+- `subagent` and `compaction` are Claude Code only. Copilot has no confirmed equivalent, so those
+  hooks are not registered there rather than registered and silently never firing.
 - `gen_ai.*` conventions are still *Development* upstream; extend `transform/normalise` as names move.
 
 ## Contributing

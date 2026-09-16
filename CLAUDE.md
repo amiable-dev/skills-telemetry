@@ -29,10 +29,13 @@ was rejected and what the decision costs, which is what you need before re-litig
 - **[ADR-008](docs/adrs/008-spool-spans-to-disk.md)** (proposed) — `stop` should append NDJSON to a
   spool and never open a socket; a separate process drains it. Auto-starting the stack was rejected:
   the collector is shared infrastructure, and the coupling is the problem, not the symptom. Issue #14.
-- **[ADR-009](docs/adrs/009-artefact-activation-as-the-unit-of-capture.md)** (proposed) — the unit of
-  capture becomes an artefact activation (`kind` ∈ skill, subagent, compaction, turn), so efficiency
-  is answerable per session at any volume. Skills keep the primary metric; sub-agents and compaction
-  get spans via `SubagentStop`/`PostCompact`; loaders run on a schedule. Issue #63.
+- **[ADR-009](docs/adrs/009-artefact-activation-as-the-unit-of-capture.md)** — the unit of capture is
+  an artefact activation (`std.artefact.kind` ∈ skill, subagent, compaction, turn), so efficiency is
+  answerable per session at any volume. `std.skill.invocation` was renamed to
+  `std.artefact.activation`; compatibility lives in the loader, which still writes `skill_invocation`
+  from kind `skill`. Per-kind attribute allowlists in `stdtel/artefact.py` are what make one span
+  name safe. A turn carries no `name` — `prompt_id` is unbounded and `name` is a metrics dimension.
+  Turn spans are deltas: count `DISTINCT prompt_id`, never `count(*)`. Issue #63.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
@@ -49,7 +52,9 @@ Still true and not yet an ADR:
 - Token attribution: "tail" rule — llm requests after a skill loads until the next skill loads / turn
   ends; `tail_tokens_first_only` kept as a sensitivity check.
 - Two span types at Stop: `std.session.cost` (total, emitted even with no skill) and
-  `std.skill.invocation` (a share of it). They overlap deliberately — never sum them.
+  `std.artefact.activation` with `kind=skill` (a share of it). They overlap deliberately — never
+  sum them. The other three kinds (`subagent`, `compaction`, `turn`) are ADR-009; a turn's tokens and
+  a skill's tail overlap the same way.
 - `PostToolUse`/`PostToolUseFailure` are unmatched (every tool); `PreToolUse` stays matched to Skill.
 - `SessionState.save()` must list every field — each hook is a separate process, so an unpersisted
   field reads as its default at the next event, silently.
@@ -69,7 +74,7 @@ Adding a console script or a skill without documenting it fails `tests/test_docs
 
 ## Commands
 `stdtel-install settings|hooks|where` binds hooks to an absolute path (see ADR-001).
-`mise run install|test|validate|validate-plugin|skill-map|up|up-langfuse|down|smoke|demo|demo-clear|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
+`mise run install|test|validate|validate-plugin|skill-map|up|up-langfuse|down|smoke|load|load-watch|demo|demo-clear|eval|eval-dry|power|power-check|ci` — mise owns the toolchain (Python 3.13)
 and auto-activates `.venv`; the tasks delegate to the Makefile, which stays the single definition.
 The venv is seeded with pip on purpose: mise creates it with uv, which omits pip, and a pip-less venv
 sends a bare `pip install` to the interpreter behind it instead.

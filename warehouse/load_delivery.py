@@ -20,13 +20,50 @@ import json
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
-from stdtel.enrich import ticket_from_branch
+from warehouse.load_traces import record_run
 
 PR_FIELDS = ("number,title,headRefName,createdAt,mergedAt,closedAt,labels,"
              "reviews,reviewDecision,url,author,additions,deletions,changedFiles")
 HARNESS_LABELS = {"claude-code": "claude-code", "copilot": "copilot", "no-ai": "none"}
+
+# A ticket key begins a branch name or a branch segment. `stdtel.enrich.TICKET`
+# is `\b`-anchored because it reads prose as well as branches, and on a branch
+# that is wrong: `dependabot/github_actions/actions/upload-artifact-7` upper-cased
+# contains `ARTIFACT-7` after a hyphen, so every Dependabot PR minted a phantom
+# ticket, a phantom `ticket` row and a phantom cohort member (#62). Anchoring to
+# the start of a path segment is the whole fix: ARTIFACT does not start one.
+TICKET_IN_BRANCH = re.compile(r"(?:^|/)([A-Z][A-Z0-9]{1,9}-\d{1,6})")
+
+
+def ticket_from_branch(branch: str) -> str:
+    """The ticket key a branch is named for, or 'unattributed'.
+
+    Deliberately stricter than the capture-side parser, which sees the same
+    branch and would still stamp `std.ticket.id = ARTIFACT-7` on a span. The
+    delivery side is where the phantom became a row, so it is fixed here first;
+    the two want reconciling, and the ADR-002 join is what depends on it.
+    """
+    m = TICKET_IN_BRANCH.search((branch or "").upper())
+    return m.group(1) if m else "unattributed"
+
+
+def is_bot(pr: dict) -> bool:
+    """A PR opened by a bot.
+
+    Dependabot and its kind are not developer work: counting them inflates the
+    "without the skill" cohort with PRs no developer wrote, no skill could have
+    helped, and whose branch names are the phantom-ticket source above. gh's
+    GraphQL author carries `is_bot`; the REST spelling is a `[bot]` suffix and
+    GitHub Apps appear as `app/<name>`. All three are checked, because which one
+    arrives depends on the gh version rather than on anything we control.
+    """
+    author = pr.get("author") or {}
+    login = str(author.get("login") or "")
+    return bool(author.get("is_bot")) or login.endswith("[bot]") or login.startswith("app/")
+
 
 
 def gh_json(args: list[str]) -> list | dict:
@@ -188,25 +225,46 @@ def main(argv=None) -> int:
 
     days = int(a.since.rstrip("d"))
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).date().isoformat()
-
-    prs = [parse_pr(p, a.repo) for p in gh_json(
-        ["pr", "list", "--repo", a.repo, "--state", "merged", "--limit", str(a.limit),
-         "--search", f"merged:>={cutoff}", "--json", PR_FIELDS])]
-    issues = gh_json(["issue", "list", "--repo", a.repo, "--state", "all", "--label", "bug",
-                      "--limit", str(a.limit), "--json", "number,title,body,createdAt,labels"])
-    batches = {
-        "pull_request": prs,
-        "ticket": ticket_rows(prs, a.team),
-        "defect": defect_rows(issues, a.repo),
-        "policy_result": policy_rows(a.policy_results) if a.policy_results else [],
-    }
-    for table, rows in batches.items():
-        if a.dry_run:
-            print(f"{table}: {len(rows)} row(s)")
-            for r in rows[:3]:
-                print("  ", json.dumps(r, default=str))
-        else:
-            print(f"{table}: loaded {write(a.dsn, table, rows)} row(s)")
+    # ADR-009 decision 7: every run writes its own row, failures included. A
+    # loader that records only its successes cannot be told from one that was
+    # never run, which is how the warehouse came to sit two days behind Tempo.
+    run = {"run_id": uuid.uuid4().hex, "loader": "load_delivery",
+           "started_at": dt.datetime.now(dt.timezone.utc), "finished_at": None,
+           "rows_loaded": 0, "source_max_ts": None, "ok": False, "error": None}
+    try:
+        raw = gh_json(["pr", "list", "--repo", a.repo, "--state", "merged", "--limit", str(a.limit),
+                       "--search", f"merged:>={cutoff}", "--json", PR_FIELDS])
+        bots = [p for p in raw if is_bot(p)]
+        if bots:
+            print(f"skipped {len(bots)} bot-authored PR(s) (#62)", file=sys.stderr)
+        prs = [parse_pr(p, a.repo) for p in raw if not is_bot(p)]
+        issues = gh_json(["issue", "list", "--repo", a.repo, "--state", "all", "--label", "bug",
+                          "--limit", str(a.limit), "--json", "number,title,body,createdAt,labels"])
+        batches = {
+            "pull_request": prs,
+            "ticket": ticket_rows(prs, a.team),
+            "defect": defect_rows(issues, a.repo),
+            "policy_result": policy_rows(a.policy_results) if a.policy_results else [],
+        }
+        run["source_max_ts"] = max((p["merged_at"] for p in prs if p["merged_at"]), default=None)
+        for table, rows in batches.items():
+            if a.dry_run:
+                print(f"{table}: {len(rows)} row(s)")
+                for r in rows[:3]:
+                    print("  ", json.dumps(r, default=str))
+            else:
+                run["rows_loaded"] += write(a.dsn, table, rows)
+                print(f"{table}: loaded {len(rows)} row(s)")
+        run["ok"] = True
+    except (Exception, SystemExit) as e:        # noqa: BLE001 - every run writes a row
+        run["error"] = f"{type(e).__name__}: {e}"[:2000]
+        run["finished_at"] = dt.datetime.now(dt.timezone.utc)
+        if not a.dry_run:
+            record_run(a.dsn, run)
+        raise
+    run["finished_at"] = dt.datetime.now(dt.timezone.utc)
+    if not a.dry_run:
+        record_run(a.dsn, run)
     if not batches["policy_result"]:
         print("policy_result: EMPTY — first-time pass rate cannot be computed without it "
               "(pass --policy-results from CI)", file=sys.stderr)

@@ -66,7 +66,14 @@ def test_copilot_hooks_stamp_the_harness():
 
 
 def test_copilot_uses_its_own_event_names():
-    assert set(copilot_hooks(hook_binary())["hooks"]) == {e[3] for e in EVENTS}
+    """Only the events Copilot actually has.
+
+    SubagentStart/Stop and PostCompact are Claude Code's; Copilot has no
+    confirmed equivalent. Registering a guessed name there would produce a hook
+    that never fires and a capture gap nothing reports (ADR-005), so those
+    entries carry None and are skipped.
+    """
+    assert set(copilot_hooks(hook_binary())["hooks"]) == {e[3] for e in EVENTS if e[3]}
 
 
 # --- merging must not clobber a settings file the developer already has ---

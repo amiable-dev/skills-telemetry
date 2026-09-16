@@ -6,14 +6,34 @@ of both, and Postgres for the warehouse. `make up` starts them; nothing needs co
 ```bash
 make up          # start the base stack
 make up-langfuse # base stack + the optional Langfuse profile
-make down        # stop everything, including the langfuse profile (data survives)
+make down        # stop everything, including the optional profiles (data survives)
 mise run smoke   # verify every hop and name the one that broke
+mise run load    # load Tempo spans and delivery data into the warehouse, once
 ```
 
-`make down` passes `--profile langfuse` deliberately. A plain `docker compose down` ignores
-profiled services, so it leaves the Langfuse containers running and then cannot remove the
-network — reported as `Resource is still in use`, which looks like a Docker fault rather than a
-missing flag.
+`make down` names every optional profile deliberately. A plain `docker compose down` ignores
+profiled services, so it leaves them running and then cannot remove the network — reported as
+`Resource is still in use`, which looks like a Docker fault rather than a missing flag.
+
+## Keeping the warehouse current
+
+Spans reach Tempo the moment a hook fires; they reach Postgres only when someone runs the loader.
+Nobody does, reliably. Tempo once held four days of spans the warehouse had never seen, and the
+`policy-results` artefact in #21 had been produced on every CI run and ingested by nothing — in both
+cases every component reported success.
+
+Two ways to stop that, one for a laptop and one for a deployment:
+
+```bash
+mise run load-watch                                   # loop in a terminal, STDTEL_LOAD_INTERVAL seconds
+docker compose -f deploy/docker-compose.yml --profile loader up -d   # the same loop in a container
+```
+
+The container form is opt-in because the delivery half needs a GitHub token: set `GITHUB_TOKEN` and
+`STDTEL_LOAD_REPO` (`owner/name`) or it loads traces only. It mounts the repo read-only and installs
+its two dependencies on start rather than shipping a second copy of the loader in a built image.
+
+Every run writes a `loader_run` row, so "when did this last work" is a query rather than a guess.
 
 ## Endpoints and credentials
 
@@ -64,7 +84,7 @@ echo '{"session_id":"demo"}' | stdtel-hook stop
 
 # 4. read it back — note start/end, they are NOT optional
 curl -s --get http://localhost:3200/api/search \
-  --data-urlencode 'q={ name = "std.skill.invocation" }' \
+  --data-urlencode 'q={ name = "std.artefact.activation" }' \
   --data-urlencode "start=$(( $(date +%s) - 900 ))" --data-urlencode "end=$(date +%s)"
 
 # 5. load traces into the warehouse, then query it
@@ -104,11 +124,11 @@ it is the first thing to check when a query "finds nothing":
 
 ```bash
 # wrong — always returns nothing
-curl -s 'http://localhost:3200/api/search?q=%7B%20name%3D%22std.skill.invocation%22%20%7D'
+curl -s 'http://localhost:3200/api/search?q=%7B%20name%3D%22std.artefact.activation%22%20%7D'
 
 # right
 curl -s --get http://localhost:3200/api/search \
-  --data-urlencode 'q={ name = "std.skill.invocation" }' \
+  --data-urlencode 'q={ name = "std.artefact.activation" }' \
   --data-urlencode "start=$(( $(date +%s) - 3600 ))" --data-urlencode "end=$(date +%s)"
 ```
 
@@ -180,11 +200,11 @@ both with `curl -s localhost:8888/metrics | grep otelcol_exporter`.
 
 **Langfuse names our spans after the tool, not the OTel span name.** An invocation appears as
 `Skill`, because Langfuse takes the observation name from `gen_ai.tool.name`. Searching the UI for
-`std.skill.invocation` finds nothing. Look for:
+`std.artefact.activation` finds nothing. Look for:
 
 | in the Langfuse UI | is our |
 |---|---|
-| `Skill` | `std.skill.invocation` |
+| `Skill` | `std.artefact.activation` with `std.artefact.kind=skill` |
 | `std.session.cost` | `std.session.cost` (no tool name, so the span name survives) |
 
 Filter and group on the keys the overlay promotes — `skill_name`, `skill_version`, `skill_plugin`,

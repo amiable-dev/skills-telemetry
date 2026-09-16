@@ -155,6 +155,7 @@ stdtel-doctor [--quiet]
 | skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
 | collector reachable | spans are being dropped right now |
 | hooks running | registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up |
+| artefact events | `SubagentStart`, `SubagentStop` or `PostCompact` has never fired on this machine, so sub-agent and compaction capture is unproven here. Failing is *expected* until a session runs with those hooks registered **and** spawns a sub-agent or compacts. Until then those kinds are read from the session directory instead and marked `std.artefact.source=transcript` |
 
 `--quiet` shows only problems. Exit `0` when everything passes, `1` otherwise, so it can gate
 onboarding.
@@ -227,7 +228,8 @@ the invisible loss spooling removes.
 Invoked by the harness, one process per event, reading the payload as JSON on stdin.
 
 ```
-stdtel-hook {session-start|pre-tool-use|post-tool-use|post-tool-use-failure|stop}
+stdtel-hook {session-start|pre-tool-use|post-tool-use|post-tool-use-failure|
+             subagent-start|subagent-stop|post-compact|stop}
 ```
 
 **Always exits 0**, including on unknown events and internal errors, so telemetry can never block the

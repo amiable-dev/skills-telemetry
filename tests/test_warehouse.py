@@ -251,3 +251,203 @@ def test_every_loader_column_exists_in_the_schema():
         assert column in declared, f"{column} is not in the CREATE TABLE"
     # anything added after the first release must also be reachable by migration
     assert "content_hash" in added, "a column added later needs an ALTER for existing warehouses"
+
+
+# --- ADR-009: the span is an artefact activation, and skills are one kind ---
+
+def activation_span(attrs: dict, span: dict | None = None) -> dict:
+    base = {"spanID": "s", "traceID": "t", "startTimeUnixNano": "0"}
+    base.update(span or {})
+    return loader().parse_activation(attrs, {}, base)
+
+
+def test_every_activation_loader_column_exists_in_the_schema():
+    missing = set(loader().ACTIVATION_COLS) - set(schema_columns("artefact_activation"))
+    assert not missing, f"loader writes columns the schema lacks: {sorted(missing)}"
+
+
+def test_parse_activation_produces_exactly_the_activation_columns():
+    mod = loader()
+    assert set(activation_span({})) == set(mod.ACTIVATION_COLS)
+
+
+def test_loader_run_columns_exist_in_the_schema():
+    missing = set(loader().LOADER_RUN_COLS) - set(schema_columns("loader_run"))
+    assert not missing, f"loader writes columns the schema lacks: {sorted(missing)}"
+
+
+def test_session_columns_added_after_the_first_release_have_a_migration():
+    """CREATE TABLE IF NOT EXISTS does nothing to an existing warehouse (#55).
+
+    cost_usd, api_ms, tool_ms and duration_ms are now read from the harness's own
+    cost-state entry. Declaring them only in the CREATE would give them to new
+    warehouses and to nobody else, and the loader would find out on its first
+    INSERT after the upgrade.
+    """
+    added = set(re.findall(r"ALTER TABLE session_cost ADD COLUMN IF NOT EXISTS (\w+)", SCHEMA))
+    for column in ("api_ms", "tool_ms", "duration_ms"):
+        assert column in added, f"{column} unreachable in an existing warehouse"
+        assert column in schema_columns("session_cost"), f"{column} missing from the CREATE"
+
+
+def test_a_legacy_skill_invocation_span_is_read_as_kind_skill():
+    """Rows recorded before ADR-009 carry no std.artefact.kind and must keep loading."""
+    row = activation_span({"std.skill.name": "structured-logging",
+                           "std.skill.llm_requests": 4})
+    assert row["kind"] == "skill"
+    assert row["name"] == "structured-logging"
+    assert row["llm_requests"] == 4
+
+
+def test_a_turn_activation_carries_no_name():
+    """prompt_id is unbounded and `name` is a spanmetrics dimension (ADR-009)."""
+    row = activation_span({"std.artefact.kind": "turn", "std.prompt.id": "p-1",
+                           "std.turn.llm_requests": 3})
+    assert row["name"] is None
+    assert row["prompt_id"] == "p-1" and row["llm_requests"] == 3
+
+
+def test_an_unobserved_token_count_is_null_never_zero():
+    """ADR-005. A sub-agent that read no cached tokens and one whose cache reads
+    were never observed are different facts, and sum() over a column that
+    conflates them is not a measurement."""
+    row = activation_span({"std.artefact.kind": "subagent", "std.subagent.type": "Explore"})
+    for column in ("input_tokens", "output_tokens", "cache_read_tokens",
+                   "cache_creation_tokens", "duration_ms", "tool_calls"):
+        assert row[column] is None, f"{column} invented a zero"
+
+
+def test_each_kind_reads_its_own_request_count():
+    """The schema is discriminated: a sub-agent's requests and a turn's are
+    different measurements that happen to share a column."""
+    mod = loader()
+    assert activation_span({"std.artefact.kind": "subagent", "std.subagent.llm_requests": 9,
+                            "std.subagent.tool_calls": 12})["llm_requests"] == 9
+    assert activation_span({"std.artefact.kind": "turn", "std.prompt.id": "p",
+                            "std.turn.llm_requests": 2})["llm_requests"] == 2
+    # a compaction has no request count at all, and must not borrow one
+    assert activation_span({"std.artefact.kind": "compaction",
+                            "std.compaction.reason": "auto"})["llm_requests"] is None
+
+
+def test_hook_latency_keeps_basenames_and_drops_the_path():
+    row = activation_span({"std.artefact.kind": "turn", "std.prompt.id": "p",
+                           "std.turn.hook_ms": 312,
+                           "std.turn.hook.stdtel-hook.ms": 12,
+                           "std.turn.hook.format-sh.ms": 300})
+    import json as _json
+    assert row["hook_ms"] == 312
+    assert _json.loads(row["hook_ms_by_hook"]) == {"stdtel-hook": 12, "format-sh": 300}
+
+
+def test_a_turn_that_reported_no_hooks_has_no_breakdown():
+    """An empty object would claim the turn ran no hooks; the Stop hook always
+    runs, so the truthful value is 'not reported'."""
+    row = activation_span({"std.artefact.kind": "turn", "std.prompt.id": "p"})
+    assert row["hook_ms_by_hook"] is None
+
+
+def test_compaction_estimates_are_recorded_as_received():
+    row = activation_span({"std.artefact.kind": "compaction",
+                           "std.compaction.reason": "auto",
+                           "std.compaction.tokens_before": "954000",
+                           "std.compaction.tokens_after": "31000",
+                           "std.compaction.turns_since_previous": "44"})
+    assert row["compaction_reason"] == "auto"
+    assert (row["compaction_tokens_before"], row["compaction_tokens_after"]) == (954000, 31000)
+    assert row["compaction_turns_since_previous"] == 44
+
+
+def test_subagent_parent_prompt_id_reaches_the_warehouse():
+    row = activation_span({"std.artefact.kind": "subagent", "std.subagent.type": "Explore",
+                           "std.subagent.id": "a-7", "std.subagent.depth": 1,
+                           "std.artefact.parent_prompt_id": "p-3",
+                           "std.artefact.name": "Explore"})
+    assert row["subagent_type"] == "Explore" and row["subagent_id"] == "a-7"
+    assert row["subagent_depth"] == 1 and row["parent_prompt_id"] == "p-3"
+    assert row["name"] == "Explore"
+
+
+def test_source_says_whether_a_value_was_observed_or_inferred():
+    """A sub-agent read out of its transcript because no hook fired is not the
+    same measurement as one the harness handed us (ADR-005)."""
+    assert activation_span({"std.artefact.kind": "subagent", "std.artefact.source": "transcript",
+                            "std.subagent.type": "Explore"})["source"] == "transcript"
+    assert activation_span({"std.artefact.kind": "subagent",
+                            "std.subagent.type": "Explore"})["source"] is None
+
+
+def test_session_cost_carries_real_money_and_harness_wall_time():
+    """cost_usd was NULL in every row since the schema was written, because
+    nothing read the harness's cost-state entry."""
+    mod = loader()
+    attrs = {"session.id": "s1", "std.session.cost_usd": 366.42,
+             "std.session.api_ms": 1234, "std.session.tool_ms": 567,
+             "std.session.duration_ms": 9999}
+    row = mod.parse_session(attrs, {}, {"startTimeUnixNano": "0", "endTimeUnixNano": "0"})
+    assert row["cost_usd"] == 366.42
+    assert (row["api_ms"], row["tool_ms"], row["duration_ms"]) == (1234, 567, 9999)
+
+
+def test_a_session_with_no_reported_cost_is_null_not_zero():
+    mod = loader()
+    row = mod.parse_session({"session.id": "s1"}, {},
+                            {"startTimeUnixNano": "0", "endTimeUnixNano": "0"})
+    assert row["cost_usd"] is None
+    assert row["api_ms"] is None and row["tool_ms"] is None and row["duration_ms"] is None
+
+
+def test_the_loader_searches_both_span_names():
+    """The rename is wire-level; rows emitted before it are still in Tempo."""
+    source = (ROOT / "warehouse" / "load_traces.py").read_text()
+    assert 'std.artefact.activation' in source
+    assert 'std.skill.invocation' in source
+
+
+def test_the_span_names_match_the_capture_side():
+    """One constant per name, agreed between the emitter and the loader."""
+    from stdtel import artefact
+    mod = loader()
+    assert mod.SPAN_NAME == artefact.SPAN_NAME
+    assert mod.LEGACY_SKILL_SPAN_NAME == artefact.LEGACY_SKILL_SPAN_NAME
+    assert mod.SESSION_SPAN_NAME == artefact.SESSION_SPAN_NAME
+
+
+def test_every_kind_the_capture_side_emits_is_a_kind_the_loader_can_read():
+    from stdtel import artefact
+    for kind in artefact.KINDS:
+        row = activation_span({"std.artefact.kind": kind, "std.prompt.id": "p"})
+        assert row["kind"] == kind
+
+
+def test_no_attribute_outside_the_capture_allowlist_reaches_a_column():
+    """The per-kind allowlist is the privacy control (ADR-009). A column fed by
+    an attribute that no kind may carry would route around it."""
+    from stdtel import artefact
+    mod = loader()
+    import re as _re
+    source = (ROOT / "warehouse" / "load_traces.py").read_text()
+    # every std.* / gen_ai.* key the activation parser reads
+    body = source.split("def parse_activation(")[1].split("\ndef ")[0]
+    read = set(_re.findall(r'g\("((?:std|gen_ai|session)\.[^"]+)"', body))
+    # `g` falls back to the resource, which carries the join keys set once at
+    # SessionStart rather than per span, so those are permitted too.
+    from stdtel.enrich import resource_attributes
+    permitted = set().union(*artefact.ALLOWED.values()) | set(resource_attributes())
+    unknown = read - permitted
+    assert not unknown, f"loader reads attributes no kind may carry: {sorted(unknown)}"
+
+
+def test_a_search_api_span_id_is_not_mistaken_for_base64():
+    """A 16-character hex span id is also valid base64.
+
+    b64decode does not raise on it: it returns twelve bytes of a different id,
+    which the loader would have written as the primary key. The length is the
+    only reliable discriminator — an id is 8 bytes or 16, never 12.
+    """
+    mod = loader()
+    row = mod.parse_span({}, {}, {"spanID": "40ce813450c64c51",
+                                  "traceID": "bec8f538b1859ce9aee65c310b1ca7f6",
+                                  "startTimeUnixNano": "0"})
+    assert row["span_id"] == "40ce813450c64c51"
+    assert row["trace_id"] == "bec8f538b1859ce9aee65c310b1ca7f6"

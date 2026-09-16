@@ -8,7 +8,21 @@ effect before your transcript is even opened.
 
 ## What leaves your machine
 
-One span per skill invocation and one per turn, containing only these fields:
+One span per **artefact activation** and one per session. An artefact is one of four things, and the
+span says which in `std.artefact.kind`:
+
+| kind | one span each time | added |
+|---|---|---|
+| `skill` | a skill is invoked | from the start |
+| `subagent` | a sub-agent finishes | 2026-09, ADR-009 |
+| `compaction` | your context is compacted | 2026-09, ADR-009 |
+| `turn` | you send a prompt and the assistant finishes replying | 2026-09, ADR-009 |
+
+The three new kinds were added because a real session of this project's own cost $366, spawned 42
+sub-agents and compacted twice, and none of that was recorded — the numbers that were being collected
+could not answer "where did it go".
+
+Every kind carries only these fields:
 
 | field | example | where it comes from |
 |---|---|---|
@@ -22,6 +36,11 @@ One span per skill invocation and one per turn, containing only these fields:
 | repo, team, harness | `payments-api`, `payments`, `claude-code` | git remote and configuration |
 | a pseudonymous id for you | `3f9a1c7e0b2d4a86` | SHA-256 of your uid and hostname, hashed **before** it leaves the process. It answers "how many people used this skill", which the reporting floor needs; it is not reversible to your name, and the same person on two machines counts as two |
 | duration | `3ms` | the harness |
+| sub-agent type and id | `Explore`, `subagent-456` | the agent's catalogue name; the id is opaque |
+| sub-agent depth and tool counts | `1`, `18 calls` | counts only |
+| compaction reason and size | `auto`, `before=967334 after=13177` | the harness's own estimates, recorded as received |
+| hook latency, by hook | `cc-status: 40ms` | the **basename** of each hook the harness timed; the path is dropped |
+| session cost | `$3.20` | the harness's own running total for the session |
 | a fingerprint of the skill | `a1b2c3d4e5f60718` | SHA-256 of the skill's own instructions, truncated — the file the skill ships, never anything you wrote. It exists so a skill edited without a version bump is visible rather than silently mixed into the previous version's numbers |
 
 That is the whole list. You can print it yourself — see [verify it](#verify-it-yourself).
@@ -30,13 +49,22 @@ That is the whole list. You can print it yourself — see [verify it](#verify-it
 
 - **No prompts, no model responses, no messages.** Not truncated, not hashed — never read into a span.
 - **No file contents, diffs, or paths you edited.**
+- **Nothing a sub-agent was asked to do or said back.** When a sub-agent ends, the harness hands the
+  hook its final reply (`last_assistant_message`) and the path to its transcript. Neither is read.
+  The sub-agent's own transcript is opened only to add up token counts and tool *names*, and the task
+  it was given, which sits in a file right beside it, is never opened at all.
+- **No hook command lines.** A hook's latency is recorded under its basename, so `cc-status` is kept
+  and the path to your dotfiles is not.
 - **No commands.** Tool calls are counted by name; `tool_input` and `tool_response` are refused by
   name in `scrub()`, and a test asserts a `Bash` call reading `/etc/passwd` leaks nothing.
 - **No source code, ever.**
 
-Two independent layers enforce this: the exporter refuses content-shaped attribute names before
-sending, and the collector drops them again on arrival. The second exists because the first could have
-a bug.
+Three independent layers enforce this. Attributes are built by naming the specific fields to keep, so
+a field nobody has thought about yet — including one a future harness version adds — has no route to a
+span at all. The exporter then refuses content-shaped names, and the collector drops them again on
+arrival. The second and third exist because the first could have a bug; a test plants a marker string
+in every documented field, one undocumented field, and a sub-agent's message bodies, and fails if it
+surfaces anywhere in a span.
 
 **One thing to be aware of:** your branch name is parsed for a ticket key and sent. If you put
 something private in a branch name, it goes. Branches with no ticket key are sent as `unattributed`.
@@ -60,6 +88,12 @@ metadata:
 
 That suppresses the named span for that skill. Its tokens still count toward the session total, which
 is an aggregate and carries no skill name.
+
+**Sub-agent and compaction capture** is switched off by the same `STDTEL_DISABLED=1` as everything
+else. If you want the rest but not these, remove the `SubagentStart`, `SubagentStop` and `PostCompact`
+blocks from your settings file; the other hooks are unaffected and nothing else changes. Note that
+sub-agent cost is then read from the session directory instead, which you can see in the data as
+`std.artefact.source=transcript`; removing `stdtel-hook` from the `Stop` block stops that too.
 
 ## Uninstalling
 

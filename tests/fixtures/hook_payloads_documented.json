@@ -1,0 +1,37 @@
+{
+  "_provenance": "NOT captured from a live session. Transcribed from the Claude Code hooks documentation on 2026-09-15 while implementing ADR-009, because hook configuration is read at session start and a session cannot observe a hook it registered mid-flight. tests/fixtures/hook_payloads.json holds the payloads that WERE captured from a real session; these are not in it and must not be moved into it until a real one is recorded. stdtel-doctor reports each of these events as 'not yet observed' on a machine where it has never fired, so nothing here is mistaken for evidence that capture works.",
+  "_replace_with_real_captures": "Run a session with `stdtel-install settings` applied, spawn a sub-agent, trigger a compaction, then copy the payloads the hooks received into hook_payloads.json and delete them here.",
+  "SubagentStart": {
+    "agent_id": "subagent-456",
+    "agent_type": "Explore",
+    "cwd": "/tmp/probe",
+    "hook_event_name": "SubagentStart",
+    "permission_mode": "default",
+    "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+    "session_id": "probe-session",
+    "transcript_path": "/tmp/probe/t.jsonl"
+  },
+  "SubagentStop": {
+    "agent_id": "subagent-456",
+    "agent_transcript_path": "/tmp/probe/t/subagents/agent-subagent-456.jsonl",
+    "agent_type": "Explore",
+    "cwd": "/tmp/probe",
+    "hook_event_name": "SubagentStop",
+    "last_assistant_message": "The exploration found...",
+    "permission_mode": "default",
+    "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+    "session_id": "probe-session",
+    "stop_hook_active": true,
+    "transcript_path": "/tmp/probe/t.jsonl"
+  },
+  "PostCompact": {
+    "compaction_reason": "auto",
+    "cwd": "/tmp/probe",
+    "hook_event_name": "PostCompact",
+    "permission_mode": "default",
+    "session_id": "probe-session",
+    "token_count_estimate_after": 45000,
+    "token_count_estimate_before": 125000,
+    "transcript_path": "/tmp/probe/t.jsonl"
+  }
+}

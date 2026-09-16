@@ -1,4 +1,8 @@
-"""OTel span emission for std.skill.invocation. Metadata only — never content."""
+"""OTel span emission for std.artefact.activation. Metadata only — never content.
+
+The span name and the per-kind attribute contract live in `stdtel.artefact`;
+this module only puts them on the wire.
+"""
 from __future__ import annotations
 
 import os
@@ -10,8 +14,9 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SimpleSpanProcessor
 
-SPAN_NAME = "std.skill.invocation"
-SESSION_SPAN_NAME = "std.session.cost"
+from stdtel.artefact import (   # noqa: E402  (re-exported: importers use these names)
+    LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME, SPAN_NAME,
+)
 DEFAULT_ENDPOINT = "http://localhost:4318"
 DEFAULT_TIMEOUT_S = 2
 # Widened when the hook began seeing every tool, not just Skill: tool_input and
@@ -104,17 +109,20 @@ def emit_session_cost(provider: TracerProvider, attrs: dict, session_id: str,
     return 1
 
 
-def emit_invocations(provider: TracerProvider, invocations: Iterable[dict], session_id: str) -> int:
-    """Each invocation dict: started_at, ended_at, attributes(dict), error(bool)."""
+def emit_activations(provider: TracerProvider, activations: Iterable[dict], session_id: str) -> int:
+    """Each activation dict: kind, started_at, ended_at, attributes(dict), error(bool).
+
+    Build them with `stdtel.artefact`, which applies the per-kind allowlist.
+    `scrub()` runs again here as a second guard, never as the first one: nothing
+    upstream hands this function a raw hook payload.
+    """
     tracer = provider.get_tracer("stdtel", "0.1.0")
     n = 0
-    for inv in invocations:
+    for inv in activations:
         start_ns = int(inv["started_at"] * 1e9)
         end_ns = int((inv.get("ended_at") or time.time()) * 1e9)
         attrs = scrub(inv.get("attributes", {}))
         attrs["session.id"] = session_id
-        attrs["gen_ai.operation.name"] = "execute_tool"
-        attrs["gen_ai.tool.name"] = "Skill"
         span = tracer.start_span(SPAN_NAME, attributes=attrs, start_time=start_ns)
         if inv.get("error"):
             span.set_status(trace.StatusCode.ERROR)
