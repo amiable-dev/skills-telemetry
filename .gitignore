@@ -25,3 +25,8 @@ deploy/.env
 
 # Graft runtime cache (session-scoped, churns constantly)
 graft/.cache/
+
+# Graft's generated call-graph cards. Regenerable from the source at any time
+# (`graft build`), and they churn on every edit, so committing them would put a
+# second copy of the codebase in every diff.
+/graft/
