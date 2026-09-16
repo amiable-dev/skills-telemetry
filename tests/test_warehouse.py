@@ -451,3 +451,60 @@ def test_a_search_api_span_id_is_not_mistaken_for_base64():
                                   "startTimeUnixNano": "0"})
     assert row["span_id"] == "40ce813450c64c51"
     assert row["trace_id"] == "bec8f538b1859ce9aee65c310b1ca7f6"
+
+
+# --- #67: the loader window must outlast Tempo's flush delay ------------------
+
+def test_the_default_loader_window_outlasts_tempos_flush_delay():
+    """A span is not searchable the moment it arrives.
+
+    Every `subagent` activation carries the sub-agent's own start and end and is
+    not sent until the parent session's next Stop, so its timestamp is always in
+    the past. Measured: one stamped 90 minutes back was invisible to search
+    immediately and present about half an hour later, with nothing discarded and
+    no error anywhere. A loader window narrower than that delay steps over those
+    spans and never comes back for them, because each run only looks forward.
+    """
+    from warehouse.load_traces import MIN_SAFE_WINDOW_HOURS, TEMPO_FLUSH_MINUTES
+
+    assert MIN_SAFE_WINDOW_HOURS * 60 > TEMPO_FLUSH_MINUTES * 2, \
+        "the safe window must leave real headroom over the flush delay, not just clear it"
+
+
+def test_a_narrow_window_says_so_rather_than_quietly_missing_rows(capsys, monkeypatch):
+    """ADR-005: a component that cannot do its job says so."""
+    import warehouse.load_traces as lt
+
+    monkeypatch.setattr(lt, "record_run", lambda *a, **k: None)
+
+    def boom(*a, **k):
+        raise RuntimeError("no tempo in this test")
+
+    monkeypatch.setitem(__import__("sys").modules, "requests",
+                        type("m", (), {"get": staticmethod(boom)})())
+    try:
+        lt.main(["--tempo", "http://127.0.0.1:1", "--dsn", "postgresql://x", "--since", "1h"])
+    except Exception:
+        pass
+    err = capsys.readouterr().err
+    assert "narrower than Tempo's flush delay" in err
+    assert "span_id" in err, "say why overlapping is free, or the advice reads as a cost"
+
+
+def test_the_shipped_scheduled_loader_uses_a_safe_window():
+    """The compose loader is the deployed form; a narrow window there would lose
+    exactly the sub-agent rows the efficiency queries exist to show."""
+    import re
+
+    import yaml
+
+    from warehouse.load_traces import MIN_SAFE_WINDOW_HOURS
+
+    compose = yaml.safe_load((ROOT / "deploy" / "docker-compose.yml").read_text())
+    command = " ".join(str(x) for x in compose["services"]["loader"]["command"])
+    traces = [m for m in re.findall(r"load_traces[^\n|]*", command)]
+    assert traces, "the loader service must run load_traces"
+    for invocation in traces:
+        since = re.search(r"--since\s+(\d+)h", invocation)
+        hours = int(since.group(1)) if since else 24      # the argparse default
+        assert hours >= MIN_SAFE_WINDOW_HOURS, f"{invocation!r} uses a {hours}h window"

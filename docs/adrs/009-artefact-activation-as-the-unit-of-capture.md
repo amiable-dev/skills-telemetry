@@ -169,15 +169,19 @@ warehouse nobody loads changes nothing.
 - **A sub-agent that is still running at Stop has no span yet.** `SubagentStop` fires when it ends;
   background agents end after the turn. The span is emitted at the next Stop, so a session's last
   turn can under-count until the following one.
-- **A sub-agent that finished long before that Stop may be lost entirely.** Its span carries the
-  sub-agent's own start and end, so it is written in the past; measured against Tempo 2.7.0, a span
-  stamped 90 minutes back never became searchable and never reached the warehouse, while one stamped
-  15 minutes back did. Tempo discarded nothing — every discard counter was zero — and no component
-  reported an error, which makes this exactly the failure shape ADR-005 exists for. The exposure is
-  biased toward background agents, which are the expensive ones. Stamping the span at emit time
-  instead was rejected: it would place the work on the timeline at a moment it was not running.
-  Tracked as #67, and it must be settled before [ADR-008](008-spool-spans-to-disk.md) ships, because
-  spooling widens the gap between when work happens and when its span is sent.
+- **A sub-agent's span is not searchable the moment it is sent.** It carries the sub-agent's own
+  start and end, so its timestamp is always in the past, and Tempo does not surface a back-dated span
+  until the ingester flushes its block. Measured against Tempo 2.7.0: a span stamped 90 minutes back
+  was invisible to search immediately and present about half an hour later, with every discard counter
+  at zero and no error anywhere. **Nothing is lost** — the row reached the warehouse on a later run —
+  but a loader window narrower than the flush delay would step over it and never come back, because
+  each run only looks forward. `load_traces` therefore defaults to a 24-hour window and warns below
+  two hours; overlap is free, since every row is keyed on `span_id`. Stamping the span at emit time
+  was rejected: it would place the work on the timeline at a moment it was not running, and the
+  lateness is a property of when we are told, not of when it ran. (#67. An earlier revision of this
+  ADR and of the 0.4.0 changelog recorded this as permanent data loss; that was wrong, and the
+  correction is in both.) It still wants re-checking before [ADR-008](008-spool-spans-to-disk.md)
+  ships, because spooling widens the gap between when work happens and when its span is sent.
 - **`token_count_estimate_*` are estimates**, and the harness says so in the field name. They are
   recorded as received and never adjusted.
 - **The Stop hook does more work per turn.** One extra span in the ordinary case, plus a sub-agent

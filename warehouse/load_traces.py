@@ -25,6 +25,18 @@ SESSION_SPAN_NAME = "std.session.cost"
 KIND_SKILL = "skill"
 LOADER = "load_traces"
 
+#: Tempo does not make a span searchable the moment it arrives. A span whose own
+#: timestamp is in the past — which every `subagent` activation has, since it
+#: carries the sub-agent's start and end and is not sent until the parent's next
+#: Stop — only appears once the ingester flushes its block. Measured on the local
+#: stack: a span stamped 90 minutes back was invisible to search immediately and
+#: present ~30 minutes later, with nothing discarded and no error anywhere (#67).
+#: The window must therefore comfortably exceed the flush delay, because a run
+#: that steps over a span never returns for it. Overlap is free: every row is
+#: keyed on span_id and re-inserting one is a no-op.
+TEMPO_FLUSH_MINUTES = 30        # complete_block_timeout 15m, max_block_duration 30m
+MIN_SAFE_WINDOW_HOURS = 2
+
 #: `std.turn.hook.<basename>.ms` cannot be enumerated in advance: the set of
 #: hooks is the developer's, not ours. The basename is all that is recorded —
 #: the payload carries an absolute path, which is filesystem layout, not data.
@@ -310,6 +322,13 @@ def main(argv=None) -> int:
     ap.add_argument("--since", default="24h"); a = ap.parse_args(argv)
     import requests
     hours = int(a.since.rstrip("h")); end = int(dt.datetime.now().timestamp()); start = end - hours * 3600
+    if hours < MIN_SAFE_WINDOW_HOURS:
+        print(f"stdtel: --since {a.since} is narrower than Tempo's flush delay. A span whose "
+              f"timestamp is in the past — every sub-agent activation is, because it carries the "
+              f"sub-agent's own start and end — is not searchable until the ingester flushes its "
+              f"block, up to {TEMPO_FLUSH_MINUTES} minutes later. A window this narrow will step "
+              f"over those spans and never come back for them. Use {MIN_SAFE_WINDOW_HOURS}h or more; "
+              f"rows are keyed on span_id, so overlapping runs cost nothing.", file=sys.stderr)
     run = {"run_id": uuid.uuid4().hex, "loader": LOADER,
            "started_at": dt.datetime.now(dt.timezone.utc), "finished_at": None,
            "rows_loaded": 0, "source_max_ts": None, "ok": False, "error": None}
