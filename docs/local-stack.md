@@ -25,13 +25,26 @@ cases every component reported success.
 Two ways to stop that, one for a laptop and one for a deployment:
 
 ```bash
+export STDTEL_LOAD_REPO=owner/name                    # needed for the delivery half
+mise run load                                         # once
 mise run load-watch                                   # loop in a terminal, STDTEL_LOAD_INTERVAL seconds
 docker compose -f deploy/docker-compose.yml --profile loader up -d   # the same loop in a container
 ```
 
+Three things load, not two. Traces come from Tempo; pull requests, tickets and defects come from
+GitHub; and **the `policy-results` artefact** — the only input the primary metric has — is downloaded
+from each CI run and passed to the delivery loader. That last step did not exist until #21: the
+artefact had been produced on every pull-request run since the job was written and collected by
+nothing, so first-time pass rate had no input at all while every CI run went green.
+
 The container form is opt-in because the delivery half needs a GitHub token: set `GITHUB_TOKEN` and
 `STDTEL_LOAD_REPO` (`owner/name`) or it loads traces only. It mounts the repo read-only and installs
-its two dependencies on start rather than shipping a second copy of the loader in a built image.
+its dependencies on start rather than shipping a second copy of the loader in a built image — the
+`gh` CLI among them, which `load_delivery` and the artefact collector both shell out to and which the
+slim Python image does not carry.
+
+An artefact expires after 90 days, so a loader that has not run in that window loses those PRs'
+results permanently. The collector says how many expired rather than quietly returning fewer rows.
 
 Every run writes a `loader_run` row, so "when did this last work" is a query rather than a guess.
 
