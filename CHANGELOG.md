@@ -51,9 +51,14 @@ version until this number changes — so bump it for anything a user would recei
   when the result is the length an id actually is.
 
 ### Known issue
-- A sub-agent span stamped more than roughly an hour in the past never becomes searchable in Tempo and
-  never reaches the warehouse, with no error anywhere. The exposure is background sub-agents, which are
-  the expensive ones. (#67)
+- A sub-agent span stamped in the past is not searchable in Tempo until the ingester flushes its block,
+  up to about half an hour later. Nothing is lost, but a loader window narrower than that delay would
+  step over those rows permanently. (#67)
+
+  > **Correction, 2026-09-16.** As shipped, this entry said such a span "never becomes searchable and
+  > never reaches the warehouse". That was wrong: it was measured before the block had flushed and not
+  > re-checked afterwards. The span appears, and the row loads. The real requirement is a loader window
+  > wider than the flush delay, which the default already is; a guard and a test were added afterwards.
 
 ## 0.3.3 — 2026-09-14
 
