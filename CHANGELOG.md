@@ -4,7 +4,7 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
-## Unreleased
+## 0.4.0 — 2026-09-16
 
 ### Changed
 - **The unit of capture is an artefact activation, not a skill invocation (ADR-009).** The span
