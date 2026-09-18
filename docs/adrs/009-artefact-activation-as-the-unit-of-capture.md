@@ -84,7 +84,8 @@ warehouse nobody loads changes nothing.
    `compaction_reason`). A turn carries **no name**: its identity is `std.prompt.id`, which is
    unbounded and must never become a spanmetrics dimension. Every activation is a child of the
    session and carries the session's resource attributes, so ticket, repo, team and harness join as
-   they do now. The schema is discriminated by kind: a per-kind allowlist of attributes is the
+   they do now. **(Superseded — see the amendment of 2026-09-18. This sentence was never
+   implemented, and the session is the wrong parent.)** The schema is discriminated by kind: a per-kind allowlist of attributes is the
    whole contract, enforced by the same contract test that already ties loader columns,
    `parse_span` and the schema together.
 2. **Skills are one kind, not a special case, and there is no dual emission.** The wire-level span
@@ -256,6 +257,44 @@ this work moves behind the spool and stops being in the developer's path at all.
 Still outstanding, and only answerable from a live session: whether `SubagentStop` fires for an
 interrupted or cancelled sub-agent, and whether the sub-agent's transcript is fully flushed when it
 does. Both are why the directory fallback exists. Tracked on #63.
+
+## Amendment (2026-09-18): activations were never parented, and the session is the wrong parent
+
+The decision above states that every activation is a child of the session. The code has never done
+it. Both emit paths call `start_span` with no parent context (`stdtel/exporter.py:107` and `:126`), and
+a span started with no active context and no explicit `context=` is the root of its own trace. Every
+session-cost span and every activation is therefore a separate single-span trace, related only by the
+`session.id` attribute.
+
+Nothing caught it because a flat trace and a parented one are indistinguishable in every check this
+repo runs. The attribute is present either way, the loader reads attributes rather than structure, and
+both dashboards group by label. The claim survived drafting, council review, acceptance, and a live
+end-to-end verification pass, which is a sharper lesson than the bug: this ADR's own verification
+section lists what was checked against a live trace, and span structure was not on it. An assertion
+that no test can fail is the failure mode [ADR-005](005-data-integrity.md) is about, reproduced in the
+document that defines the capture contract.
+
+The sentence is not being made true as written, because the session is the wrong parent on two counts.
+
+A session is not a bounded unit of work. It is resumed, and it persists. One real session in another
+project on this machine ran from 2026-07-26 to 2026-09-18, with a five-week gap in the middle where
+nothing happened at all. One trace per session means a trace whose root is seven weeks older than its
+newest span, growing past Tempo's per-trace limits, with late spans arriving after the block that
+should hold them has flushed — the same class of problem #67 already cost us a misdiagnosis over.
+
+Each hook is also a separate process with a fresh SDK, so parentage that spans hooks requires trace
+ids derived deterministically from the session id. Without that, each Stop silently starts its own
+island and the result looks parented without being so.
+
+**The turn is the correct parent, and it is free.** One Stop process emits a whole slice, so a turn
+root carrying its skill, sub-agent and compaction children is a single bounded trace built inside one
+`TracerProvider`. Activations join to the session by attribute, exactly as they do today. Correcting
+the code and this wording is #75.
+
+Containment **across** turns — a loop skill owning the tools and sub-agents that ran under it over
+many turns, which is the question that exposed this — is a separate decision and is deliberately not
+settled here. Rolling it into a span tree is the option this amendment rules out; what replaces it
+needs its own ADR.
 
 ## Related
 
