@@ -212,12 +212,14 @@ def subagent_start(p: dict) -> None:
     agent_id = str(p.get("agent_id") or "")
     if not agent_id:
         return
-    st = SessionState.load(p.get("session_id", "unknown"))
-    st.observe("subagent-start")
-    st.open_subagent(agent_id=agent_id, agent_type=str(p.get("agent_type") or ""),
-                     transcript_path=str(p.get("agent_transcript_path") or ""),
-                     parent_prompt_id=str(p.get("prompt_id") or ""))
-    st.save()
+    # Under the lock: sub-agents start and stop while the parent is still
+    # calling tools, so two hooks read the same state and the later write
+    # discards the earlier one — or interleaves into a torn file (#73).
+    with SessionState.mutate(p.get("session_id", "unknown")) as st:
+        st.observe("subagent-start")
+        st.open_subagent(agent_id=agent_id, agent_type=str(p.get("agent_type") or ""),
+                         transcript_path=str(p.get("agent_transcript_path") or ""),
+                         parent_prompt_id=str(p.get("prompt_id") or ""))
 
 
 def subagent_stop(p: dict) -> None:
@@ -233,12 +235,11 @@ def subagent_stop(p: dict) -> None:
     agent_id = str(p.get("agent_id") or "")
     if not agent_id:
         return
-    st = SessionState.load(p.get("session_id", "unknown"))
-    st.observe("subagent-stop")
-    st.close_subagent(agent_id=agent_id, agent_type=str(p.get("agent_type") or ""),
-                      transcript_path=str(p.get("agent_transcript_path") or ""),
-                      parent_prompt_id=str(p.get("prompt_id") or ""))
-    st.save()
+    with SessionState.mutate(p.get("session_id", "unknown")) as st:
+        st.observe("subagent-stop")
+        st.close_subagent(agent_id=agent_id, agent_type=str(p.get("agent_type") or ""),
+                          transcript_path=str(p.get("agent_transcript_path") or ""),
+                          parent_prompt_id=str(p.get("prompt_id") or ""))
 
 
 def post_compact(p: dict) -> None:
@@ -250,14 +251,13 @@ def post_compact(p: dict) -> None:
     """
     from stdtel.state import SessionState
 
-    st = SessionState.load(p.get("session_id", "unknown"))
-    st.observe("post-compact")
     before = p.get("token_count_estimate_before")
     after = p.get("token_count_estimate_after")
-    st.record_compaction(reason=str(p.get("compaction_reason") or "unknown"),
-                         tokens_before=before if isinstance(before, int) else None,
-                         tokens_after=after if isinstance(after, int) else None)
-    st.save()
+    with SessionState.mutate(p.get("session_id", "unknown")) as st:
+        st.observe("post-compact")
+        st.record_compaction(reason=str(p.get("compaction_reason") or "unknown"),
+                             tokens_before=before if isinstance(before, int) else None,
+                             tokens_after=after if isinstance(after, int) else None)
 
 
 def _subagent_activations(st, sl, transcript: Path) -> list:
