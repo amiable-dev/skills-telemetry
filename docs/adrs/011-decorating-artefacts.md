@@ -71,10 +71,16 @@ things a user must know to look for.
    validation failure, and no degraded status for artefacts that never opt in. ADR-010 is an
    observation system with one optional hint, and this ADR is the reason that framing holds.
 
-2. **Skills declare scope in the existing block**: `telemetry.scope: turn | ticket | session`,
-   defaulting to `turn`. This is one more string in a metadata block onboarded skills already carry,
-   and it extends [ADR-004](004-skill-identity-and-catalogue.md)'s contract rather than opening a
-   second one.
+2. **Skills declare scope in the existing block**: `telemetry.scope: turn | ticket`, defaulting to
+   `turn`. This is one more string in a metadata block onboarded skills already carry, and it extends
+   [ADR-004](004-skill-identity-and-catalogue.md)'s contract rather than opening a second one.
+
+   **`session` is deliberately not a value.** It is the container
+   [ADR-010](010-containment-and-scope.md) spends its first rejected option ruling out, and it is
+   exactly what the author of a long-running skill would reach for. Offering it in the manifest and
+   rejecting it in the pipeline would be a labelled foot-gun. A skill that believes it is
+   session-scoped is confusing "I run for a long time" with "I am one unit of work"; it works
+   turn-by-turn, and the rollup over its scope key is what shows the aggregate.
 
 3. **Sub-agents carry the same `metadata:` block as skills, with a recorded caveat.** Verified
    2026-09-21 against Claude Code 2.1.277 and the sub-agent documentation: `metadata` is **not** among

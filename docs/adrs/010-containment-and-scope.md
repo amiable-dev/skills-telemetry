@@ -186,8 +186,13 @@ any session. For local, single-user telemetry this is acceptable and stated rath
 `TRACEPARENT` would have removed the problem, and was measured absent in both a main-session and a
 sub-agent shell on 2026-09-19, consistent with the design proposal's note that propagation applies to
 the SDK and headless runs. A sub-agent's shell reports the *parent* session id together with
-`CLAUDE_CODE_CHILD_SESSION`, so external spend attributes to the session but not to a specific
-sub-agent unless the agent id is passed explicitly.
+`CLAUDE_CODE_CHILD_SESSION`, and **no agent identifier at all** — verified 2026-09-21, where the only
+agent-shaped variables are `AI_AGENT`, a harness version marker, and this project's own
+`STDTEL_HARNESS_MODE`. So external spend that originates inside a sub-agent can be attributed to the
+session, and can be known to have come from *a* sub-agent, but not to *which one*. This is not
+hypothetical: in the session behind this ADR, 23 of 173 external invocations came from sub-agents.
+Closing it needs the harness to export an agent id, or the sub-agent to pass one down itself; until
+then it is a stated limitation rather than a gap to be discovered later.
 
 ### Known limitations
 
