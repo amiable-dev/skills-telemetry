@@ -55,7 +55,7 @@ def test_the_onboarding_skill_says_scope_is_for_the_few_not_the_many():
     """A gate is what ADR-004's `policy_ids` scar is about. If this reads as
     something every artefact ought to set, authors will claim a wider unit than
     they run in and every rollup inflates."""
-    assert "Most artefacts need nothing here" in ONBOARD
+    assert "Most skills need nothing here" in ONBOARD
 
 
 # --- phase 7: the caveat travels with the number ------------------------------
@@ -105,3 +105,34 @@ def test_the_walkthrough_explains_a_zero_self_cost():
     """A loop activates once and then runs, so zero is the common case. Left
     unexplained it reads as missing data and undermines the whole row."""
     assert "not a bug" in WALKTHROUGH.split("What did a loop skill really cost?")[1]
+
+
+# --- the boundary the doctor must not overstate -------------------------------
+
+def test_the_onboarding_skill_says_scope_is_a_skill_field_only():
+    """An agent may carry the key and nothing reads it. Implying otherwise sends
+    someone to decorate an agent, watch the doctor report adoption, and get no
+    span carrying it — an advertised control that does nothing."""
+    assert "This field applies to skills" in ONBOARD
+    assert "no container is opened for an agent" in ONBOARD.lower()
+
+
+def test_a_scope_declared_on_an_agent_is_dropped_and_not_counted(tmp_path, monkeypatch):
+    """Found by review, not by a test: `partial_manifest` learned the field for
+    overlays, agents load through it, and the doctor counted them — so a
+    decorated agent reported as scoped while no span ever carried it."""
+    from stdtel.doctor import scope_adoption
+    from stdtel.manifest import load_agent_catalogue
+
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "looper.md").write_text(
+        '---\nname: looper\ndescription: d\ntools: Bash\n'
+        'metadata:\n  version: "1.0.0"\n  telemetry.scope: ticket\n---\n\nbody\n')
+    monkeypatch.setenv("STDTEL_AGENTS_ROOT", str(agents))
+    monkeypatch.setenv("STDTEL_SKILLS_ROOT", str(tmp_path / "no-skills"))
+
+    assert load_agent_catalogue(agents)["looper"].scope == "", \
+        "an agent's scope must be dropped where it is loaded, not carried inertly"
+    assert "0 of 0 skill(s) declare a scope" in scope_adoption().detail, \
+        "the doctor must not report adoption that changes no span"

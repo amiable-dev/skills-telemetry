@@ -474,5 +474,13 @@ def load_agent_catalogue(root: Path) -> dict[str, SkillManifest]:
         except OSError:
             continue
         if man is not None:
+            # An agent cannot be a scoping artefact yet: `_apply_scope` runs only
+            # over skill activations, so a scope read from an agent file would be
+            # parsed, counted as adoption by the doctor, and never open a
+            # container. That is an advertised control doing nothing while
+            # reporting success — the shape of defect this project exists to find
+            # — so the value is dropped at the boundary rather than carried
+            # somewhere it has no effect. Recorded in ADR-011's limitations.
+            man.scope = ""
             out.setdefault(man.name, man)
     return out

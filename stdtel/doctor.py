@@ -161,15 +161,17 @@ def scope_adoption() -> Check:
     if not cat and not agents:
         return Check("scope declarations", True,
                      "no catalogue to read; nothing is scoped and nothing needs to be")
-    scoped = [m for m in list(cat.values()) + list(agents.values()) if m.scope]
+    # Skills only. An agent cannot open a container yet (ADR-011), so counting a
+    # decorated agent here would report adoption that changes no span.
+    scoped = [m for m in cat.values() if m.scope]
     if not scoped:
         return Check("scope declarations", True,
-                     f"0 of {len(cat) + len(agents)} artefact(s) declare a scope — every "
+                     f"0 of {len(cat)} skill(s) declare a scope — every "
                      f"activation is attributed to its turn",
                      "if a skill drives work across many turns, add `telemetry.scope: ticket` "
                      "so its cost can be rolled up; see skills/stdtel-onboard")
     assumed = sum(1 for m in scoped if m.overlay_path is not None)
-    detail = f"{len(scoped)} of {len(cat) + len(agents)} artefact(s) declare a scope"
+    detail = f"{len(scoped)} of {len(cat)} skill(s) declare a scope"
     if assumed:
         detail += (f"; {assumed} supplied by an overlay — an assertion about someone "
                    f"else's artefact, not something it states itself")

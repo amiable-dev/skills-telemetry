@@ -41,12 +41,16 @@ metadata:
 ---
 ```
 
-## `telemetry.scope` — only for artefacts that drive work across turns
+## `telemetry.scope` — skills only, and only those that drive work across turns
 
-Most artefacts need nothing here. The default is `turn`, and a turn already has real span parentage, so
+**This field applies to skills.** A sub-agent may carry one in its front-matter and nothing will read
+it: no container is opened for an agent, so the declaration would change no span. It is dropped when
+the catalogue loads rather than kept somewhere it does nothing.
+
+Most skills need nothing here. The default is `turn`, and a turn already has real span parentage, so
 its contents are attributed without any declaration.
 
-Set `telemetry.scope: ticket` **only** when the artefact drives work over many turns — a loop that walks
+Set `telemetry.scope: ticket` **only** when the skill drives work over many turns — a loop that walks
 an epic ticket by ticket is the case this exists for. Its own activation is seconds of tool call while
 the work it causes is the largest line item, and without a declared unit that work is attributed to
 nothing but individual turns.
@@ -67,7 +71,7 @@ Two things follow from declaring it, and both belong in your head before you do:
 | artefact | where the block goes | notes |
 |---|---|---|
 | **skill** | `metadata:` in `SKILL.md` | The spec permits exactly six top-level keys, and any other **hard-errors** on upload. Everything lives under `metadata:`. |
-| **sub-agent** | `metadata:` in the agent's `.md` | Works, but by *tolerance*: `metadata` is not a documented agent key and unknown keys are ignored rather than specified. Verified against 2.1.277. If that changes, agents silently go back to undecorated — so keep the overlay as a fallback. |
+| **sub-agent** | `metadata:` in the agent's `.md` | Version, owner and `standard_id` only — **not `telemetry.scope`**. Works, but by *tolerance*: `metadata` is not a documented agent key and unknown keys are ignored rather than specified. Verified against 2.1.277. If that changes, agents silently go back to undecorated — so keep the overlay as a fallback. |
 | **MCP server** | an overlay entry only | There is no file to decorate. `.mcp.json` has no free-form metadata field, tool-level `_meta` is declared by the server rather than by you, and the hook payload does not carry it. Calls appear as `mcp__<server>__<tool>` and are counted on the session span. |
 
 Set `STDTEL_AGENTS_ROOT` for agents, the way `STDTEL_SKILLS_ROOT` works for skills. A relative value

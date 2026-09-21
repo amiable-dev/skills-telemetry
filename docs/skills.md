@@ -28,11 +28,21 @@ spans, as `unversioned` with no `standard_id`.
 
 ## `skills/stdtel-onboard`
 
-**What** — rewrites an existing `SKILL.md` into the standards-telemetry contract: contract fields
-under `metadata:`, a `standard_id`, `policy_ids`, and validation.
+**What** — decorates an artefact to the standards-telemetry contract: contract fields under
+`metadata:`, a `standard_id`, `policy_ids`, `telemetry.scope`, and validation. It covers all three
+artefact types, and they are not equivalent:
 
-**Use it when** a skill shows up as `unversioned` in the data, `stdtel-validate` fails, or you are
-adding a skill to the catalogue for the first time.
+- **skills** — the block goes in `SKILL.md`, and `telemetry.scope` is read here and nowhere else.
+- **sub-agents** — the same block in the agent's `.md`, supplying version, owner and `standard_id`.
+  It works by *tolerance* rather than specification: `metadata` is not a documented agent key.
+- **MCP servers** — an overlay entry only. There is no file to decorate.
+
+For anything you do not own, it writes an **overlay** stub instead of editing the artefact, because an
+edit to somebody else's file lasts until their next release and then fails silently.
+
+**Use it when** a skill or agent shows up as `unversioned` in the data, `stdtel-validate` fails, you
+are adding an artefact to the catalogue for the first time, or a long-running skill's cost needs
+rolling up to the unit of work it drives.
 
 **Do not use it** to make a validator pass. It will tell you to set `success_signal: manual` when no
 policy actually verifies the skill, rather than pointing `policy_ids` at an unrelated policy — a skill
@@ -159,6 +169,7 @@ for yourself entirely, see [for-developers.md](for-developers.md).
 | "what did this cost?" | `stdtel-query` |
 | "should we keep this skill?" | `skill-scorecard-analyst` |
 | "why is this skill `unversioned`?" | `stdtel-onboard` |
+| "how do I measure an agent, or a skill I do not own?" | `stdtel-onboard` |
 | "how do I install the hooks?" | [reference.md](reference.md) |
 | "how do I reach Grafana / Tempo / Postgres?" | [local-stack.md](local-stack.md) |
 | "can I trust this number yet?" | [evaluation-power.md](evaluation-power.md) |

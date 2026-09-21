@@ -148,6 +148,14 @@ artefacts are scoped, and how many of those we guessed at" bounds every rollup A
 - **Overlays go stale silently.** An upstream artefact can change its behaviour without changing its
   name, and the local declaration keeps applying. Provenance makes this visible; nothing makes it
   self-correcting.
+- **An agent cannot be a scoping artefact.** `telemetry.scope` is read from skills only. Nothing opens
+  a container for a sub-agent, so a scope declared in an agent file is dropped where the catalogue is
+  loaded rather than carried somewhere it would have no effect — a value that is parsed, counted as
+  adoption and changes no span is precisely the defect this project keeps finding. Whether an agent
+  *should* be able to scope is a real question and deliberately not answered here.
+- **One overlay namespace serves both catalogues.** Skill and agent overlays are read from the same
+  root and keyed by name, so a skill and an agent sharing a name would share a stub. Unlikely, not
+  incorrect, and stated so that nobody meets it as a bug.
 - **MCP internal spend stays invisible.** The overlay names an MCP server and scopes its calls. If that
   server spends money calling models of its own, only the server can report it, which puts it in the
   same position as any external process under ADR-010's fifth kind.
