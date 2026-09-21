@@ -176,7 +176,7 @@ def test_the_demo_fleet_answers_every_efficiency_question(path, seeded):
     session_id = psql("SELECT session_id FROM artefact_activation "
                       "WHERE kind = 'turn' AND span_id LIKE 'demoact-%' LIMIT 1")
     assert session_id, "the demo fleet seeded no turn activations"
-    rows = _run_efficiency(path, session_id=session_id,
+    rows = _run_efficiency(path, session_id=session_id, scope_name="demo-epic-loop",
                            since="2026-06-01", until="2026-10-01")
     assert rows, f"{path.name} returns nothing against the demo fleet"
 

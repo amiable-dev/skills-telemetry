@@ -41,7 +41,28 @@ _USAGE = frozenset({
     "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
     "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",
 })
-_COMMON = frozenset({"std.artefact.kind", "std.artefact.source", "session.id"}) | _USAGE
+#: ADR-010 containment. `name` is the scoping artefact and is stable for a whole
+#: run; `key` is the unit instance (normally the ticket) and rolls every
+#: iteration, so "what did each iteration cost" and "what did this run cost in
+#: total" are the same rows grouped differently. `source` says whether the
+#: declaration came from the artefact or was assumed on its behalf by an overlay
+#: — an overlay is a local claim about someone else's artefact, and an analyst
+#: has to be able to separate the two (ADR-011).
+#:
+#: `name`, `key` and `source` are bounded and may be metrics dimensions.
+#: **`id` is not**: it is unique per container instance, which is #42 one layer
+#: up, and the dashboard test forbids it in a PromQL expression.
+SCOPE_NAME = "std.scope.name"
+SCOPE_KEY = "std.scope.key"
+SCOPE_ID = "std.scope.id"
+SCOPE_SOURCE = "std.scope.source"
+SCOPE_KEYS = frozenset({SCOPE_NAME, SCOPE_KEY, SCOPE_ID, SCOPE_SOURCE})
+#: Where a scope declaration came from.
+SCOPE_FROM_ARTEFACT = "artefact"
+SCOPE_FROM_OVERLAY = "overlay"
+
+_COMMON = (frozenset({"std.artefact.kind", "std.artefact.source", "session.id"})
+           | _USAGE | SCOPE_KEYS)
 
 #: Exhaustive per-kind attribute keys. Anything not listed is dropped.
 #: `std.artefact.name` is deliberately absent from `turn`: a turn is identified
@@ -237,3 +258,26 @@ def turn(prompt_id: str, started_at: float, ended_at: float, usage_attrs: dict,
     if hook_ms:
         attrs["std.turn.hook_ms"] = sum(hook_ms.values())
     return activation(KIND_TURN, started_at, ended_at, attrs, source=source)
+
+
+def stamp_scope(activations, scope: dict) -> None:
+    """Add the open scope to every activation, in place.
+
+    Applied after the activations are built rather than inside each builder,
+    because the scope belongs to the window of time rather than to any one
+    artefact — a sub-agent and a compaction that happen inside a loop iteration
+    are as much part of its cost as the skill that opened it.
+
+    **Everything in the window inherits the scope**, including work the scoping
+    artefact did not cause. There is no observable causal link from a skill
+    activation to a later tool call, and inventing one would record a
+    relationship nobody measured (ADR-005). ADR-010 decision 9 is the other half
+    of this: a rollup answers containment, never causation.
+    """
+    if not scope:
+        return
+    bad = set(scope) - SCOPE_KEYS
+    if bad:                                   # a typo here would be dropped silently by _clean
+        raise ValueError(f"not scope attributes: {sorted(bad)}")
+    for inv in activations:
+        inv.setdefault("attributes", {}).update(scope)

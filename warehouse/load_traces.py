@@ -170,6 +170,12 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         # than as a missing value to be filled in later.
         "parent_span_id": span_id(span, "parentSpanId", "parentSpanID") or None,
         "session_id": g("session.id", ""),
+        # ADR-010: the container this ran under. Absent means unscoped, which is
+        # the normal case and not a gap.
+        "scope_name": g("std.scope.name"),
+        "scope_key": g("std.scope.key"),
+        "scope_id": g("std.scope.id"),
+        "scope_source": g("std.scope.source"),
         "started_at": dt.datetime.fromtimestamp(int(span["startTimeUnixNano"]) / 1e9, dt.timezone.utc),
         "ended_at": dt.datetime.fromtimestamp(end_nanos(span) / 1e9, dt.timezone.utc),
         "kind": kind,
@@ -241,7 +247,8 @@ COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","har
         "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
         "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","ticket_id","repo","team","user_hash"]
 
-ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id", "started_at", "ended_at", "kind", "name",
+ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
+                   "scope_name", "scope_key", "scope_id", "scope_source", "started_at", "ended_at", "kind", "name",
                    "source", "harness", "harness_mode", "prompt_id", "parent_prompt_id", "model",
                    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
                    "llm_requests", "tool_calls", "duration_ms", "is_error",

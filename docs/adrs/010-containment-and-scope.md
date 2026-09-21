@@ -98,6 +98,21 @@ confirmation or a reversal rather than an excavation.
    | `std.scope.name` | catalogue name of the scoping artefact | yes — safe as a metrics dimension |
    | `std.scope.key` | the unit instance, normally the ticket | yes in practice — safe |
    | `std.scope.id` | unique per container instance | **no — never a metrics dimension** |
+   | `std.scope.source` | `artefact` or `overlay` | yes — safe |
+
+   `std.scope.source` was added while implementing this ADR rather than at drafting. An overlay is a
+   local claim about somebody else's artefact ([ADR-011](011-decorating-artefacts.md)), so a rollup
+   that cannot separate what an artefact declared from what an operator assumed on its behalf is
+   reporting two different kinds of statement as one number.
+
+   **`name` and `key` move on different clocks, and conflating them is the trap.** `std.scope.name` is
+   the scoping artefact and holds for the whole run; `std.scope.key` is the unit instance and rolls
+   every iteration. So a ticket change *rolls the key and does not close the scope* — the three
+   termination conditions in decision 4 apply to the scope, not to the key. "What did each iteration
+   cost" is `GROUP BY std.scope.key` and "what did this run cost" is `GROUP BY std.scope.name`, over
+   one set of rows. On the Stop where the ticket has just moved, activations carry the **new** key,
+   because #77 has already stamped those same spans with the new `std.ticket.id` and a span that
+   disagrees with itself is worse than a boundary one turn out.
 
    `std.scope.key` deliberately reuses the ticket, which is already the delivery join key under
    [ADR-002](002-delivery-data-joins-and-proxies.md). The rollup is then a `GROUP BY` in the warehouse,

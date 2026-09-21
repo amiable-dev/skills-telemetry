@@ -535,3 +535,20 @@ def test_the_search_api_shape_is_read_as_hex_not_mangled():
     reached production last time."""
     row = activation_span({}, {"parentSpanID": "0011223344556677"})
     assert row["parent_span_id"] == "0011223344556677"
+
+
+def test_the_scope_is_carried_into_the_warehouse():
+    """ADR-006 puts the rollup in SQL, so a scope that reaches Tempo and is
+    dropped by the loader leaves the containment question unanswerable where it
+    is actually asked."""
+    row = activation_span({"std.scope.name": "epic-loop", "std.scope.key": "STDTEL-11",
+                           "std.scope.id": "abc123", "std.scope.source": "overlay"})
+    assert row["scope_name"] == "epic-loop" and row["scope_key"] == "STDTEL-11"
+    assert row["scope_id"] == "abc123" and row["scope_source"] == "overlay"
+
+
+def test_an_unscoped_activation_has_no_scope_columns_set():
+    """Most activations are unscoped. An empty string would read as a value in
+    every GROUP BY; absent reads as what it is (ADR-005)."""
+    row = activation_span({})
+    assert row["scope_name"] is None and row["scope_key"] is None

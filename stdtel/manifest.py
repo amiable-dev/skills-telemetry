@@ -15,6 +15,14 @@ STANDARD_ID = re.compile(r"^STD-[A-Z]+-\d{3}$")
 HARNESSES = {"claude-code", "copilot-vscode", "copilot-cli"}
 SUCCESS_SIGNALS = {"policy", "test", "manual"}
 
+#: The unit of work an artefact runs in (ADR-010/ADR-011). `session` is
+#: deliberately absent: it is the container ADR-010 rejects outright, because a
+#: session is resumed and persists, and it is exactly what the author of a
+#: long-running skill would reach for. Offering it here and rejecting it in the
+#: pipeline would be a labelled foot-gun.
+SCOPES = {"turn", "ticket"}
+DEFAULT_SCOPE = "turn"
+
 
 @dataclass
 class SkillManifest:
@@ -26,6 +34,12 @@ class SkillManifest:
     harness_support: list[str]
     telemetry_emit: bool = True
     success_signal: str = "policy"
+    #: `telemetry.scope`, or "" when the artefact says nothing. Undeclared must
+    #: stay distinguishable from declared-as-turn even though they behave the
+    #: same: an overlay may only fill what was never stated (ADR-004), and the
+    #: adoption count that bounds every rollup is "how many declared" — which a
+    #: defaulted value would silently inflate to all of them.
+    scope: str = ""
     content_hash: str = ""
     path: Path | None = None
     # Set when an overlay supplied something this manifest did not state (#51).
@@ -34,6 +48,15 @@ class SkillManifest:
     # two skills were being attributed.
     overlay_path: Path | None = None
     extra: dict = field(default_factory=dict)
+
+    def effective_scope(self) -> str:
+        """The unit of work this artefact runs in, defaulted when it says nothing.
+
+        Nothing is required of any author (ADR-011): an artefact that declares no
+        scope is turn-scoped and is still measured. `scope` keeps the raw
+        declaration so "declared turn" and "said nothing" stay separable.
+        """
+        return self.scope or DEFAULT_SCOPE
 
     def as_attributes(self) -> dict:
         """Span attributes contributed by the manifest (std.* namespace)."""
@@ -168,6 +191,12 @@ def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
         errors.append(f"unknown harness(es): {sorted(bad)}")
     if signal not in SUCCESS_SIGNALS:
         errors.append(f"telemetry.success_signal must be one of {sorted(SUCCESS_SIGNALS)}")
+    scope = str(tel.get("scope", "") or "").strip().lower()
+    if scope and scope not in SCOPES:
+        hint = (" — a session is resumed and persists, so it is not a unit of work; "
+                "a long-running skill is still `turn`-scoped and rolls up by its scope key"
+                ) if scope == "session" else ""
+        errors.append(f"telemetry.scope must be one of {sorted(SCOPES)}, got {scope!r}{hint}")
     if errors:
         _fail(errors, path)
     known = SPEC_KEYS | set(CONTRACT_KEYS) | {"description"}
@@ -180,6 +209,7 @@ def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
         harness_support=list(data["harness_support"]),
         telemetry_emit=str(tel.get("emit", True)).lower() not in ("false", "0", "no"),
         success_signal=signal,
+        scope=scope,
         content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
         path=path,
         extra={k: v for k, v in data.items() if k not in known},
@@ -229,8 +259,17 @@ def partial_manifest(text: str, path: Path | None = None) -> SkillManifest | Non
     if not isinstance(name, str) or not name:
         return None
     policy_ids = data.get("policy_ids") or []
+    # An overlay is loaded through here, and an overlay is the *only* way to
+    # scope an artefact nobody here owns — so a scope that this lenient path
+    # drops is a third-party skill that can never be measured as a container.
+    # An unrecognised value is ignored rather than raised: this path exists so
+    # that one bad file cannot silence the rest, and `stdtel-validate` is the
+    # strict gate.
+    tel = data.get("telemetry") or {}
+    scope = str((tel if isinstance(tel, dict) else {}).get("scope", "") or "").strip().lower()
     return SkillManifest(
         name=name,
+        scope=scope if scope in SCOPES else "",
         version=str(data["version"]) if SEMVER.match(str(data.get("version", ""))) else UNVERSIONED,
         standard_id=data.get("standard_id") or "",
         policy_ids=list(policy_ids) if isinstance(policy_ids, list) else [],
@@ -253,7 +292,7 @@ def fill_gaps(base: SkillManifest, overlay: SkillManifest) -> SkillManifest:
     if merged.version in ("", UNVERSIONED) and overlay.version != UNVERSIONED:
         merged.version = overlay.version
         filled = True
-    for attr in ("standard_id", "owner"):
+    for attr in ("standard_id", "owner", "scope"):
         if not getattr(merged, attr) and getattr(overlay, attr):
             setattr(merged, attr, getattr(overlay, attr))
             filled = True

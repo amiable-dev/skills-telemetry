@@ -146,9 +146,18 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
         # Without these `make demo` leaves every efficiency query empty, and a
         # newcomer following the docs sees four blank panels that look exactly
         # like a broken install. Same DEMO markers, same mixed picture.
+        # ADR-010: roughly a third of the fleet is driven by a loop skill, so the
+        # containment query has a mixed picture to show rather than one shape.
+        # The scope key is the ticket, and the id changes with it, which is what
+        # makes a per-iteration comparison possible at all.
+        scoped = rng.random() < 0.35
         act = dict(session_id=session_id, harness="claude-code", harness_mode="agent",
                    repo="demo-org/demo-repo", team=team, ticket_id=sc_ticket,
-                   user_hash=f"demo-user-{dev}")
+                   user_hash=f"demo-user-{dev}",
+                   scope_name="demo-epic-loop" if scoped else None,
+                   scope_key=sc_ticket if scoped else None,
+                   scope_id=f"demoscope-{n:06d}" if scoped else None,
+                   scope_source=(rng.choice(["artefact", "overlay"]) if scoped else None))
         turns = rng.randint(2, 9)
         for turn_no in range(turns):
             at = opened + dt.timedelta(minutes=turn_no * rng.uniform(1, 12))
@@ -181,7 +190,11 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 **act,
                 "span_id": f"demoact-{n:06d}-k0", "trace_id": si["trace_id"],
                 "started_at": si["started_at"], "ended_at": si["ended_at"],
-                "kind": "skill", "name": si["skill_name"], "source": "hook",
+                # when this session is loop-driven, one skill activation is the
+                # loop itself — otherwise `self_tokens` is always zero and the
+                # split the query exists to show is invisible
+                "kind": "skill",
+                "name": "demo-epic-loop" if scoped else si["skill_name"], "source": "hook",
                 "prompt_id": f"demo-prompt-{n}-0", "parent_prompt_id": None,
                 "model": si["model"], "input_tokens": si["input_tokens"],
                 "output_tokens": si["output_tokens"],

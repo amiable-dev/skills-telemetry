@@ -128,6 +128,18 @@ class SessionState:
     seen_agent_ids: list = field(default_factory=list)
     turn_count: int = 0
     turns_at_last_compaction: int = 0
+    # ADR-010: the container currently open. `name` is the scoping artefact and
+    # holds for the whole run; `key` is the unit instance and rolls each
+    # iteration. Kept on state rather than derived per Stop because a loop skill
+    # activates once and then runs for hundreds of turns, and nothing in a later
+    # payload says which skill is driving them.
+    scope_name: str = ""
+    #: The unit the scope is measured in, carried so that rolling the key does
+    #: not have to assume there is only one non-turn unit in the enum.
+    scope_unit: str = ""
+    scope_key: str = ""
+    scope_id: str = ""
+    scope_source: str = ""
     # Which ADR-009 hook events this machine has actually seen fire. The doctor
     # reports "not yet observed" rather than implying capture works because the
     # settings file mentions it.
@@ -174,7 +186,43 @@ class SessionState:
         st.turn_count = raw.get("turn_count", 0)
         st.turns_at_last_compaction = raw.get("turns_at_last_compaction", 0)
         st.observed_events = list(raw.get("observed_events") or [])
+        for f in ("scope_name", "scope_unit", "scope_key", "scope_id", "scope_source"):
+            setattr(st, f, raw.get(f, ""))
         return st
+
+    # --- ADR-010: the open container ----------------------------------------
+
+    def open_scope(self, name: str, unit: str, key: str, source: str) -> None:
+        """Begin a container. A second one supersedes the first (ADR-010)."""
+        import uuid
+        self.scope_name, self.scope_unit = name, unit
+        self.scope_key, self.scope_source = key, source
+        self.scope_id = uuid.uuid4().hex[:16]
+
+    def roll_scope(self, key: str) -> None:
+        """Next unit instance, same container.
+
+        A ticket change is an *iteration* boundary, not a scope boundary: the
+        loop skill is still running. Rolling the key rather than closing means
+        `GROUP BY std.scope.key` compares iterations and `GROUP BY
+        std.scope.name` totals the run, from one set of rows. The id is new so
+        that two visits to the same ticket stay separable.
+        """
+        import uuid
+        self.scope_key = key
+        self.scope_id = uuid.uuid4().hex[:16]
+
+    def close_scope(self) -> None:
+        self.scope_name = self.scope_unit = ""
+        self.scope_key = self.scope_id = self.scope_source = ""
+
+    def scope_attributes(self) -> dict:
+        from stdtel.artefact import SCOPE_ID, SCOPE_KEY, SCOPE_NAME, SCOPE_SOURCE
+
+        if not self.scope_name:
+            return {}
+        return {SCOPE_NAME: self.scope_name, SCOPE_KEY: self.scope_key,
+                SCOPE_ID: self.scope_id, SCOPE_SOURCE: self.scope_source}
 
     @staticmethod
     def _read(path: Path, session_id: str) -> dict | None:
@@ -230,6 +278,11 @@ class SessionState:
             "seen_agent_ids": self.seen_agent_ids[-200:],
             "turn_count": self.turn_count,
             "turns_at_last_compaction": self.turns_at_last_compaction,
+            "scope_name": self.scope_name,
+            "scope_unit": self.scope_unit,
+            "scope_key": self.scope_key,
+            "scope_id": self.scope_id,
+            "scope_source": self.scope_source,
             "observed_events": self.observed_events,
         }, indent=1)
         if lock:
