@@ -114,6 +114,11 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
   subagent_type      TEXT,                   -- kind = subagent
   subagent_id        TEXT,
   subagent_depth     INT,
+  agent_version      TEXT,                   -- ADR-011: what the agent's own file asserts
+  agent_owner        TEXT,
+  agent_content_hash TEXT,                   -- and the hash of what it actually says
+  standard_id        TEXT,                   -- the contract, for whichever kind states one
+  policy_ids         TEXT[],
   compaction_reason  TEXT,                   -- kind = compaction
   compaction_tokens_before BIGINT,           -- the harness's own estimates, recorded as received
   compaction_tokens_after  BIGINT,
@@ -143,6 +148,11 @@ ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_name TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_key TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_id TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_source TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS agent_version TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS agent_owner TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS agent_content_hash TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS standard_id TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS policy_ids TEXT[];
 CREATE INDEX IF NOT EXISTS artefact_activation_scope_idx
   ON artefact_activation (scope_name, scope_key) WHERE scope_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS artefact_activation_parent_idx

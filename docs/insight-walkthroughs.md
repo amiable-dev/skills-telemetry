@@ -174,6 +174,53 @@ curl -s --get http://localhost:3200/api/search \
 reads exactly like an empty pipeline. This cost real debugging time during development; if a Tempo
 query returns nothing, check the time range before concluding anything.
 
+## 7. What did a loop skill really cost?
+
+The question this repository was built for, and the one it could not answer until ADR-010. A skill that
+drives work ticket by ticket has an activation lasting seconds, while the work it causes runs for
+hours. Read its own row and it looks free.
+
+```
+make demo                        # or load your own
+psql -f warehouse/efficiency/06_scope_self_vs_inclusive.sql \
+     -v scope_name=demo-epic-loop -v since=2026-06-01
+```
+
+```
+ scope_key   scope_source  n_runs  n_turns  self_tokens  inclusive_tokens
+ DEMO-101    artefact           1        8       15,044           125,060
+ DEMO-186    overlay            1        2            0           113,348
+ DEMO-103    artefact           1        9       17,227            39,068
+```
+
+**How to read it.** `self_tokens` is what the skill's own activations carried. `inclusive_tokens` is
+everything recorded while its container was open. One row per ticket, because the scope key is the
+ticket and it rolls every iteration — so these are iterations of one run, not three separate runs.
+
+The first row is the shape you are looking for: the skill accounts for about a tenth of what happened
+under it. That ratio is where optimisation effort belongs, and it is invisible in any per-skill view.
+
+**Four ways to misread it.**
+
+*As causation.* It is not. Everything recorded while the container was open is included, including an
+unrelated question typed mid-loop. Nothing can observe whether a skill caused a later tool call, so
+this answers **what was incurred under** the skill. Whether the skill was worth it is still the
+with-and-without arm at PR grain, and no volume of this data substitutes for it.
+
+*By summing the two columns.* They overlap by construction: `self` is inside `inclusive`. Adding them
+double-counts, the same trap as the session-cost and skill-tail pair.
+
+*By comparing iterations as though they were equal work.* `DEMO-101` covers eight turns and `DEMO-186`
+covers two. One ticket may be a typo fix and the next a migration. `n_turns` is in the output so that
+this is visible rather than assumed.
+
+*By treating an overlay row as the artefact's own claim.* `scope_source = overlay` means somebody here
+asserted that unit on a third party's behalf. It can be wrong, and it can go stale when the artefact
+changes without changing its name.
+
+**A zero in `self_tokens` is not a bug.** It means the container is open but the skill did not activate
+again in that window — the normal case for a loop, which activates once and then runs.
+
 ## From nothing to a populated dashboard
 
 Two paths, both verified end to end. Run them in order: the synthetic one shows what a finding looks
@@ -243,3 +290,4 @@ This is not recoverable later: renaming a branch tomorrow does not retroactively
 | a harness comparison | one group | `count(DISTINCT harness) = 1` |
 | an empty pipeline | a missing time range | Tempo needs `start`/`end` |
 | total cost per PR | skill-attributed only | using `tail_tokens` where `session_cost` was meant |
+| what a skill caused | what happened while it ran | reading `inclusive_tokens` as an effect |

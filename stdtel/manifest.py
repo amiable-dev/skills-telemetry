@@ -49,6 +49,22 @@ class SkillManifest:
     overlay_path: Path | None = None
     extra: dict = field(default_factory=dict)
 
+    def as_agent_attributes(self) -> dict:
+        """The same contract, under the names a sub-agent span uses.
+
+        An agent's identity is already on the span as `std.subagent.type`, so
+        this adds only what the file asserts and what we observed of it. Emitted
+        under `std.agent.*` rather than `std.skill.*` because a dashboard that
+        groups skills by version must not silently gain agent rows.
+        """
+        return {
+            "std.agent.version": self.version,
+            **({"std.standard_id": self.standard_id} if self.standard_id else {}),
+            **({"std.policy.ids": ",".join(self.policy_ids)} if self.policy_ids else {}),
+            **({"std.agent.owner": self.owner} if self.owner else {}),
+            **({"std.agent.content_hash": self.content_hash} if self.content_hash else {}),
+        }
+
     def effective_scope(self) -> str:
         """The unit of work this artefact runs in, defaulted when it says nothing.
 
@@ -406,3 +422,57 @@ def cli(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(cli())
+
+
+def iter_agent_files(root: Path) -> list[Path]:
+    """Every sub-agent definition under root, sorted, following symlinks.
+
+    Agents are flat markdown files rather than `<name>/SKILL.md`, so this cannot
+    reuse `iter_skill_files`. SKILL.md is excluded explicitly: a directory that
+    holds both would otherwise load every skill as an agent too.
+    """
+    out: list[Path] = []
+    seen: set = set()
+
+    def walk(d: Path) -> None:
+        try:
+            real = d.resolve()
+        except OSError:
+            return
+        if real in seen:                 # a symlink loop is a hang, not an error
+            return
+        seen.add(real)
+        try:
+            entries = sorted(d.iterdir())
+        except OSError:
+            return
+        for p in entries:
+            if p.is_dir():
+                walk(p)
+            elif p.suffix == ".md" and p.name != "SKILL.md":
+                out.append(p)
+
+    if root.is_dir():
+        walk(root)
+    return sorted(out)
+
+
+def load_agent_catalogue(root: Path) -> dict[str, SkillManifest]:
+    """Sub-agent definitions keyed by agent name.
+
+    Always lenient. A sub-agent's `metadata:` block is accepted by the harness
+    rather than specified by it (ADR-011), and most agents in the wild carry none
+    at all — so an agent that states nothing must still yield its name and its
+    content hash, which is the one thing about it that is observed rather than
+    asserted. Requiring the contract here would reduce the catalogue to the
+    agents we wrote ourselves.
+    """
+    out: dict[str, SkillManifest] = {}
+    for p in iter_agent_files(root):
+        try:
+            man = partial_manifest(p.read_text(encoding="utf-8"), p)
+        except OSError:
+            continue
+        if man is not None:
+            out.setdefault(man.name, man)
+    return out

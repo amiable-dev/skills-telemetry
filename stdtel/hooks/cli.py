@@ -61,6 +61,17 @@ def skills_roots() -> list[Path]:
     return _roots_from("STDTEL_SKILLS_ROOT", [Path.home() / ".claude" / "skills"])
 
 
+def agents_roots() -> list[Path]:
+    """Directories to scan for sub-agent definitions, in precedence order.
+
+    Separate from `skills_roots` because agents live in a different place and are
+    flat files rather than `<name>/SKILL.md`. The user-level directory is
+    searched last, matching skills, so a hook registered once is useful from
+    every project.
+    """
+    return _roots_from("STDTEL_AGENTS_ROOT", [Path.home() / ".claude" / "agents"])
+
+
 def overlay_roots() -> list[Path]:
     """Directories of contract stubs for skills we do not own (ADR-004, #51).
 
@@ -70,6 +81,35 @@ def overlay_roots() -> list[Path]:
     the operator controls and fills in what those skills do not state.
     """
     return _roots_from("STDTEL_SKILLS_OVERLAY")
+
+
+def _agent_catalogue():
+    """Sub-agent definitions across roots, then overlays applied to fill gaps.
+
+    Same precedence as skills: earliest root wins a name collision, an overlay
+    only supplies what the agent does not state. Without this an agent arrives
+    `unversioned` with no owner, exactly as an un-onboarded skill did — the cost
+    is recorded and cannot be attributed to a version of anything (#51).
+    """
+    from stdtel.manifest import fill_gaps, load_agent_catalogue, load_overlay
+
+    cat: dict = {}
+    for root in agents_roots():
+        try:
+            found = load_agent_catalogue(root)
+        except Exception:
+            continue
+        for name, manifest in found.items():
+            cat.setdefault(name, manifest)
+    for root in overlay_roots():
+        try:
+            stubs = load_overlay(root)
+        except Exception:
+            continue
+        for name, stub in stubs.items():
+            if name in cat:
+                cat[name] = fill_gaps(cat[name], stub)
+    return cat
 
 
 def _catalogue():
@@ -260,7 +300,19 @@ def post_compact(p: dict) -> None:
                              tokens_after=after if isinstance(after, int) else None)
 
 
-def _subagent_activations(st, sl, transcript: Path) -> list:
+def _agent_attrs(agents: dict, agent_type: str) -> dict:
+    """What the agent's own definition asserts, if we can find it.
+
+    Resolved by the same suffix rule as skills, so a plugin-scoped
+    `plugin:agent-name` finds the definition filed under its bare name. An agent
+    nobody has decorated contributes nothing here rather than a row of empty
+    strings, which would read as values in every group-by (ADR-005).
+    """
+    man, _resolved = _resolve(agent_type, agents)
+    return man.as_agent_attributes() if man is not None else {}
+
+
+def _subagent_activations(st, sl, transcript: Path, agents: dict | None = None) -> list:
     """Activations for every sub-agent that finished since the last Stop.
 
     Two sources, and the span says which. The SubagentStop hook is an
@@ -269,6 +321,7 @@ def _subagent_activations(st, sl, transcript: Path) -> list:
     session's `subagents/` directory is scanned instead, which is an inference
     and is flagged `source=transcript` so no query can confuse the two.
     """
+    agents = agents if agents is not None else {}
     from stdtel import artefact
     from stdtel.transcript import summarise_subagent
 
@@ -286,7 +339,8 @@ def _subagent_activations(st, sl, transcript: Path) -> list:
             usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
             tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
             depth=w.depth or None, parent_prompt_id=w.parent_prompt_id,
-            duration_ms=duration, source=artefact.SOURCE_HOOK))
+            duration_ms=duration, source=artefact.SOURCE_HOOK,
+            manifest_attrs=_agent_attrs(agents, w.agent_type or "")))
     if "subagent-stop" in st.observed_events:
         return out
     for path in _subagent_transcripts(transcript):
@@ -302,7 +356,8 @@ def _subagent_activations(st, sl, transcript: Path) -> list:
             started_at=summary.started_at, ended_at=summary.ended_at,
             usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
             tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
-            source=artefact.SOURCE_TRANSCRIPT))
+            source=artefact.SOURCE_TRANSCRIPT,
+            manifest_attrs=_agent_attrs(agents, _subagent_type(path) or "")))
     return out
 
 
@@ -530,7 +585,7 @@ def stop(p: dict, exporter=None) -> int:
             attrs, name=resolved, error=w.error))
     now = time.time()
     invocations.extend(_turn_activations(st, sl, str(p.get("permission_mode") or ""), now))
-    invocations.extend(_subagent_activations(st, sl, transcript))
+    invocations.extend(_subagent_activations(st, sl, transcript, _agent_catalogue()))
     invocations.extend(_compaction_activations(st, sl))
     # The session's whole cost, emitted whether or not a skill was ever loaded.
     # Without this a session that used no skill produces no telemetry at all, and

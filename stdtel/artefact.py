@@ -82,6 +82,11 @@ ALLOWED = {
         "std.subagent.type", "std.subagent.id", "std.subagent.depth",
         "std.subagent.llm_requests", "std.subagent.tool_calls", "std.subagent.duration_ms",
         "std.artefact.parent_prompt_id",
+        # ADR-011: what the agent's own file asserts, plus the hash of what it
+        # actually says. Under std.agent.* rather than std.skill.* so a panel
+        # grouping skills by version cannot silently gain agent rows.
+        "std.agent.version", "std.agent.owner", "std.agent.content_hash",
+        "std.standard_id", "std.policy.ids",
         "gen_ai.request.model", "gen_ai.operation.name",
     },
     KIND_COMPACTION: _COMMON | {
@@ -179,7 +184,8 @@ def activation(kind: str, started_at: float, ended_at: float, attrs: dict,
 def subagent(agent_id: str, agent_type: str, started_at: float, ended_at: float,
              usage_attrs: dict, llm_requests: int, tool_calls: int, model: str = "",
              depth: int | None = None, parent_prompt_id: str = "",
-             duration_ms: int | None = None, source: str = SOURCE_HOOK) -> dict:
+             duration_ms: int | None = None, source: str = SOURCE_HOOK,
+             manifest_attrs: dict | None = None) -> dict:
     """A sub-agent run.
 
     `agent_type` is the catalogue name of the agent (`Explore`, `general-purpose`,
@@ -201,6 +207,8 @@ def subagent(agent_id: str, agent_type: str, started_at: float, ended_at: float,
         attrs["gen_ai.request.model"] = model
     if depth is not None:
         attrs["std.subagent.depth"] = depth
+    if manifest_attrs:
+        attrs.update(manifest_attrs)
     if duration_ms is not None:
         attrs["std.subagent.duration_ms"] = duration_ms
     return activation(KIND_SUBAGENT, started_at, ended_at, attrs,
