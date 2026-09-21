@@ -26,6 +26,22 @@ def _git(args: list[str], cwd: Path | None) -> str:
         return ""
 
 
+def current_branch(cwd: Path | None = None) -> str:
+    """The branch the working tree is on *now*, or "" if git could not be read.
+
+    Split out of `resource_attributes` because the branch is the one input there
+    that is not session-scoped (#77). Repo, team, user hash and harness are fixed
+    for a session's life; the branch is not, and a loop skill changes it every
+    iteration.
+
+    The empty string is load-bearing. "no ticket on this branch" is an
+    observation and must be recorded as `unattributed`; "git did not answer" is
+    the absence of one, and the caller keeps what it already had rather than
+    overwriting a good value with a guess (ADR-005).
+    """
+    return os.environ.get("STDTEL_BRANCH") or _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+
+
 def ticket_from_branch(branch: str) -> str:
     """The ticket key a branch is named for, or 'unattributed'.
 
@@ -64,7 +80,7 @@ def detect_harness(payload: dict | None = None) -> str | None:
 
 
 def resource_attributes(cwd: Path | None = None, payload: dict | None = None) -> dict:
-    branch = os.environ.get("STDTEL_BRANCH") or _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    branch = current_branch(cwd)
     remote = os.environ.get("STDTEL_REPO") or _git(["config", "--get", "remote.origin.url"], cwd)
     repo = re.sub(r"\.git$", "", remote.rsplit("/", 1)[-1]) if remote else "unknown"
     return {
