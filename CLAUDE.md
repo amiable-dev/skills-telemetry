@@ -36,6 +36,21 @@ was rejected and what the decision costs, which is what you need before re-litig
   from kind `skill`. Per-kind attribute allowlists in `stdtel/artefact.py` are what make one span
   name safe. A turn carries no `name` — `prompt_id` is unbounded and `name` is a metrics dimension.
   Turn spans are deltas: count `DISTINCT prompt_id`, never `count(*)`. Issue #63.
+- **[ADR-010](docs/adrs/010-containment-and-scope.md)** (proposed) — containment: activations are
+  children of their **turn**, never of the session (a session is resumed and persists — one real one
+  spans seven weeks, which no trace store will hold). Across turns, containment is carried by
+  `std.scope.name` / `std.scope.key` / `std.scope.id` attributes and rolled up in SQL, not by a span
+  tree. Span links were rejected on evidence: Langfuse ignores them and TraceQL evaluates one trace at
+  a time, so a link can be filtered but never joined. **Self cost is stored; inclusive cost is
+  derived** — no row holds a total including its children. A fifth kind `external` carries spend the
+  harness cannot see. A rollup answers containment, never causation. Issues #75, #77.
+- **[ADR-011](docs/adrs/011-decorating-artefacts.md)** (proposed) — how artefacts declare scope, and
+  the rule that **nothing is required of any author**: undeclared means turn-scoped, never a gate
+  (ADR-004's `policy_ids` gate is the scar). Skills use `telemetry.scope` under `metadata:`.
+  Sub-agents accept a `metadata:` block by *tolerance*, not contract — verified 2026-09-21 on 2.1.277,
+  undocumented, could regress silently. MCP servers cannot be decorated at all and are overlay-only.
+  The overlay is the universal fallback and its declarations are assertions, not observations, so they
+  need provenance. Scope of work includes the user documentation and widening `stdtel-onboard`.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
