@@ -508,3 +508,30 @@ def test_the_shipped_scheduled_loader_uses_a_safe_window():
         since = re.search(r"--since\s+(\d+)h", invocation)
         hours = int(since.group(1)) if since else 24      # the argparse default
         assert hours >= MIN_SAFE_WINDOW_HOURS, f"{invocation!r} uses a {hours}h window"
+
+
+# --- ADR-010: containment must survive the trip into the warehouse ------------
+
+def test_the_parent_span_is_carried_into_the_warehouse():
+    """Parenting spans (#75) is only half the fix. ADR-006 puts analysis in the
+    warehouse, so a parent that reaches Tempo and is dropped by the loader leaves
+    the rollup exactly as unanswerable as it was before."""
+    import base64
+    raw = bytes.fromhex("0011223344556677")
+    row = activation_span({}, {"parentSpanId": base64.b64encode(raw).decode()})
+    assert row["parent_span_id"] == "0011223344556677"
+
+
+def test_a_root_activation_stores_null_rather_than_an_empty_string():
+    """A root is a real observation — a compaction has no turn, and every span
+    loaded before #75 had no parent at all. NULL says "no parent"; '' would be a
+    parent whose id we failed to read, and the two must not merge (ADR-005)."""
+    assert activation_span({}, {})["parent_span_id"] is None
+
+
+def test_the_search_api_shape_is_read_as_hex_not_mangled():
+    """/api/search returns hex under parentSpanID while /api/traces returns
+    base64 under parentSpanId. Reading only one shape is how three loader bugs
+    reached production last time."""
+    row = activation_span({}, {"parentSpanID": "0011223344556677"})
+    assert row["parent_span_id"] == "0011223344556677"

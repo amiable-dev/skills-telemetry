@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SimpleSpanProcessor
 
 from stdtel.artefact import (   # noqa: E402  (re-exported: importers use these names)
-    LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME, SPAN_NAME,
+    KIND_TURN, LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME, SPAN_NAME,
 )
 DEFAULT_ENDPOINT = "http://localhost:4318"
 DEFAULT_TIMEOUT_S = 2
@@ -109,24 +109,62 @@ def emit_session_cost(provider: TracerProvider, attrs: dict, session_id: str,
     return 1
 
 
+def _start(tracer, inv: dict, session_id: str, context=None):
+    """One span, not yet ended, so a parent stays open while its children attach."""
+    attrs = scrub(inv.get("attributes", {}))
+    attrs["session.id"] = session_id
+    span = tracer.start_span(SPAN_NAME, attributes=attrs,
+                             start_time=int(inv["started_at"] * 1e9), context=context)
+    if inv.get("error"):
+        span.set_status(trace.StatusCode.ERROR)
+    return span
+
+
 def emit_activations(provider: TracerProvider, activations: Iterable[dict], session_id: str) -> int:
     """Each activation dict: kind, started_at, ended_at, attributes(dict), error(bool).
 
     Build them with `stdtel.artefact`, which applies the per-kind allowlist.
     `scrub()` runs again here as a second guard, never as the first one: nothing
     upstream hands this function a raw hook payload.
+
+    **Activations are children of their turn** (ADR-010). Every span used to be
+    started with no parent context, which makes it the root of its own trace — so
+    containment was not merely unqueryable, it was unrecorded, while ADR-009 said
+    the opposite (#75). The parent is the turn rather than the session because a
+    session is resumed and persists: one real session spans seven weeks, and a
+    trace that long outgrows what Tempo will hold, with late spans landing in
+    fragments. A turn is emitted whole by one `Stop` process, so it is bounded.
+
+    Turns are started first so that a child can attach to one. An activation whose
+    turn is not in this batch stays a root rather than being invented a parent —
+    that happens legitimately, as when a skill began before the last `Stop`.
     """
     tracer = provider.get_tracer("stdtel", "0.1.0")
-    n = 0
-    for inv in activations:
-        start_ns = int(inv["started_at"] * 1e9)
-        end_ns = int((inv.get("ended_at") or time.time()) * 1e9)
-        attrs = scrub(inv.get("attributes", {}))
-        attrs["session.id"] = session_id
-        span = tracer.start_span(SPAN_NAME, attributes=attrs, start_time=start_ns)
-        if inv.get("error"):
-            span.set_status(trace.StatusCode.ERROR)
-        span.end(end_time=end_ns)
-        n += 1
+    acts = list(activations)
+    turns: dict[str, object] = {}
+    open_spans: list[tuple] = []
+
+    for inv in acts:
+        if inv.get("kind") != KIND_TURN:
+            continue
+        span = _start(tracer, inv, session_id)
+        prompt_id = (inv.get("attributes") or {}).get("std.prompt.id")
+        if prompt_id:
+            turns[prompt_id] = span
+        open_spans.append((span, inv))
+
+    for inv in acts:
+        if inv.get("kind") == KIND_TURN:
+            continue
+        a = inv.get("attributes") or {}
+        # A sub-agent names the turn that spawned it; a skill names the turn it
+        # ran in. A compaction names neither, and stays a root: it happens
+        # between turns, so claiming one would be inventing containment.
+        parent = turns.get(a.get("std.prompt.id") or a.get("std.artefact.parent_prompt_id"))
+        ctx = trace.set_span_in_context(parent) if parent is not None else None
+        open_spans.append((_start(tracer, inv, session_id, context=ctx), inv))
+
+    for span, inv in open_spans:
+        span.end(end_time=int((inv.get("ended_at") or time.time()) * 1e9))
     provider.force_flush()
-    return n
+    return len(open_spans)
