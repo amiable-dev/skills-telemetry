@@ -82,7 +82,10 @@ things a user must know to look for.
    session-scoped is confusing "I run for a long time" with "I am one unit of work"; it works
    turn-by-turn, and the rollup over its scope key is what shows the aggregate.
 
-3. **Sub-agents carry the same `metadata:` block as skills, with a recorded caveat.** Verified
+3. **Sub-agents carry the same `metadata:` block as skills, minus `telemetry.scope`, with a
+   recorded caveat.** The contract is *not* uniform across the two and this says so where the
+   decision is made rather than only in the limitations below: version, owner and `standard_id`
+   are read from an agent; a scope is not, because nothing opens a container for one. Verified
    2026-09-21 against Claude Code 2.1.277 and the sub-agent documentation: `metadata` is **not** among
    the documented agent front-matter keys, the documented skip conditions do not include unknown keys,
    and an agent file carrying a `metadata:` block passes `claude plugin validate` and loads. So this
