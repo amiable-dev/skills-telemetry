@@ -58,7 +58,16 @@ nothing but individual turns.
 `session` is not a value. A session is resumed and persists, so it is not a unit of work; a skill that
 runs for a long time is still `turn`-scoped, and the rollup over its scope key is what shows the total.
 
-Two things follow from declaring it, and both belong in your head before you do:
+**A scope you open, you close.** Add `stdtel-hook scope-close` to the skill's own instructions, at
+every path that ends the run — the finish, and each safety gate. It takes no arguments: the session id
+comes from the environment the harness gives you. Closing when nothing is open is fine, so you never
+need to work out which ending happened.
+
+Skip it and the container stays open for the rest of the session, so work you do afterwards is still
+attributed to your skill. It closes on its own only when another scoped skill supersedes it, or at the
+next fresh start.
+
+Three things follow from declaring it, and all belong in your head before you do:
 
 - **Everything in the window is attributed to it**, including an unrelated question typed mid-loop.
   There is no observable link from an activation to a later tool call, so the number answers *what was

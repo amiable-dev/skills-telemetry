@@ -1,6 +1,7 @@
 # CLI reference
 
-Four console scripts. `stdtel-hook` is invoked by the harness, never by you; the other three are yours.
+Four console scripts. `stdtel-hook` is invoked by the harness one process per event; its only
+subcommand meant for a human or a skill is `scope-close`. The other three scripts are yours.
 
 All of them read the [environment variables](#environment-variables) below.
 
@@ -232,6 +233,20 @@ stdtel-hook {session-start|pre-tool-use|post-tool-use|post-tool-use-failure|
              subagent-start|subagent-stop|post-compact|stop}
 ```
 
+One subcommand is different: **`scope-close`** is called by a skill, not the harness, and reads no
+stdin (doing so would block on an inherited terminal).
+
+```
+stdtel-hook scope-close [--session <id>]
+```
+
+It closes the container a `telemetry.scope` skill opened (ADR-010), so work done after the skill
+finishes is attributed to its own turn rather than still to the skill. The session comes from
+`CLAUDE_CODE_SESSION_ID`, which the harness exports to processes the agent spawns, so a skill passes
+nothing; `--session` is for callers outside the harness. Closing when no scope is open is **not** an
+error, so a loop that ends on a safety gate need not know which ending happened. Exits `1` only when
+no session id can be found — the one case where exiting 0 would be a silent no-op.
+
 **Always exits 0**, including on unknown events and internal errors, so telemetry can never block the
 developer. Errors go to stderr — which is invisible in most harness UIs, so treat a silent hook as
 suspicious and check with `stdtel-install where` and a manual invocation:
@@ -268,6 +283,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |
+| `CLAUDE_CODE_SESSION_ID` | *(unset)* | `scope-close` | set by the harness and **exported to processes the agent spawns**, so a skill can run `stdtel-hook scope-close` without knowing which session it is in. A sub-agent's shell sees the *parent* session's id, alongside `CLAUDE_CODE_CHILD_SESSION` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | exporter | fallback for direct CLI/CI use only, where nothing scrubs it |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | exporter | fallback, checked before the base URL; must be the full `/v1/traces` URL |
 | `OTEL_SERVICE_NAME` | `stdtel` | exporter | `service.name` on the resource |

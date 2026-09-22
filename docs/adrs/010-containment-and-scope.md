@@ -132,6 +132,31 @@ confirmation or a reversal rather than an excavation.
    begins, or the artefact emits an explicit close. Without this, "attributable to the parent
    regardless of timeframe" means "forever", and a single July invocation owns every span since.
 
+   How each is *observed* matters, because two of them are not events the harness gives us:
+
+   - **The session ends.** Observed at the next session *beginning*, not at the end: `SessionStart`
+     with a `source` of `startup`, `clear` or `fork` closes any container still open.
+
+     A `SessionEnd` hook does exist, carrying a `reason` — this ADR originally said it did not, which
+     was wrong and is corrected here. It is deliberately not used. It is best-effort, with the
+     documentation silent on crashes and terminal closure and a shared 1.5-second budget, and the only
+     state it could close is a file nothing will read again: either the session never returns, or it
+     returns through `SessionStart` and the rule above fires first. Registering a hook whose effect is
+     unobservable would be a control that appears to do something and does not.
+
+     `startup` covers `claude --resume`, which keeps the session id. The process died, so whatever
+     loop was running has stopped; one that is genuinely continuing reopens its container the next
+     time it activates. `compact` deliberately does not close — same process, same run, and a loop
+     spanning a compaction is exactly the case containment exists for.
+   - **A superseding scoped activation.** Observed directly, at Stop.
+   - **An explicit close.** `stdtel-hook scope-close`, which a skill runs when its work is done. The
+     session id comes from `CLAUDE_CODE_SESSION_ID`, which the harness exports to processes the agent
+     spawns, so the skill passes nothing. Closing a scope that is not open is not an error: a loop
+     that ends on a safety gate rather than by finishing should not have to know which happened.
+
+   This is the only one of the three an artefact can trigger for itself, and it is the one that makes
+   the other two rare rather than load-bearing.
+
 5. **One scope level.** Epic, ticket and turn is three levels deep and this ADR supports one. Nesting
    scopes is a known limitation, recorded below rather than half-built.
 

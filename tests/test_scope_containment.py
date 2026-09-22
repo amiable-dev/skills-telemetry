@@ -247,3 +247,128 @@ def test_the_scope_survives_a_save_load_cycle(catalogue, tmp_path):
     assert (back.scope_name, back.scope_unit, back.scope_key, back.scope_source) == \
         ("epic-loop", "ticket", "STDTEL-11", "artefact")
     assert back.scope_id == st.scope_id
+
+
+# --- ADR-010 decision 4: a scope has to be able to end ------------------------
+
+def test_a_skill_closes_its_own_container_and_later_work_is_unscoped(catalogue, tmp_path, monkeypatch):
+    """The condition that was written into the ADR and never implemented.
+
+    Without it a scope keeps stamping its name on every activation for the rest
+    of the session, so unrelated work done after the loop finishes is still
+    attributed to the loop — "regardless of timeframe" becoming "forever", which
+    is precisely what decision 4 exists to prevent.
+    """
+    sid = "scope-close"
+    monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    use_skill(sid, "epic-loop", "t1")
+    assert scopes(run(sid, tmp_path)) == {"STDTEL-11"}
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", sid)
+    assert hooks.main(["scope-close"]) == 0
+
+    use_skill(sid, "formatter", "t2", prompt_id="p2")
+    assert scopes(run(sid, tmp_path)) == {None}, "work after the loop is still attributed to it"
+
+
+def test_closing_takes_the_session_from_the_environment(tmp_path, monkeypatch, capsys):
+    """A skill runs `stdtel-hook scope-close` and passes nothing. The harness
+    exports the session id to processes the agent spawns, verified against a live
+    session, so the skill does not have to know which session it is in."""
+    from stdtel.state import SessionState
+
+    with SessionState.mutate("env-sid") as st:
+        st.open_scope("epic-loop", "ticket", "STDTEL-11", "artefact")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sid")
+    assert hooks.scope_close([]) == 0
+    assert SessionState.load("env-sid").scope_name == ""
+    assert "closed scope" in capsys.readouterr().out
+
+
+def test_closing_a_scope_that_is_not_open_is_not_an_error(tmp_path, monkeypatch, capsys):
+    """A loop that ends on a safety gate rather than by finishing should not have
+    to know which happened, and a second call must be harmless."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "never-opened")
+    assert hooks.scope_close([]) == 0
+    assert "no scope was open" in capsys.readouterr().out
+
+
+def test_closing_without_a_session_fails_loudly(tmp_path, monkeypatch, capsys):
+    """Exiting 0 having done nothing is how the artefact collection went
+    unnoticed for weeks (#21). There is no session to guess at."""
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    assert hooks.scope_close([]) == 1
+    assert "no session id" in capsys.readouterr().err
+
+
+def test_scope_close_never_reads_stdin(tmp_path, monkeypatch):
+    """Every other subcommand is handed JSON by the harness; this one is invoked
+    from a shell. Reading stdin there blocks on an inherited terminal, which
+    would hang the skill that called it."""
+    import io
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "no-stdin")
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))     # a real read would raise or block
+    assert hooks.main(["scope-close"]) == 0
+
+
+# --- ADR-010 decision 8: a workflow is not a tool call ------------------------
+
+def test_a_scoped_skill_is_a_workflow_invocation(catalogue, tmp_path, monkeypatch):
+    """The OpenTelemetry gen-ai conventions separate a tool execution from a
+    workflow invocation. Emitting `execute_tool` for both makes a loop
+    indistinguishable from a one-shot skill to any OTel-native tool — the same
+    information loss the scope attributes exist to fix."""
+    sid = "op-workflow"
+    monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    use_skill(sid, "epic-loop", "t1")
+    ops = {s.attributes.get("gen_ai.operation.name") for s in activations(run(sid, tmp_path))
+           if s.attributes.get("std.artefact.kind") == "skill"}
+    assert ops == {"invoke_workflow"}
+
+
+def test_an_ordinary_skill_is_still_a_tool_execution(catalogue, tmp_path, monkeypatch):
+    sid = "op-tool"
+    monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    use_skill(sid, "formatter", "t1")
+    ops = {s.attributes.get("gen_ai.operation.name") for s in activations(run(sid, tmp_path))
+           if s.attributes.get("std.artefact.kind") == "skill"}
+    assert ops == {"execute_tool"}
+
+
+@pytest.mark.parametrize("source", ["startup", "clear", "fork"])
+def test_a_fresh_start_inherits_no_container(catalogue, tmp_path, monkeypatch, source):
+    """ADR-010's first termination condition. The harness emits no end-of-session
+    event, so a session's end is observed as the next one beginning."""
+    sid = f"scope-fresh-{source}"
+    monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    use_skill(sid, "epic-loop", "t1")
+    run(sid, tmp_path)
+    assert SessionState.load(sid).scope_name == "epic-loop"
+
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path), "source": source})
+    assert SessionState.load(sid).scope_name == ""
+
+
+@pytest.mark.parametrize("source", ["resume", "compact"])
+def test_compaction_does_not_split_a_run_in_two(catalogue, tmp_path, monkeypatch, source):
+    """Same process, same run. A loop spanning a compaction is exactly the case
+    containment exists for, and closing there would make each half look like a
+    separate, cheaper thing.
+
+    Note `source: resume` means switching to a different saved conversation from
+    inside a session — `claude --resume` at launch reports `startup`, which does
+    close, because the process died and the loop with it.
+    """
+    sid = f"scope-keep-{source}"
+    monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
+    use_skill(sid, "epic-loop", "t1")
+    run(sid, tmp_path)
+
+    hooks.session_start({"session_id": sid, "cwd": str(tmp_path), "source": source})
+    assert SessionState.load(sid).scope_name == "epic-loop"

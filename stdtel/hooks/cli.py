@@ -190,6 +190,15 @@ def session_start(p: dict) -> None:
     st = SessionState.load(p.get("session_id", "unknown"))
     st.resource = resource_attributes(Path(p.get("cwd", ".")), payload=p)
     st.started_at = st.started_at or time.time()
+    # ADR-010 decision 4, first termination condition, observed at the next start
+    # rather than at the end. `startup` covers `claude --resume` too, which keeps
+    # the session id: the process died, so whatever loop was running has stopped,
+    # and a loop that is genuinely continuing reopens its container the next time
+    # it activates. `compact` must NOT close — same process, same run, and a loop
+    # spanning a compaction is precisely the case containment exists for; closing
+    # would split one run in two and make each half look separate and cheaper.
+    if str(p.get("source") or "") in ("startup", "clear", "fork") and st.scope_name:
+        st.close_scope()
     st.save()
     # Once per session, on the only event whose output the developer sees. The
     # plugin and the package are separate installs and neither updates the
@@ -526,6 +535,7 @@ def stop(p: dict, exporter=None) -> int:
     from stdtel import artefact
     from stdtel.exporter import build_provider, emit_activations, emit_session_cost
     from stdtel.state import SessionState
+    from stdtel.manifest import DEFAULT_SCOPE
     from stdtel.transcript import attribute, read_slice
 
     sid = p.get("session_id", "unknown")
@@ -578,7 +588,14 @@ def stop(p: dict, exporter=None) -> int:
             attrs["std.skill.llm_requests"] = a.request_count
             attrs["gen_ai.request.model"] = a.models[0] if a.models else "unknown"
             attrs.update(a.tail.as_attributes())
-        attrs["gen_ai.operation.name"] = "execute_tool"
+        # ADR-010 decision 8: the OpenTelemetry gen-ai conventions distinguish a
+        # tool execution from a workflow invocation, and a skill that declares a
+        # unit of work is the second. Emitting `execute_tool` for both would make
+        # a loop indistinguishable from a one-shot skill to any OTel-native tool,
+        # which is the same information loss the scope attributes exist to fix.
+        # These conventions are at Development status; read 2026-09-19.
+        scoping = manifest is not None and manifest.effective_scope() != DEFAULT_SCOPE
+        attrs["gen_ai.operation.name"] = "invoke_workflow" if scoping else "execute_tool"
         attrs["gen_ai.tool.name"] = "Skill"
         invocations.append(artefact.activation(
             artefact.KIND_SKILL, w.started_at, w.ended_at or time.time(),
@@ -682,11 +699,63 @@ def disabled() -> bool:
     return os.environ.get("STDTEL_DISABLED", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def scope_close(argv: list[str] | None = None) -> int:
+    """Close the container a scoped skill opened — ADR-010's third termination
+    condition, and the only one an artefact can trigger for itself.
+
+    A loop knows when it is finished; nothing observing it does. Without this a
+    scope keeps stamping its name on every activation for the rest of the
+    session, so unrelated work done afterwards is still attributed to the loop —
+    "regardless of timeframe" becoming "forever", which is exactly what decision
+    4 was written to prevent.
+
+    The session id comes from `CLAUDE_CODE_SESSION_ID`, which the harness exports
+    to Bash children (verified 2026-09-19, equal to the session's own id), so a
+    skill calls `stdtel-hook scope-close` and passes nothing. `--session` exists
+    for tests and for a caller outside the harness.
+
+    Closing a scope that is not open is not an error. A loop that ends by a
+    safety gate rather than by finishing should not have to know which happened,
+    and a second call must be harmless.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="stdtel-hook scope-close", description=scope_close.__doc__)
+    ap.add_argument("--session", default=os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+    a = ap.parse_args(argv or [])
+    if not a.session:
+        print("stdtel: no session id — CLAUDE_CODE_SESSION_ID is unset and --session "
+              "was not given, so there is nothing to close", file=sys.stderr)
+        return 1
+
+    from stdtel.state import SessionState
+
+    with SessionState.mutate(a.session) as st:
+        was = st.scope_name
+        st.close_scope()
+    if was:
+        print(f"stdtel: closed scope {was!r}; later activations are attributed to their turn")
+    else:
+        print("stdtel: no scope was open")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     event = argv[0] if argv else ""
     if disabled():
         return 0
+    # Before the payload is read: this one is invoked from a shell rather than by
+    # the harness, so there is no JSON on stdin and `json.load` would block on an
+    # inherited terminal.
+    if event == "scope-close":
+        try:
+            return scope_close(argv[1:])
+        except SystemExit as e:                      # argparse on a bad flag
+            return int(e.code or 0)
+        except Exception as e:                       # noqa: BLE001 - never block
+            print(f"stdtel: {e}", file=sys.stderr)
+            return 1
     p = _payload()
     try:
         if event == "session-start":
@@ -710,7 +779,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"stdtel-hook: unknown event {event!r}; expected one of "
                   f"session-start, pre-tool-use, post-tool-use, "
                   f"post-tool-use-failure, subagent-start, subagent-stop, "
-                  f"post-compact, stop", file=sys.stderr)
+                  f"post-compact, stop, scope-close", file=sys.stderr)
     except Exception as e:   # never block the developer
         print(f"stdtel: {e}", file=sys.stderr)
     return 0
