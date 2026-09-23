@@ -81,7 +81,7 @@ Three things follow from declaring it, and all belong in your head before you do
 |---|---|---|
 | **skill** | `metadata:` in `SKILL.md` | The spec permits exactly six top-level keys, and any other **hard-errors** on upload. Everything lives under `metadata:`. |
 | **sub-agent** | `metadata:` in the agent's `.md` | Version, owner and `standard_id` only — **not `telemetry.scope`**. Works, but by *tolerance*: `metadata` is not a documented agent key and unknown keys are ignored rather than specified. Verified against 2.1.277. If that changes, agents silently go back to undecorated — so keep the overlay as a fallback. |
-| **MCP server** | an overlay entry only | There is no file to decorate. `.mcp.json` has no free-form metadata field, tool-level `_meta` is declared by the server rather than by you, and the hook payload does not carry it. Calls appear as `mcp__<server>__<tool>` and are counted on the session span. |
+| **MCP server** | **not decorated** | A deliberate non-goal (ADR-011). There is no file to decorate and no per-call span to attach a description to — calls are counted on the session span under a key that already names the server. What you want from an MCP server is what it *spent*, and only the server can report that. |
 
 Set `STDTEL_AGENTS_ROOT` for agents, the way `STDTEL_SKILLS_ROOT` works for skills. A relative value
 resolves against `CLAUDE_PROJECT_DIR`, so `agents` picks up a project's own directory.
@@ -129,9 +129,9 @@ reads your guess as the artefact's own claim.
 - **`version` must be quoted.** Unquoted `1.0` is a YAML float and fails the semver check.
 - **A sub-agent's block is tolerated, not specified.** It is ignored by the harness today and
   undocumented, so treat a passing `claude plugin validate` as the check that it still works.
-- **An MCP server cannot be decorated in place.** Only an overlay describes one, and there is no
-  per-call span for it to attach to yet — calls are counted on the session span under their full
-  `mcp__<server>__<tool>` name.
+- **Do not try to decorate an MCP server.** It is a stated non-goal, not a gap: there is no per-call
+  span to attach anything to, and the session counter already names the server. If you need to know
+  what a server spent, that is the server's job to report.
 - **An empty `policy_ids` means the skill can never be scored.** `scorecard.sql` derives a skill's
   accountable policies by `unnest(policy_ids)`, so an empty list produces no rows in that join and the
   skill reads `insufficient-data` for ever, at any volume. That is the correct answer for a skill

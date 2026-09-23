@@ -99,11 +99,30 @@ things a user must know to look for.
    sub-agent still loads, so the day the tolerance ends is the day a test fails rather than the day the
    data quietly thins out.
 
-4. **MCP servers are overlay-only**, keyed on the server name parsed from the `mcp__<server>__<tool>`
-   tool name. Verified the same day: `.mcp.json` has no free-form metadata field, tool-level `_meta` is
-   declared by the server rather than the user, and the hook payload for an MCP tool call does not carry
-   it in any case. There is no file to decorate and no author to ask. This is not a limitation to be fixed
-   later; it is the correct shape for an artefact we observe but do not own.
+4. **Decorating MCP servers is a non-goal.** This decision originally said they were overlay-only,
+   keyed on the server name parsed from `mcp__<server>__<tool>`. That was written thinking about
+   identity, and identity is not the problem.
+
+   The facts behind it have not changed: `.mcp.json` has no free-form metadata field, tool-level
+   `_meta` is declared by the server rather than the operator, and the hook payload for an MCP call
+   does not carry it. An overlay is the only place a description could live.
+
+   What changed is the reason for not building it. **There is no per-call span to attach a description
+   to.** MCP calls are counted on the session span under
+   `std.session.tool.mcp__<server>__<tool>.calls`, a key that already contains the server's name. An
+   overlay entry would add an owner and a standard id that nothing could join to a unit of work —
+   answering a question nobody is asking, while leaving the real one untouched.
+
+   The real one is **spend**, and decoration cannot supply it. A server that calls models of its own
+   spends money no hook can see, which is [ADR-010](010-containment-and-scope.md)'s `external` kind and
+   not this ADR. It is also why the *channel* is the wrong place to solve it: the same system is
+   reached both ways. Counting tool calls across three projects on this machine, `llm-council` was
+   invoked 2,101 times by shell command and 205 times as an MCP tool. Whatever reports its spend must
+   work for both, so it has to be the spending process that reports.
+
+   Creating a sixth artefact kind for MCP calls purely to hang a description on is explicitly
+   rejected: it would add a span per call to carry metadata nobody needs, when the counter that
+   already exists names the server.
 
 5. **The overlay is the universal fallback**, and it is what makes decision 1 affordable. Any artefact
    of any type can be described in an overlay root the operator controls, without editing upstream
@@ -159,9 +178,10 @@ artefacts are scoped, and how many of those we guessed at" bounds every rollup A
 - **One overlay namespace serves both catalogues.** Skill and agent overlays are read from the same
   root and keyed by name, so a skill and an agent sharing a name would share a stub. Unlikely, not
   incorrect, and stated so that nobody meets it as a bug.
-- **MCP internal spend stays invisible.** The overlay names an MCP server and scopes its calls. If that
-  server spends money calling models of its own, only the server can report it, which puts it in the
-  same position as any external process under ADR-010's fifth kind.
+- **MCP internal spend stays invisible**, and decoration was never going to change that. Only the
+  server can report what it spent, which puts it in the same position as any external process under
+  ADR-010's fifth kind. An MCP server is *identified* in the data by the tool-call counter on the
+  session span; under decision 4 it is not *described*, and that is a decision rather than a gap.
 
 ## Related
 
