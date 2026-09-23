@@ -174,10 +174,11 @@ def main(argv: list[str] | None = None) -> int:
         where = f"span {p.span_index}: " if p.span_index is not None else ""
         print(f"stdtel-conform: {where}{p.message}", file=sys.stderr)
     if report.ok and report.thin_cost_coverage:
-        print(f"stdtel-conform: every span is valid, but most report no cost. A total computed "
-              f"over this file is an average of the part that was measured, not of the work "
-              f"done — fix the emitter's cost capture before trusting the number.",
-              file=sys.stderr)
+        missing = report.external - report.cost_reported
+        print(f"stdtel-conform: every span is valid, but {missing} of {report.external} report no "
+              f"cost. A total over this file is an average of the part that was measured, not of "
+              f"the work that was done, and it will not reconcile against a provider's invoice — "
+              f"fix the emitter's cost capture before trusting the number.", file=sys.stderr)
     return 0 if report.ok else 1
 
 

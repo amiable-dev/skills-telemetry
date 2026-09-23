@@ -153,3 +153,15 @@ def test_the_cli_exits_zero_on_a_clean_file(tmp_path, capsys):
     p.write_text(json.dumps(payload(good())))
     assert conform.main([str(p)]) == 0
     assert "1 span" in capsys.readouterr().out
+
+
+def test_the_coverage_warning_counts_rather_than_says_most(tmp_path, capsys):
+    """"Most" was wrong at exactly half, and an emitter's team reading a figure
+    that does not match their file will trust the rest of the output less."""
+    a = {"std.artefact.kind": "external", "std.external.system": "llm-council"}
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps(payload(span(**a), good())))
+    conform.main([str(p)])
+    err = capsys.readouterr().err
+    assert "1 of 2 report no cost" in err
+    assert "most" not in err
