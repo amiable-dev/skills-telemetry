@@ -31,7 +31,8 @@ def payload(*spans):
 
 def good(**over):
     a = {"std.artefact.kind": "external", "std.external.system": "llm-council",
-         "std.external.operation": "consult", "std.external.cost_usd": 1.25}
+         "std.external.operation": "consult", "std.external.cost_usd": 1.25,
+         "std.artefact.source": "emitter"}
     a.update(over)
     return span(**a)
 
@@ -165,3 +166,12 @@ def test_the_coverage_warning_counts_rather_than_says_most(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "1 of 2 report no cost" in err
     assert "most" not in err
+
+
+def test_claiming_the_harness_observed_external_spend_is_refused():
+    """The emitter reported this about itself. `hook` would say the harness saw
+    it, which it cannot — and a checker that lets that through teaches the wrong
+    thing to the team whose CI is running it."""
+    r = conform.check(payload(good(**{"std.artefact.source": "hook"})))
+    assert not r.ok
+    assert any("std.artefact.source" in p.message for p in r.problems)

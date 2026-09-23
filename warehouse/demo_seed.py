@@ -247,7 +247,7 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 **act,
                 "span_id": f"demoact-{n:06d}-x{k}", "trace_id": f"demotrace{n:06d}",
                 "started_at": _iso(at), "ended_at": _iso(at + dt.timedelta(seconds=rng.uniform(30, 600))),
-                "kind": "external", "name": "demo-council", "source": "hook",
+                "kind": "external", "name": "demo-council", "source": "emitter",
                 "prompt_id": None, "parent_prompt_id": None,
                 "model": rng.choice(["anthropic/claude-opus-5", "openai/gpt-5.6-sol",
                                      "deepseek/deepseek-v3.2"]),

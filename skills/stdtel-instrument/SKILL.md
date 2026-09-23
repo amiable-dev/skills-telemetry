@@ -66,6 +66,13 @@ One span per unit of work, named `std.artefact.activation`:
 | `std.external.operation` | a bounded verb from its own vocabulary |
 | `std.external.cost_usd` | number — **omit when not observed** |
 | `std.external.requests`, `std.external.duration_ms` | counts |
+| `std.artefact.source` | `emitter` — you reported this about yourself |
+
+`source` records *how the value was come by*, and the other two values are not
+yours to use: `hook` means the Claude Code harness handed it over and
+`transcript` means stdtel inferred it from a session file. Nothing outside your
+process saw your spend, so stamping either would assert an observation that
+never happened. `stdtel-conform` rejects it.
 | `gen_ai.request.model`, `gen_ai.usage.*` | model and token counts |
 | `session.id` | the **Claude** session, from `CLAUDE_CODE_SESSION_ID` |
 

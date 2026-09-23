@@ -94,3 +94,13 @@ def test_disallowed_attributes_are_dropped_and_reported(capsys):
                           ended_at=2.0, usage_attrs={"std.external.secret": "x"})["attributes"]
     assert "std.external.secret" not in a
     assert "std.external.secret" in capsys.readouterr().err
+
+
+def test_the_source_says_the_emitter_reported_it_not_the_harness():
+    """`hook` and `transcript` both describe how *stdtel* came by a value. An
+    external span is neither: nothing here observed it. Labelling it `hook` would
+    stamp "the harness saw this" on data the harness cannot see."""
+    a = artefact.external(system="llm-council", operation="consult",
+                          started_at=1.0, ended_at=2.0)["attributes"]
+    assert a["std.artefact.source"] == artefact.SOURCE_EMITTER == "emitter"
+    assert a["std.artefact.source"] not in (artefact.SOURCE_HOOK, artefact.SOURCE_TRANSCRIPT)

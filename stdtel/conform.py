@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from stdtel.artefact import ALLOWED, KIND_EXTERNAL, KINDS, SPAN_NAME
+from stdtel.artefact import ALLOWED, KIND_EXTERNAL, KINDS, SOURCE_EMITTER, SPAN_NAME
 
 #: What the harness exports, and therefore what an emitter should be copying.
 #: Anything else joins to nothing, which is worse than carrying no id at all.
@@ -130,6 +130,11 @@ def check_span(index: int, span: dict, report: Report) -> None:
     if not attrs.get("std.external.system"):
         problems.append(Problem(index, "std.external.system is required: spend with no emitter "
                                        "named inflates a total nobody can trace back"))
+    src = attrs.get("std.artefact.source")
+    if src is not None and src != SOURCE_EMITTER:
+        problems.append(Problem(index, f"std.artefact.source is {src!r}; an external span is "
+                                       f"{SOURCE_EMITTER!r}. `hook` and `transcript` say how stdtel "
+                                       f"came by a value, and it came by this one from you"))
     if "std.external.cost_usd" in attrs:
         cost = attrs["std.external.cost_usd"]
         if cost is None:

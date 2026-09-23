@@ -37,6 +37,13 @@ KINDS = (KIND_SKILL, KIND_SUBAGENT, KIND_COMPACTION, KIND_TURN, KIND_EXTERNAL)
 #: measurement as one the harness handed us, and ADR-005 says so in the data.
 SOURCE_HOOK = "hook"
 SOURCE_TRANSCRIPT = "transcript"
+#: Reported by the process that did the work, about itself. Distinct from both
+#: of the above on purpose: those say how *stdtel* came by a value — the harness
+#: handed it over, or it was inferred from a transcript. An external span is
+#: neither. Nothing here observed it, and labelling it `hook` would stamp "the
+#: harness saw this" on data the harness cannot see, which is the kind of claim
+#: ADR-005 exists to prevent and this project has already had to correct once.
+SOURCE_EMITTER = "emitter"
 
 _USAGE = frozenset({
     "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
@@ -198,7 +205,7 @@ def activation(kind: str, started_at: float, ended_at: float, attrs: dict,
 def external(system: str, operation: str, started_at: float, ended_at: float,
              cost_usd: float | None = None, requests: int | None = None,
              duration_ms: int | None = None, model: str = "",
-             usage_attrs: dict | None = None, source: str = SOURCE_HOOK) -> dict:
+             usage_attrs: dict | None = None, source: str = SOURCE_EMITTER) -> dict:
     """Spend that happened outside the harness, reported by whatever spent it.
 
     `system` is the emitter's name and is the activation's bounded name, so a
