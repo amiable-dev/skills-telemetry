@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from warehouse.demo_seed import DEMO_MARKER, TABLES, generate
+from warehouse.demo_seed import DEMO_MARKER, TABLES, columns, fill, generate
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -108,3 +108,37 @@ def test_includes_unattributed_and_unversioned_rows(data):
     assert any(i["ticket_id"] == "unattributed" or i["skill_version"] == "unversioned"
                for i in data["skill_invocation"]) or \
            any(s["ticket_id"] == "unattributed" for s in data["session_cost"])
+
+
+# --- the seeder must write every column, not just the first row's ------------
+
+def test_columns_are_the_union_across_rows_not_the_first_rows_keys():
+    """Kinds do not share a shape: a turn carries no `external_system` and an
+    external run carries no `hook_ms`. Taking the first row's keys meant every
+    column the first kind happened to lack was dropped for every later row —
+    silently, because psycopg ignores extra keys in a parameter dict."""
+    assert columns([{"a": 1, "b": 2}, {"a": 3, "c": 4}]) == ["a", "b", "c"]
+
+
+def test_a_row_missing_a_column_is_filled_with_null_not_skipped():
+    """Once the list is a union, every row must supply every key or the insert
+    raises. NULL is the truthful filler: a turn has no external cost, and that is
+    an absence rather than a zero (ADR-005)."""
+    rows = [{"a": 1}, {"b": 2}]
+    assert fill(rows, columns(rows)) == [{"a": 1, "b": None}, {"a": None, "b": 2}]
+
+
+def test_every_seeded_artefact_kind_carries_its_own_columns(data):
+    """The regression this is about: external rows reached the warehouse with a
+    NULL system, operation and cost, so the external query returned one empty row
+    and read as a broken query rather than a broken seeder."""
+    rows = data["artefact_activation"]
+    assert "external" in {r["kind"] for r in rows}, "the fleet seeds no external spend to show"
+    ext = [r for r in rows if r["kind"] == "external"]
+    assert all(r["external_system"] for r in ext)
+    assert any(r["external_cost_usd"] is not None for r in ext), "no cost to total"
+    assert any(r["external_cost_usd"] is None for r in ext), \
+        "every run reporting a cost hides what thin coverage looks like"
+    cols = columns(rows)
+    for c in ("external_system", "external_cost_usd", "scope_name", "hook_ms_by_hook"):
+        assert c in cols, f"{c} would never reach the database"

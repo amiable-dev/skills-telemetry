@@ -126,6 +126,27 @@
           "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"compaction\"}[1h]))"
         }
       ]
+    },
+    {
+      "id": 1,
+      "title": "External spend calls / h by system",
+      "type": "timeseries",
+      "datasource": null,
+      "description": "ADR-010 decision 7. Spend that happens outside the harness, reported by whatever spent it \u2014 a CLI the agent shells out to, or an MCP server calling models of its own. stdtel cannot observe this; it receives it, so an empty graph means either nothing ran or nothing is emitting, and those are different. The money is not here: cost is a Postgres figure, on the outcomes board.",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": null,
+          "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\", std_artefact_kind=\"external\"}[5m])) * 3600",
+          "legendFormat": "{{std_artefact_name}}"
+        }
+      ]
     }
   ],
   "description": "Invocation rate, errors, duration and token flow. The scorecard \u2014 first-time policy pass rate and the keep/refine/deprecate call \u2014 is on 'Skill scorecard'."

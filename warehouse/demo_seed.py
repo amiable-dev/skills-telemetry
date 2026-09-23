@@ -233,6 +233,40 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "compaction_tokens_after": None, "compaction_turns_since_previous": None,
                 "hook_ms": None, "hook_ms_by_hook": None,
             })
+        # ADR-010 decision 7: spend outside the harness. Seeded because a panel
+        # that only ever shows zero external rows is indistinguishable from one
+        # that is broken, and because the *coverage* column needs a mixed picture
+        # to be worth reading. Roughly a fifth of these deliberately report no
+        # cost: a real emitter's early records had none, and the demo should show
+        # what that looks like rather than a tidy 100%.
+        for k in range(rng.choice([0, 0, 0, 1, 2])):
+            at = opened + dt.timedelta(minutes=rng.uniform(2, 50))
+            reported = rng.random() > 0.2
+            ext_in = int(total_in * rng.uniform(0.3, 2.5))
+            out["artefact_activation"].append({
+                **act,
+                "span_id": f"demoact-{n:06d}-x{k}", "trace_id": f"demotrace{n:06d}",
+                "started_at": _iso(at), "ended_at": _iso(at + dt.timedelta(seconds=rng.uniform(30, 600))),
+                "kind": "external", "name": "demo-council", "source": "hook",
+                "prompt_id": None, "parent_prompt_id": None,
+                "model": rng.choice(["anthropic/claude-opus-5", "openai/gpt-5.6-sol",
+                                     "deepseek/deepseek-v3.2"]),
+                "input_tokens": ext_in, "output_tokens": int(ext_in * 0.12),
+                "cache_read_tokens": None, "cache_creation_tokens": None,
+                "llm_requests": None, "tool_calls": None, "duration_ms": None, "is_error": False,
+                "subagent_type": None, "subagent_id": None, "subagent_depth": None,
+                "compaction_reason": None, "compaction_tokens_before": None,
+                "compaction_tokens_after": None, "compaction_turns_since_previous": None,
+                "hook_ms": None, "hook_ms_by_hook": None,
+                "external_system": "demo-council",
+                "external_operation": rng.choice(["consult", "verify"]),
+                # absent, never zero: a zero would be averaged over and read as
+                # "this call was free", which is the misreading the contract exists
+                # to prevent (ADR-005)
+                "external_cost_usd": round(rng.uniform(0.05, 4.5), 4) if reported else None,
+                "external_requests": rng.randint(3, 12) if reported else None,
+                "external_duration_ms": int(rng.uniform(20_000, 400_000)),
+            })
         # ~12% of sessions compact at least once
         if rng.random() < 0.12:
             at = opened + dt.timedelta(minutes=rng.uniform(10, 90))
@@ -262,6 +296,33 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
     return out
 
 
+def columns(rows: list[dict]) -> list[str]:
+    """Every column any row supplies, in first-seen order.
+
+    Taking `rows[0]` instead was a silent data loss: the kinds do not share a
+    shape — a turn has no `external_system`, an external run has no `hook_ms` —
+    so every column the first row happened to lack was dropped for all the
+    others. psycopg ignores extra keys in a parameter dict, so nothing raised;
+    the external query simply returned one row of NULLs and read as a broken
+    query rather than a broken seeder.
+    """
+    seen: dict = {}
+    for row in rows:
+        for key in row:
+            seen.setdefault(key, None)
+    return list(seen)
+
+
+def fill(rows: list[dict], cols: list[str]) -> list[dict]:
+    """Every row gets every column; absent ones are NULL.
+
+    Required once the list is a union: psycopg raises on a *missing* key, and
+    NULL is the truthful filler — a turn has no external cost, and that is an
+    absence rather than a zero (ADR-005).
+    """
+    return [{c: row.get(c) for c in cols} for row in rows]
+
+
 def load(dsn: str, data: dict[str, list[dict]]) -> dict[str, int]:
     import psycopg
     from warehouse.load_delivery import CONFLICT_KEYS, TABLES as DELIVERY_COLS
@@ -272,7 +333,8 @@ def load(dsn: str, data: dict[str, list[dict]]) -> dict[str, int]:
         for table, rows in data.items():
             if not rows:
                 continue
-            cols = list(rows[0])
+            cols = columns(rows)
+            rows = fill(rows, cols)
             sql = (f"INSERT INTO {table} ({','.join(cols)}) "
                    f"VALUES ({','.join('%(' + c + ')s' for c in cols)}) "
                    f"ON CONFLICT ({conflict[table]}) DO NOTHING")
