@@ -95,7 +95,10 @@ def test_the_source_of_a_value_is_recorded():
 
 
 def test_kinds_are_closed_and_named():
-    assert artefact.KINDS == ("skill", "subagent", "compaction", "turn")
+    """Adding a kind is a schema decision, not a patch: the per-kind allowlist is
+    the whole contract that makes one span name safe, and an unlisted kind has no
+    allowlist at all. `external` was added by ADR-010 decision 7."""
+    assert artefact.KINDS == ("skill", "subagent", "compaction", "turn", "external")
     assert set(artefact.ALLOWED) == set(artefact.KINDS)
 
 

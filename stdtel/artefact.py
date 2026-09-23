@@ -29,7 +29,8 @@ KIND_SKILL = "skill"
 KIND_SUBAGENT = "subagent"
 KIND_COMPACTION = "compaction"
 KIND_TURN = "turn"
-KINDS = (KIND_SKILL, KIND_SUBAGENT, KIND_COMPACTION, KIND_TURN)
+KIND_EXTERNAL = "external"
+KINDS = (KIND_SKILL, KIND_SUBAGENT, KIND_COMPACTION, KIND_TURN, KIND_EXTERNAL)
 
 #: Set where a value was observed rather than reported by the harness. A
 #: sub-agent read out of its transcript because no hook fired is not the same
@@ -93,6 +94,19 @@ ALLOWED = {
         "std.artefact.name",
         "std.compaction.reason", "std.compaction.tokens_before", "std.compaction.tokens_after",
         "std.compaction.turns_since_previous",
+    },
+    #: The one kind stdtel receives rather than observes. A process the agent
+    #: shells out to, or reaches as an MCP server, can spend real money on models
+    #: of its own; nothing in a hook payload knows the amount. Only the spending
+    #: process can report it, so this allowlist is a contract with a *foreign*
+    #: emitter and is deliberately the narrowest of the five: bounded identifiers,
+    #: counts, and one currency amount. No free text has a way through, because
+    #: the payload is not ours to trust (ADR-010 decision 7).
+    KIND_EXTERNAL: _COMMON | {
+        "std.artefact.name",
+        "std.external.system", "std.external.operation",
+        "std.external.cost_usd", "std.external.requests", "std.external.duration_ms",
+        "gen_ai.request.model", "gen_ai.operation.name",
     },
     KIND_TURN: _COMMON | {
         "std.prompt.id", "std.turn.llm_requests", "std.turn.tool_calls",
@@ -179,6 +193,48 @@ def activation(kind: str, started_at: float, ended_at: float, attrs: dict,
         a["std.artefact.name"] = name
     return {"kind": kind, "started_at": started_at, "ended_at": ended_at,
             "attributes": _clean(kind, a), "error": error}
+
+
+def external(system: str, operation: str, started_at: float, ended_at: float,
+             cost_usd: float | None = None, requests: int | None = None,
+             duration_ms: int | None = None, model: str = "",
+             usage_attrs: dict | None = None, source: str = SOURCE_HOOK) -> dict:
+    """Spend that happened outside the harness, reported by whatever spent it.
+
+    `system` is the emitter's name and is the activation's bounded name, so a
+    dashboard can group by it. `operation` is a bounded verb from that system's
+    own vocabulary — `consult`, `verify` — never a description of the work.
+
+    **A cost that was not observed is omitted, never zeroed.** This is the whole
+    reason the contract is strict here: one real emitter records no cost at all
+    for roughly two thirds of its calls, and a zero in those rows would be
+    averaged over and read as "this call was free" (ADR-005). A genuine zero is
+    kept, because free tiers and cached responses really do cost nothing, and
+    "zero observed" and "nothing observed" are different claims.
+
+    `session.id` is deliberately absent unless the emitter supplies one. A
+    council run outside a Claude session is real spend, and a span that is never
+    emitted is a total that cannot reconcile against the provider's bill.
+    """
+    if not system:
+        raise ValueError("external spend with no system named is unattributable: "
+                         "it inflates a total nobody can trace back")
+    attrs = {
+        "std.artefact.name": system,
+        "std.external.system": system,
+        "std.external.operation": operation,
+        "gen_ai.operation.name": "chat",
+        **(usage_attrs or {}),
+    }
+    if cost_usd is not None:
+        attrs["std.external.cost_usd"] = float(cost_usd)
+    if requests is not None:
+        attrs["std.external.requests"] = int(requests)
+    if duration_ms is not None:
+        attrs["std.external.duration_ms"] = int(duration_ms)
+    if model:
+        attrs["gen_ai.request.model"] = model
+    return activation(KIND_EXTERNAL, started_at, ended_at, attrs, source=source)
 
 
 def subagent(agent_id: str, agent_type: str, started_at: float, ended_at: float,
