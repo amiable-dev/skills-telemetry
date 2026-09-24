@@ -1,6 +1,6 @@
 # CLI reference
 
-Four console scripts. `stdtel-hook` is invoked by the harness one process per event; its only
+Five console scripts. `stdtel-hook` is invoked by the harness one process per event; its only
 subcommand meant for a human or a skill is `scope-close`. The other three scripts are yours.
 
 All of them read the [environment variables](#environment-variables) below.
@@ -223,6 +223,29 @@ dropped **and the count is reported on stderr** — a silent drop at the bound w
 the invisible loss spooling removes.
 
 ---
+
+## `stdtel-conform`
+
+Checks that a foreign emitter's spans meet the external-spend contract (ADR-010). Run it in *their*
+CI, not ours.
+
+```
+stdtel-conform spans.json        # or: ... | stdtel-conform -
+```
+
+Input is OTLP JSON — what an OTLP/HTTP exporter posts (`resourceSpans`) or what Tempo returns
+(`batches`). It checks the span name, that the kind is one of the closed set, that every attribute is
+in that kind's allowlist, that no attribute carries content, that an external span names its system,
+that a session id (optional — a run outside a Claude session is still real spend) is in the format the
+harness exports, and that a cost is a number.
+
+It also reports **how many external spans carry a cost at all**, and says so when most do not. A
+shape-only check passes a file whose costs are missing, and the warehouse then averages over the holes
+— which is the specific failure this gate exists to catch.
+
+Exit codes: `0` conforming · `1` at least one violation · `2` the file could not be read or parsed.
+An absent cost is not a violation; a null one is, because omitting the attribute is how absence is
+recorded.
 
 ## `stdtel-hook`
 

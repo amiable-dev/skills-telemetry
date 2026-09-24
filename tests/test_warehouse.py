@@ -552,3 +552,39 @@ def test_an_unscoped_activation_has_no_scope_columns_set():
     every GROUP BY; absent reads as what it is (ADR-005)."""
     row = activation_span({})
     assert row["scope_name"] is None and row["scope_key"] is None
+
+
+# --- ADR-010 decision 7: spend the harness cannot see -------------------------
+
+def test_external_spend_reaches_the_warehouse():
+    """The only place in the schema where a currency amount is recorded, because
+    it is the only place where the emitter knows something no hook can observe."""
+    row = activation_span({"std.artefact.kind": "external",
+                           "std.external.system": "llm-council",
+                           "std.external.operation": "consult",
+                           "std.external.cost_usd": 1.25,
+                           "std.external.requests": 7,
+                           "std.external.duration_ms": 41000})
+    assert row["kind"] == "external"
+    assert row["external_system"] == "llm-council"
+    assert row["external_operation"] == "consult"
+    assert float(row["external_cost_usd"]) == 1.25
+    assert row["external_requests"] == 7
+
+
+def test_an_unreported_cost_loads_as_null_not_zero():
+    """Two thirds of one real emitter's records carry no cost. A zero would be
+    averaged over and read as "these calls were free"; NULL is excluded from an
+    average, which is the honest arithmetic (ADR-005)."""
+    row = activation_span({"std.artefact.kind": "external",
+                           "std.external.system": "llm-council"})
+    assert row["external_cost_usd"] is None
+    assert row["external_requests"] is None
+
+
+def test_a_genuine_zero_cost_survives_the_load():
+    """Free tiers and cached responses cost nothing. Collapsing an observed zero
+    into NULL would lose a real measurement."""
+    row = activation_span({"std.artefact.kind": "external", "std.external.system": "x",
+                           "std.external.cost_usd": 0})
+    assert row["external_cost_usd"] == 0.0

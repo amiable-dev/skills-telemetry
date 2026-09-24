@@ -12,6 +12,7 @@ at the prompt, because a query that changes between two readings cannot show a c
 | `04_hook_latency_by_hook.sql` | Which hook is spending the wall time? |
 | `05_skill_cache_creation_share.sql` | How much of a skill's tail is cache **creation** rather than reuse? |
 | `06_scope_self_vs_inclusive.sql` | What did a scoped run cost per iteration — the artefact's own activations, against everything that ran inside its container? |
+| `07_external_spend_and_coverage.sql` | What did spend outside the harness cost, and on how many runs was a cost reported at all? |
 
 Every file opens with what it answers and what it does **not** prove; read that before quoting a
 number out of one. Every file returns a row count (`n_rows`, or an `n_*` column per group) so the

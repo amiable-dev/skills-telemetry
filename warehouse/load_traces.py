@@ -77,6 +77,21 @@ def span_id(span: dict, *keys: str) -> str:
     return ""
 
 
+def _num(v):
+    """A float, or None when nothing was reported.
+
+    Distinct from `_int` because a cost is fractional, and distinct from a bare
+    `float()` because `float(None)` raises and `float(0)` must survive: an
+    observed zero is a measurement and an absent value is not (ADR-005).
+    """
+    if isinstance(v, bool) or v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def end_nanos(span: dict) -> int:
     end = span.get("endTimeUnixNano")
     if end:
@@ -179,6 +194,15 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         # ADR-011. A decorated agent asserts these; an undecorated one asserts
         # nothing and must arrive NULL rather than as empty strings, which read
         # as values in every group-by.
+        # kind = external. `_num` rather than `_int`: a cost is fractional, and an
+        # unreported one must arrive as NULL — a zero would be averaged over and
+        # read as "this call was free", which is the misreading the whole
+        # external contract exists to prevent.
+        "external_system": g("std.external.system"),
+        "external_operation": g("std.external.operation"),
+        "external_cost_usd": _num(g("std.external.cost_usd")),
+        "external_requests": _int(g("std.external.requests")),
+        "external_duration_ms": _int(g("std.external.duration_ms")),
         "agent_version": g("std.agent.version"),
         "agent_owner": g("std.agent.owner"),
         "agent_content_hash": g("std.agent.content_hash"),
@@ -257,6 +281,8 @@ COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","har
 
 ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "scope_name", "scope_key", "scope_id", "scope_source",
+                   "external_system", "external_operation", "external_cost_usd",
+                   "external_requests", "external_duration_ms",
                    "agent_version", "agent_owner", "agent_content_hash",
                    "standard_id", "policy_ids", "started_at", "ended_at", "kind", "name",
                    "source", "harness", "harness_mode", "prompt_id", "parent_prompt_id", "model",

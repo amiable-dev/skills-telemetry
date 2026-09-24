@@ -114,6 +114,14 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
   subagent_type      TEXT,                   -- kind = subagent
   subagent_id        TEXT,
   subagent_depth     INT,
+  external_system    TEXT,                   -- kind = external: the process that reported the spend
+  external_operation TEXT,                   -- its own bounded verb, e.g. consult | verify
+  external_cost_usd  NUMERIC(12,6),          -- the ONLY currency amount in the schema, and the only
+                                             -- figure here the harness cannot observe. NULL means the
+                                             -- emitter did not report one, which is common and must
+                                             -- never be read as zero
+  external_requests  INT,
+  external_duration_ms BIGINT,
   agent_version      TEXT,                   -- ADR-011: what the agent's own file asserts
   agent_owner        TEXT,
   agent_content_hash TEXT,                   -- and the hash of what it actually says
@@ -153,6 +161,11 @@ ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS agent_owner TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS agent_content_hash TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS standard_id TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS policy_ids TEXT[];
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_system TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_operation TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_cost_usd NUMERIC(12,6);
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_requests INT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_duration_ms BIGINT;
 CREATE INDEX IF NOT EXISTS artefact_activation_scope_idx
   ON artefact_activation (scope_name, scope_key) WHERE scope_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS artefact_activation_parent_idx

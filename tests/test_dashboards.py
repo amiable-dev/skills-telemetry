@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from stdtel import artefact
+
 ROOT = Path(__file__).resolve().parent.parent
 PROVISIONING = ROOT / "deploy" / "grafana" / "provisioning"
 DASHBOARDS = sorted((PROVISIONING / "dashboards").glob("*.json"))
@@ -185,9 +187,13 @@ def test_prompt_id_is_never_a_metrics_dimension():
         assert "std_prompt_id" not in expr, f"{file}:{panel} groups by an unbounded id"
 
 
-@pytest.mark.parametrize("kind", ["skill", "subagent", "compaction", "turn"])
+@pytest.mark.parametrize("kind", artefact.KINDS)
 def test_each_artefact_kind_is_visible_somewhere(kind):
-    """Capturing a kind nobody can see is half a feature."""
+    """Capturing a kind nobody can see is half a feature.
+
+    The list used to be hardcoded here and went stale the moment `external` was
+    added — the test kept passing while the new kind was invisible on every
+    board. Deriving it from the enum is the only version that cannot drift."""
     blob = " ".join(expr for _f, _p, expr in _exprs())
     assert f'"{kind}"' in blob, f"no panel shows kind={kind}"
 

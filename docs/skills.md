@@ -26,6 +26,26 @@ spans, as `unversioned` with no `standard_id`.
 
 ---
 
+## `skills/stdtel-instrument`
+
+**What** — makes an external process report what it spent, so agent work can be costed end to end. Its
+output is a pull request against somebody else's repository, not a metadata block.
+
+Its first step is deliberately not code: reconcile the process's own records against the provider's
+bill before touching anything. On the first real use, the naive read of the data said cost capture was
+two-thirds missing. It was not — capture was complete for every path that recorded at all, a quarter of
+the file was test fixtures written to a real store, and the actual defect was that the expensive path
+wrote no record whatsoever.
+
+**Use it when** a tool an agent shells out to, or an MCP server, spends money on models and that spend
+is invisible in telemetry. Pair it with `stdtel-conform`, which is the deterministic gate the other
+repository runs in its own CI.
+
+**Do not use it** to decorate a skill or an agent — that is `stdtel-onboard`, and it edits front-matter
+rather than code. Do not use it when the process cannot observe what it spent: emitting an estimate
+that cannot be told apart from a measurement is worse than emitting nothing, because someone will sum
+the two. Fix the capture upstream first.
+
 ## `skills/stdtel-onboard`
 
 **What** — decorates an artefact to the standards-telemetry contract: contract fields under
@@ -170,6 +190,7 @@ for yourself entirely, see [for-developers.md](for-developers.md).
 | "should we keep this skill?" | `skill-scorecard-analyst` |
 | "why is this skill `unversioned`?" | `stdtel-onboard` |
 | "how do I measure an agent, or a skill I do not own?" | `stdtel-onboard` |
+| "why is this tool's spend missing from telemetry?" | `stdtel-instrument` |
 | "how do I install the hooks?" | [reference.md](reference.md) |
 | "how do I reach Grafana / Tempo / Postgres?" | [local-stack.md](local-stack.md) |
 | "can I trust this number yet?" | [evaluation-power.md](evaluation-power.md) |

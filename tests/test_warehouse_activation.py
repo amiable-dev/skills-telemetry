@@ -523,3 +523,15 @@ def test_no_efficiency_query_counts_turns_with_count_star():
             line = text[:match.start()].rsplit("\n", 1)[-1] + match.group(0)
             assert re.search(r"count\(DISTINCT\s+(?:\w+\.)?prompt_id\)", line), \
                 f"{path.name}: {line.strip()}"
+
+
+def test_no_efficiency_query_contains_a_bare_percent_sign():
+    """psycopg reads `%` as the start of a placeholder, even inside a `--`
+    comment, so a query explaining itself with "100%" fails to bind with a parse
+    error that names neither the file nor the comment. Cost one debugging cycle
+    the first time; write "per cent" or double it."""
+    import re
+    for path in sorted((ROOT / "warehouse" / "efficiency").glob("*.sql")):
+        bare = [l for l in path.read_text().splitlines()
+                if re.search(r"(?<!%)%(?![%sbt])", l)]
+        assert not bare, f"{path.name}: psycopg will read these as placeholders: {bare}"

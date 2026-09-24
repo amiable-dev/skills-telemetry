@@ -69,10 +69,22 @@ bounded run, a plain correlation attribute once the run stops being the right un
 primitive for containment that lasts weeks; the honest reading is that this is unsolved industry-wide,
 not that we are picking the lesser option.
 
-## Decisions this draft assumes
+## Decisions this draft assumed, and how they were settled
 
-Two questions were open when this was drafted. The draft takes a position on both so that review is a
-confirmation or a reversal rather than an excavation.
+Two questions were open when this was drafted. Both are now decided; the original wording is kept so
+the record shows what was assumed and what confirmed it.
+
+**Both were confirmed on 2026-09-23.** The boundary is the hybrid, and #77 was taken, so the condition
+under assumption 1 is met. External spend is reported by the spending process, and the emitter's half
+is tracked in `amiable-dev/llm-council` (its consult path is issue 692, instrumentation issue 695).
+
+A third question surfaced while writing those tickets and is decided here: **an emitter emits even when
+there is no Claude session.** A run from a CLI, from CI or from a server is real spend, and a span that
+is never emitted is a total that cannot be reconciled against a provider's invoice. `session.id` is
+therefore allowed but not required on an `external` span, and its absence is recorded as an absence
+rather than filled with the emitter's own identifier — a local id in that field joins to nothing, which
+is worse than carrying none. `stdtel-conform` rejects a `session.id` that is not in the format the
+harness exports, so that mistake fails loudly rather than producing rows that silently match nothing.
 
 1. **How a boundary is known: the hybrid.** The artefact declares which unit it works in; stdtel
    observes when that unit closed. **This is conditional on #77.** Detecting "the ticket changed"
@@ -185,6 +197,18 @@ confirmation or a reversal rather than an excavation.
    It carries no free-text and no identifiers beyond the scope keys. `std.external.cost_usd` is the
    only place in the schema where a currency amount is recorded, because it is the only place where
    the spending process knows something the harness cannot observe.
+
+   **An unobserved cost is omitted, never zeroed**, and an observed zero is kept. Free tiers and cached
+   responses really do cost nothing, so "zero observed" and "nothing observed" are different claims;
+   the loader stores NULL rather than 0 for the second, because NULL is excluded from an average and 0
+   is not. `stdtel-conform` (`stdtel/conform.py`) is the gate, meant to run in the **emitter's** CI
+   rather than this one's: stdtel owns the code that produces every other kind and enforces the
+   allowlist at construction, but external spend arrives from a repository this project does not own,
+   where the only available enforcement is a check that repository runs itself.
+
+   The checker also reports how many external spans carry a cost at all. That is not decoration: a
+   shape-only check passes a file whose costs are missing, and a total computed over it is an average
+   of the part that was measured rather than of the work that was done.
 
 8. **`gen_ai.operation.name` is emitted as an attribute; it does not replace the kind.**
    `std.artefact.kind` remains the discriminator and the allowlist key. Alongside it, a sub-agent

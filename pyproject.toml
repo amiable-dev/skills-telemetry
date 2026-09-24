@@ -37,6 +37,7 @@ stdtel-doctor = "stdtel.doctor:main"
 stdtel-statusline = "stdtel.statusline:main"
 stdtel-export = "stdtel.spool_export:main"
 stdtel-hook = "stdtel.hooks.cli:main"
+stdtel-conform = "stdtel.conform:main"
 stdtel-eval = "eval.run_eval:main"
 
 [build-system]
