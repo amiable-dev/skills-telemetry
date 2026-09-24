@@ -393,6 +393,32 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
     return out
 
 
+def _refresh_ticket(st, cwd: Path) -> None:
+    """Re-derive `std.ticket.id` from the branch, every Stop (#77).
+
+    It used to be computed once in `session_start` and reused for the life of the
+    session. `std.ticket.id` is the join key for all delivery data (ADR-002), so a
+    stale one does not fail — it joins cleanly to the *wrong* pull request, and
+    `scorecard.sql` then attributes one ticket's cost and policy outcome to
+    another. A confident wrong answer, which ADR-005 treats as worse than a gap,
+    and unrecoverable afterwards because the branch at the moment of the span is
+    gone.
+
+    Per Stop is the granularity, not per span: every span in one Stop shares the
+    branch as it is now. That is the turn, which is the unit a developer changes
+    branches between, and it is what ADR-010 scopes containment to anyway.
+
+    An unreadable branch leaves the previous value untouched. Overwriting a good
+    ticket with `unattributed` because git happened not to answer would turn a
+    transient failure into permanent data loss.
+    """
+    from stdtel.enrich import current_branch, ticket_from_branch
+
+    branch = current_branch(cwd)
+    if branch:
+        st.resource["std.ticket.id"] = ticket_from_branch(branch)
+
+
 def stop(p: dict, exporter=None) -> int:
     from stdtel import artefact
     from stdtel.exporter import build_provider, emit_activations, emit_session_cost
@@ -401,6 +427,7 @@ def stop(p: dict, exporter=None) -> int:
 
     sid = p.get("session_id", "unknown")
     st = SessionState.load(sid)
+    _refresh_ticket(st, Path(p.get("cwd", ".")))
     transcript = Path(p.get("transcript_path", ""))
     sl = read_slice(transcript, st.transcript_offset)
     st.transcript_offset = sl.new_offset

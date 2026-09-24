@@ -69,6 +69,10 @@ surfaces anywhere in a span.
 **One thing to be aware of:** your branch name is parsed for a ticket key and sent. If you put
 something private in a branch name, it goes. Branches with no ticket key are sent as `unattributed`.
 
+It is re-read at the end of every turn, so switching branches mid-session moves later spans to the new
+ticket rather than leaving them on the one you started with. If the branch cannot be read at all — the
+directory is not a git checkout, say — the last known ticket is kept rather than replaced by a guess.
+
 ## Turning it off
 
 ```bash
