@@ -144,6 +144,41 @@ def catalogue_ok() -> Check:
     return Check("skill catalogue", True, detail)
 
 
+def scope_adoption() -> Check:
+    """How much of the catalogue declares a unit of work, and how much we guessed.
+
+    Never a failure. ADR-011 requires nothing of any author: an artefact that
+    declares no scope is turn-scoped and still measured. But the ratio bounds
+    every containment rollup ADR-010 produces — a run attributed to a skill is
+    only as good as the declaration behind it, and a declaration supplied by an
+    overlay is a local claim about somebody else's artefact rather than something
+    that artefact said about itself.
+    """
+    from stdtel.hooks.cli import _agent_catalogue, _catalogue
+
+    cat = _catalogue()
+    agents = _agent_catalogue()
+    if not cat and not agents:
+        return Check("scope declarations", True,
+                     "no catalogue to read; nothing is scoped and nothing needs to be")
+    # Skills only. An agent cannot open a container yet (ADR-011), so counting a
+    # decorated agent here would report adoption that changes no span.
+    scoped = [m for m in cat.values() if m.scope]
+    if not scoped:
+        return Check("scope declarations", True,
+                     f"0 of {len(cat)} skill(s) declare a scope — every "
+                     f"activation is attributed to its turn",
+                     "if a skill drives work across many turns, add `telemetry.scope: ticket` "
+                     "so its cost can be rolled up; see skills/stdtel-onboard")
+    assumed = sum(1 for m in scoped if m.overlay_path is not None)
+    detail = f"{len(scoped)} of {len(cat)} skill(s) declare a scope"
+    if assumed:
+        detail += (f"; {assumed} supplied by an overlay — an assertion about someone "
+                   f"else's artefact, not something it states itself")
+    detail += f"; {len(agents)} agent(s) in the catalogue"
+    return Check("scope declarations", True, detail)
+
+
 def collector_ok() -> Check:
     """Is anything listening where spans are being sent?
 
@@ -291,7 +326,7 @@ def artefacts_observed() -> Check:
 
 
 CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, ticket_key, catalogue_ok,
-          collector_ok, recent_state, artefacts_observed)
+          scope_adoption, collector_ok, recent_state, artefacts_observed)
 
 
 def check_all() -> list[Check]:

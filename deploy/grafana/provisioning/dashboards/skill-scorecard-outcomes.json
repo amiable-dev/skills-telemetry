@@ -187,6 +187,44 @@
           "rawSql": "-- How stale is this dashboard? Spans reach Tempo when a hook fires; they reach\n-- this warehouse only when a loader runs. Tempo once held four days of spans\n-- Postgres had never seen, and every component reported success throughout.\nSELECT loader,\n       max(finished_at)                                        AS last_run,\n       round(extract(epoch FROM (now() - max(finished_at))) / 60) AS minutes_ago,\n       max(source_max_ts)                                      AS newest_row_loaded,\n       (SELECT count(*) FROM loader_run r2\n         WHERE r2.loader = loader_run.loader AND NOT r2.ok\n           AND r2.started_at > now() - interval '24 hours')    AS failures_24h\nFROM loader_run\nGROUP BY loader\nORDER BY loader;"
         }
       ]
+    },
+    {
+      "id": 7,
+      "title": "What a loop skill really cost \u2014 its own activations vs everything under it",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "description": "ADR-010. A skill that drives work across many turns has an activation lasting seconds while the work it causes runs for hours, so its own row looks free. `self_tokens` is what its own activations carried; `inclusive_tokens` is everything recorded while its container was open. **self is inside inclusive \u2014 never add the columns.** This answers what was *incurred under* the artefact, never what it *caused*: everything in the window is included, an unrelated question typed mid-loop as well. The causal question stays the with/without arm at the top of this board. `declared_by = overlay` means somebody here asserted that unit on a third party's behalf, so it can be wrong or stale. Rows are iterations and are not equal work \u2014 read `turns` alongside them. Empty means no artefact declares `telemetry.scope`, which is the normal state and not a fault.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "-- ADR-010. What a scoped run cost: the artefact's own activations against\n-- everything recorded inside its container. One row per iteration, because the\n-- scope key is the ticket and it rolls each time round the loop.\n--\n-- self is INSIDE inclusive. Never add the two columns.\n-- This is what was incurred UNDER the artefact, never what the artefact caused;\n-- the causal question is the with/without arm at PR grain, above.\nSELECT scope_name,\n       scope_key,\n       min(scope_source)                                        AS declared_by,\n       count(DISTINCT prompt_id) FILTER (WHERE kind = 'turn')   AS turns,\n       coalesce(sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0))\n                FILTER (WHERE kind = 'skill' AND name = scope_name), 0) AS self_tokens,\n       coalesce(sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0))\n                FILTER (WHERE kind <> 'turn'), 0)               AS inclusive_tokens,\n       count(*) FILTER (WHERE input_tokens IS NULL AND kind <> 'turn') AS without_usage\nFROM artefact_activation\nWHERE scope_name IS NOT NULL AND started_at BETWEEN $__timeFrom() AND $__timeTo()\nGROUP BY scope_name, scope_key\nORDER BY inclusive_tokens DESC\nLIMIT 50;",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          }
+        }
+      ]
     }
   ]
 }

@@ -176,6 +176,14 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         "scope_key": g("std.scope.key"),
         "scope_id": g("std.scope.id"),
         "scope_source": g("std.scope.source"),
+        # ADR-011. A decorated agent asserts these; an undecorated one asserts
+        # nothing and must arrive NULL rather than as empty strings, which read
+        # as values in every group-by.
+        "agent_version": g("std.agent.version"),
+        "agent_owner": g("std.agent.owner"),
+        "agent_content_hash": g("std.agent.content_hash"),
+        "standard_id": g("std.standard_id"),
+        "policy_ids": [p.strip() for p in (g("std.policy.ids", "") or "").split(",") if p.strip()] or None,
         "started_at": dt.datetime.fromtimestamp(int(span["startTimeUnixNano"]) / 1e9, dt.timezone.utc),
         "ended_at": dt.datetime.fromtimestamp(end_nanos(span) / 1e9, dt.timezone.utc),
         "kind": kind,
@@ -248,7 +256,9 @@ COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","har
         "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","ticket_id","repo","team","user_hash"]
 
 ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
-                   "scope_name", "scope_key", "scope_id", "scope_source", "started_at", "ended_at", "kind", "name",
+                   "scope_name", "scope_key", "scope_id", "scope_source",
+                   "agent_version", "agent_owner", "agent_content_hash",
+                   "standard_id", "policy_ids", "started_at", "ended_at", "kind", "name",
                    "source", "harness", "harness_mode", "prompt_id", "parent_prompt_id", "model",
                    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
                    "llm_requests", "tool_calls", "duration_ms", "is_error",

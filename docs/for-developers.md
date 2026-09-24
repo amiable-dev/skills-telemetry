@@ -40,6 +40,8 @@ Every kind carries only these fields:
 | sub-agent depth and tool counts | `1`, `18 calls` | counts only |
 | compaction reason and size | `auto`, `before=967334 after=13177` | the harness's own estimates, recorded as received |
 | hook latency, by hook | `cc-status: 40ms` | the **basename** of each hook the harness timed; the path is dropped |
+| sub-agent version and owner | `2.1.0`, `platform-observability` | the agent's own definition file, when it carries one |
+| the container a piece of work ran under | `epic-loop`, `PLAT-42` | the name of a skill that declares a unit of work, and the ticket that was active. Recorded only while such a skill is running; most work has none |
 | session cost | `$3.20` | the harness's own running total for the session |
 | a fingerprint of the skill | `a1b2c3d4e5f60718` | SHA-256 of the skill's own instructions, truncated — the file the skill ships, never anything you wrote. It exists so a skill edited without a version bump is visible rather than silently mixed into the previous version's numbers |
 
@@ -72,6 +74,12 @@ something private in a branch name, it goes. Branches with no ticket key are sen
 It is re-read at the end of every turn, so switching branches mid-session moves later spans to the new
 ticket rather than leaving them on the one you started with. If the branch cannot be read at all — the
 directory is not a git checkout, say — the last known ticket is kept rather than replaced by a guess.
+
+**And one more:** if a skill declares that it works ticket by ticket, everything recorded while it runs
+is marked as having happened inside its container — including work you did that had nothing to do with
+it. That is deliberate. Nothing can observe whether a skill caused a later tool call, so the number
+says *what happened while it was running*, not *what it caused*. The same opt-out switches cover it;
+nothing extra is collected, the existing records simply gain the container's name and ticket.
 
 ## Turning it off
 

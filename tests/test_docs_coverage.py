@@ -49,9 +49,19 @@ def test_each_skill_entry_says_when_not_to_use_it():
 # --- the environment variable table is authoritative ---
 
 def test_every_env_var_read_by_the_code_is_documented():
+    """Catches a variable the code honours and nobody can discover.
+
+    The pattern used to look only for a literal `environ.get("...")`, which
+    quietly excluded every variable read through a helper — `skills_roots()` and
+    its siblings pass the name to `_roots_from`, so the catalogue roots were
+    never actually covered by this test despite being its most likely subject.
+    """
     used = set()
+    names = r"(STDTEL_[A-Z_]+|OTEL_[A-Z_]+|CLAUDE_[A-Z_]+)"
     for py in list((ROOT / "stdtel").rglob("*.py")) + list((ROOT / "eval").rglob("*.py")):
-        used |= set(re.findall(r'environ\.get\(\s*"(STDTEL_[A-Z_]+|OTEL_[A-Z_]+|CLAUDE_[A-Z_]+)"', py.read_text()))
+        text = py.read_text()
+        used |= set(re.findall(rf'environ\.get\(\s*"{names}"', text))
+        used |= set(re.findall(rf'_roots_from\(\s*"{names}"', text))
     table = REFERENCE.split("## Environment variables")[1]
     missing = {v for v in used if f"`{v}`" not in table}
     assert not missing, f"undocumented environment variables: {sorted(missing)}"

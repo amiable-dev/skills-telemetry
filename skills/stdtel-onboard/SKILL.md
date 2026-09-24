@@ -1,9 +1,9 @@
 ---
 name: stdtel-onboard
-description: Bring an existing SKILL.md up to the standards-telemetry contract so the skill can be measured — adds the metadata block, picks a standard_id and policy_ids, and validates. Use when onboarding a skill to telemetry, when stdtel-validate fails, or when a skill reports as unversioned in the data.
+description: Decorate a skill, sub-agent or MCP server to the standards-telemetry contract so its cost can be attributed — adds the metadata block, picks a standard_id and policy_ids, sets telemetry.scope, and writes an overlay entry for artefacts you do not own. Use when onboarding a skill or agent to telemetry, when stdtel-validate fails, when something reports as unversioned, or when a long-running skill's cost needs rolling up.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -41,6 +41,66 @@ metadata:
 ---
 ```
 
+## `telemetry.scope` — skills only, and only those that drive work across turns
+
+**This field applies to skills.** A sub-agent may carry one in its front-matter and nothing will read
+it: no container is opened for an agent, so the declaration would change no span. It is dropped when
+the catalogue loads rather than kept somewhere it does nothing.
+
+Most skills need nothing here. The default is `turn`, and a turn already has real span parentage, so
+its contents are attributed without any declaration.
+
+Set `telemetry.scope: ticket` **only** when the skill drives work over many turns — a loop that walks
+an epic ticket by ticket is the case this exists for. Its own activation is seconds of tool call while
+the work it causes is the largest line item, and without a declared unit that work is attributed to
+nothing but individual turns.
+
+`session` is not a value. A session is resumed and persists, so it is not a unit of work; a skill that
+runs for a long time is still `turn`-scoped, and the rollup over its scope key is what shows the total.
+
+**A scope you open, you close.** Add `stdtel-hook scope-close` to the skill's own instructions, at
+every path that ends the run — the finish, and each safety gate. It takes no arguments: the session id
+comes from the environment the harness gives you. Closing when nothing is open is fine, so you never
+need to work out which ending happened.
+
+Skip it and the container stays open for the rest of the session, so work you do afterwards is still
+attributed to your skill. It closes on its own only when another scoped skill supersedes it, or at the
+next fresh start.
+
+Three things follow from declaring it, and all belong in your head before you do:
+
+- **Everything in the window is attributed to it**, including an unrelated question typed mid-loop.
+  There is no observable link from an activation to a later tool call, so the number answers *what was
+  incurred under this artefact*, never *what it caused*.
+- **A declaration is a claim.** If the artefact does not actually work ticket by ticket, the rollup is
+  wrong in a way no query can detect.
+
+## Three kinds of artefact
+
+| artefact | where the block goes | notes |
+|---|---|---|
+| **skill** | `metadata:` in `SKILL.md` | The spec permits exactly six top-level keys, and any other **hard-errors** on upload. Everything lives under `metadata:`. |
+| **sub-agent** | `metadata:` in the agent's `.md` | Version, owner and `standard_id` only — **not `telemetry.scope`**. Works, but by *tolerance*: `metadata` is not a documented agent key and unknown keys are ignored rather than specified. Verified against 2.1.277. If that changes, agents silently go back to undecorated — so keep the overlay as a fallback. |
+| **MCP server** | **not decorated** | A deliberate non-goal (ADR-011). There is no file to decorate and no per-call span to attach a description to — calls are counted on the session span under a key that already names the server. What you want from an MCP server is what it *spent*, and only the server can report that. |
+
+Set `STDTEL_AGENTS_ROOT` for agents, the way `STDTEL_SKILLS_ROOT` works for skills. A relative value
+resolves against `CLAUDE_PROJECT_DIR`, so `agents` picks up a project's own directory.
+
+## Artefacts you do not own
+
+Editing somebody else's `SKILL.md` or agent file works exactly once: the next upstream release
+overwrites it, a plugin reinstall replaces the directory, and a new machine has none of it — all
+silently, because the artefact keeps emitting spans that simply arrive undecorated again.
+
+Write an overlay instead. It lives somewhere you control (`STDTEL_SKILLS_OVERLAY`) and supplies only
+what the artefact does not state itself. It never overrides: the day upstream starts declaring its own
+version, that value wins and your stub goes quiet rather than pinning a number that is no longer true.
+
+An overlay entry is a `SKILL.md` under `<overlay-root>/<artefact-name>/`, carrying only what you can
+honestly state. You have no honest `version` for somebody else's artefact — omit it rather than invent
+one. Anything an overlay supplied is marked in the data as assumed rather than declared, so nobody
+reads your guess as the artefact's own claim.
+
 ## Procedure
 
 1. **Read the skill first.** `standard_id` and `policy_ids` are claims about what the skill enforces —
@@ -54,8 +114,11 @@ metadata:
    `telemetry.success_signal: test` or `manual`. `success_signal` defaults to `policy`, so a manifest
    that names no policies must say which other signal it is claiming.
 3. **Rewrite the front-matter** into the shape above, preserving the body verbatim.
-4. **Validate**: `stdtel-validate <skills-root>` — the same gate CI runs. Fix what it reports.
-5. **Check conformance** with `data.telemetry.manifest_valid.deny`, which catches contract fields
+4. **Decide the scope.** Leave it unset unless the artefact drives work across turns. See above.
+5. **Validate**: `stdtel-validate <skills-root>` — the same gate CI runs. Fix what it reports. For an
+   agent, also confirm the harness still loads it: `claude plugin validate .` must still pass, because
+   the `metadata:` block there is tolerated rather than specified.
+6. **Check conformance** with `data.telemetry.manifest_valid.deny`, which catches contract fields
    accidentally left at the top level.
 
 ## Things that quietly break attribution
@@ -64,6 +127,11 @@ metadata:
 - **Plugin-provided skills arrive namespaced** (`my-plugin:my-skill`). Telemetry resolves the segment
   after the last `:`, so the catalogue entry stays the bare name — do not rename it to match the plugin.
 - **`version` must be quoted.** Unquoted `1.0` is a YAML float and fails the semver check.
+- **A sub-agent's block is tolerated, not specified.** It is ignored by the harness today and
+  undocumented, so treat a passing `claude plugin validate` as the check that it still works.
+- **Do not try to decorate an MCP server.** It is a stated non-goal, not a gap: there is no per-call
+  span to attach anything to, and the session counter already names the server. If you need to know
+  what a server spent, that is the server's job to report.
 - **An empty `policy_ids` means the skill can never be scored.** `scorecard.sql` derives a skill's
   accountable policies by `unnest(policy_ids)`, so an empty list produces no rows in that join and the
   skill reads `insufficient-data` for ever, at any volume. That is the correct answer for a skill

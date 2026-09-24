@@ -1,6 +1,7 @@
 # CLI reference
 
-Four console scripts. `stdtel-hook` is invoked by the harness, never by you; the other three are yours.
+Four console scripts. `stdtel-hook` is invoked by the harness one process per event; its only
+subcommand meant for a human or a skill is `scope-close`. The other three scripts are yours.
 
 All of them read the [environment variables](#environment-variables) below.
 
@@ -232,6 +233,20 @@ stdtel-hook {session-start|pre-tool-use|post-tool-use|post-tool-use-failure|
              subagent-start|subagent-stop|post-compact|stop}
 ```
 
+One subcommand is different: **`scope-close`** is called by a skill, not the harness, and reads no
+stdin (doing so would block on an inherited terminal).
+
+```
+stdtel-hook scope-close [--session <id>]
+```
+
+It closes the container a `telemetry.scope` skill opened (ADR-010), so work done after the skill
+finishes is attributed to its own turn rather than still to the skill. The session comes from
+`CLAUDE_CODE_SESSION_ID`, which the harness exports to processes the agent spawns, so a skill passes
+nothing; `--session` is for callers outside the harness. Closing when no scope is open is **not** an
+error, so a loop that ends on a safety gate need not know which ending happened. Exits `1` only when
+no session id can be found — the one case where exiting 0 would be a silent no-op.
+
 **Always exits 0**, including on unknown events and internal errors, so telemetry can never block the
 developer. Errors go to stderr — which is invisible in most harness UIs, so treat a silent hook as
 suspicious and check with `stdtel-install where` and a manual invocation:
@@ -252,7 +267,8 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_OTLP_ENDPOINT` | `http://localhost:4318` | exporter | collector base URL. **Use this, not `OTEL_EXPORTER_OTLP_ENDPOINT`** — Claude Code strips `OTEL_*` from every subprocess, so the OTel name cannot reach a hook |
 | `STDTEL_OTLP_TIMEOUT` | `2` | exporter | seconds before a flush gives up. Bounds a dead-collector stall; measured 7.34s unbounded |
 | `STDTEL_SKILLS_ROOT` | `~/.claude/skills` | hooks | `os.pathsep` list of catalogue roots. Relative entries resolve against `CLAUDE_PROJECT_DIR`; the user directory is always searched last; earliest root wins |
-| `STDTEL_SKILLS_OVERLAY` | unset | hooks | `os.pathsep` list of **overlay** roots: front-matter-only stubs that attribute skills you do not own, without editing them. Opposite precedence to `STDTEL_SKILLS_ROOT` — an overlay fills only what a skill does not state itself, so upstream wins the day it declares its own value |
+| `STDTEL_AGENTS_ROOT` | `~/.claude/agents` | hooks | `os.pathsep` list of **sub-agent** roots. Same precedence rules as `STDTEL_SKILLS_ROOT`, and relative entries resolve against `CLAUDE_PROJECT_DIR`, so `agents` picks up a project's own directory. Agents are flat `.md` files, not `<name>/SKILL.md`; a `SKILL.md` found here is skipped rather than loaded as an agent. Plugin-shipped agents live in the plugin cache rather than here, so symlink them in the same way the README suggests for skills, or add the plugin's `agents/` directory to this list |
+| `STDTEL_SKILLS_OVERLAY` | unset | hooks | `os.pathsep` list of **overlay** roots: front-matter-only stubs that attribute skills **and sub-agents** you do not own, without editing them. Opposite precedence to `STDTEL_SKILLS_ROOT` — an overlay fills only what a skill does not state itself, so upstream wins the day it declares its own value |
 | `STDTEL_TEAM` | `unknown` | enrich | owning team, on every span |
 | `STDTEL_HARNESS` | `claude-code` | enrich | harness label. **Required in Copilot's hook `env`**, because its snake_case payload is indistinguishable from Claude Code's |
 | `STDTEL_HARNESS_MODE` | `agent` | enrich | `agent` / `interactive`, for a fair cross-harness split |
@@ -267,6 +283,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |
+| `CLAUDE_CODE_SESSION_ID` | *(unset)* | `scope-close` | set by the harness and **exported to processes the agent spawns**, so a skill can run `stdtel-hook scope-close` without knowing which session it is in. A sub-agent's shell sees the *parent* session's id, alongside `CLAUDE_CODE_CHILD_SESSION` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | exporter | fallback for direct CLI/CI use only, where nothing scrubs it |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | exporter | fallback, checked before the base URL; must be the full `/v1/traces` URL |
 | `OTEL_SERVICE_NAME` | `stdtel` | exporter | `service.name` on the resource |
