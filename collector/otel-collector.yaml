@@ -83,6 +83,12 @@ connectors:
       - { name: std.artefact.kind }
       - { name: std.artefact.name }
       - { name: std.artefact.source }
+      # ADR-010 containment. name is the scoping artefact and key is the unit
+      # instance (the ticket), both bounded. std.scope.id is deliberately NOT
+      # here: it is unique per container instance, which is #42 again.
+      - { name: std.scope.name }
+      - { name: std.scope.key }
+      - { name: std.scope.source }
       - { name: std.subagent.type }
       - { name: std.skill.name }
       - { name: std.skill.version }

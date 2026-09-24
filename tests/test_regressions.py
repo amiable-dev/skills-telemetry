@@ -286,6 +286,10 @@ def test_every_state_field_survives_a_save_load_cycle():
     st.resource = {"std.team": "payments"}
     st.record_tool("Bash", failed=True)
     st.open_window("s", "1.0.0", "direct", "t1", prompt_id="p1", permission_mode="default")
+    # Fields left at their defaults are compared default-to-default, so this test
+    # passes vacuously for anything it does not set. Whenever state gains a field,
+    # set it here too — that is the whole point of the loop below.
+    st.open_scope("epic-loop", "ticket", "STDTEL-11", "artefact")
     st.save()
     back = SessionState.load("roundtrip")
     for f in dataclasses.fields(SessionState):

@@ -393,6 +393,54 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
     return out
 
 
+def _scope_key(st, unit: str) -> str:
+    """The current instance of the unit a scope is measured in.
+
+    Only `ticket` opens a container: `turn` is the default and needs none, and
+    `session` is not in the enum at all (ADR-011).
+    """
+    if unit == "ticket":
+        return str(st.resource.get("std.ticket.id") or "unattributed")
+    return ""
+
+
+def _apply_scope(st, manifest, name: str) -> None:
+    """Open or roll the container this artefact declares (ADR-010).
+
+    Done at Stop rather than at `PreToolUse` because the catalogue is already
+    loaded here. Resolving the manifest on the hot path would put a YAML parse of
+    every SKILL.md in front of the developer for a value this function needs once
+    a turn.
+
+    A different scoping artefact supersedes the open one. The same artefact on a
+    new ticket *rolls the key* rather than closing: the loop skill is still
+    running, and the iteration boundary is the key, not the scope.
+    """
+    from stdtel.artefact import SCOPE_FROM_ARTEFACT, SCOPE_FROM_OVERLAY
+    from stdtel.manifest import DEFAULT_SCOPE
+
+    unit = manifest.effective_scope()
+    if unit == DEFAULT_SCOPE:
+        return
+    key = _scope_key(st, unit)
+    source = SCOPE_FROM_OVERLAY if manifest.overlay_path else SCOPE_FROM_ARTEFACT
+    if st.scope_name != name:
+        st.open_scope(name, unit, key, source)
+    elif st.scope_key != key:
+        st.roll_scope(key)
+
+
+def _roll_scope_if_the_unit_moved(st) -> None:
+    """A loop skill activates once and runs for hundreds of turns, so the ticket
+    usually moves with no new activation to notice it. Without this the whole run
+    stays on the key it opened with and every iteration looks like one."""
+    if not st.scope_name:
+        return
+    key = _scope_key(st, st.scope_unit)
+    if key and st.scope_key != key:
+        st.roll_scope(key)
+
+
 def _refresh_ticket(st, cwd: Path) -> None:
     """Re-derive `std.ticket.id` from the branch, every Stop (#77).
 
@@ -440,6 +488,8 @@ def stop(p: dict, exporter=None) -> int:
     invocations = []
     for w in st.drain_closed():
         manifest, resolved = _resolve(w.skill, cat)
+        if manifest is not None:
+            _apply_scope(st, manifest, resolved)
         if manifest is not None and not manifest.telemetry_emit:
             # `telemetry.emit: false` in SKILL.md. Parsed and validated since the
             # first commit, and until now read by nothing — an advertised control
@@ -516,6 +566,13 @@ def stop(p: dict, exporter=None) -> int:
                          ("totalToolDuration", "std.session.tool_ms")):
             if isinstance(sl.cost_state.get(src), int):
                 session_attrs[dst] = sl.cost_state[src]
+    # After every activation is built, so a sub-agent, a compaction and a turn
+    # inside a loop iteration are stamped with it as well as the skill itself.
+    # The session-cost span is deliberately not stamped: it covers the whole
+    # session, which spans many scopes, and scoping it would claim a total that
+    # belongs to no one container.
+    _roll_scope_if_the_unit_moved(st)
+    artefact.stamp_scope(invocations, st.scope_attributes())
     st.save()
     if not invocations and not session_attrs:
         return 0

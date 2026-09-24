@@ -97,3 +97,30 @@ def test_the_source_of_a_value_is_recorded():
 def test_kinds_are_closed_and_named():
     assert artefact.KINDS == ("skill", "subagent", "compaction", "turn")
     assert set(artefact.ALLOWED) == set(artefact.KINDS)
+
+
+# --- ADR-010: containment is common to every kind -----------------------------
+
+@pytest.mark.parametrize("kind", artefact.KINDS)
+def test_every_kind_may_carry_the_scope(kind):
+    """A sub-agent and a compaction inside a loop iteration are as much that
+    iteration's cost as the skill that opened it, so the scope belongs in
+    `_COMMON` rather than being repeated per kind — and repeating it is how one
+    kind ends up silently unscoped."""
+    assert artefact.SCOPE_KEYS <= artefact.ALLOWED[kind]
+
+
+def test_stamping_rejects_an_attribute_that_is_not_a_scope():
+    """`stamp_scope` runs after `_clean`, so it is the last thing between a typo
+    and the wire. A key dropped silently here is a container that never appears."""
+    acts = [{"attributes": {}}]
+    with pytest.raises(ValueError):
+        artefact.stamp_scope(acts, {"std.scope.nmae": "epic-loop"})
+
+
+def test_stamping_nothing_leaves_activations_untouched():
+    """The common case: no scope is open, and an unscoped span must not gain an
+    empty-string scope that reads as a value in every group-by."""
+    acts = [{"attributes": {"std.artefact.kind": "turn"}}]
+    artefact.stamp_scope(acts, {})
+    assert acts[0]["attributes"] == {"std.artefact.kind": "turn"}

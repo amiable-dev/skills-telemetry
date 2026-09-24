@@ -502,9 +502,15 @@ def test_every_efficiency_query_declares_what_it_does_not_prove(name):
     assert "version:" in head, f"{name}: unversioned"
 
 
-def test_there_are_five_named_efficiency_questions():
+def test_every_efficiency_question_is_listed_in_its_readme():
+    """A hardcoded count went stale the first time a question was added. What
+    matters is that the directory and the index agree: a query nobody can find
+    from the README is a query nobody runs."""
+    readme = (ROOT / "warehouse" / "efficiency" / "README.md").read_text()
     files = sorted(p.name for p in (ROOT / "warehouse" / "efficiency").glob("*.sql"))
-    assert len(files) == 5, files
+    assert files, "no efficiency queries found"
+    missing = [f for f in files if f"`{f}`" not in readme]
+    assert not missing, f"not listed in README: {missing}"
 
 
 def test_no_efficiency_query_counts_turns_with_count_star():

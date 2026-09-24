@@ -190,3 +190,16 @@ def test_each_artefact_kind_is_visible_somewhere(kind):
     """Capturing a kind nobody can see is half a feature."""
     blob = " ".join(expr for _f, _p, expr in _exprs())
     assert f'"{kind}"' in blob, f"no panel shows kind={kind}"
+
+
+def test_scope_id_is_never_a_metrics_dimension():
+    """ADR-010. `std.scope.id` is unique per container instance, so a dimension
+    on it opens a new time series per loop iteration — #42 one layer up, and the
+    same reasoning that keeps `std.prompt.id` out. `name` and `key` are bounded
+    and are the two you actually group by."""
+    labels = _dimension_labels()
+    assert "std_scope_id" not in labels
+    assert {"std_scope_name", "std_scope_key"} <= labels, \
+        "containment is unqueryable in Prometheus without name and key"
+    for file, panel, expr in _exprs():
+        assert "std_scope_id" not in expr, f"{file}:{panel} groups by an unbounded id"

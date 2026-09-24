@@ -120,6 +120,10 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
   compaction_turns_since_previous INT,
   hook_ms            BIGINT,                 -- kind = turn: every hook that fired, summed
   hook_ms_by_hook    JSONB,                  -- {hook basename: ms}; basenames only, never paths
+  scope_name         TEXT,                   -- ADR-010: the scoping artefact, stable for a run
+  scope_key          TEXT,                   -- the unit instance (the ticket), rolls each iteration
+  scope_id           TEXT,                   -- unique per container instance; never a metrics label
+  scope_source       TEXT,                   -- artefact | overlay: declared, or assumed for it
   ticket_id          TEXT NOT NULL DEFAULT 'unattributed',
   repo               TEXT,
   team               TEXT,
@@ -135,6 +139,12 @@ ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS hook_ms_by_hook JSONB;
 -- of its own trace, so this is NULL for every row loaded earlier and that is a
 -- real distinction, not a gap to backfill: those spans genuinely had no parent.
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS parent_span_id TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_name TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_key TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_id TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS scope_source TEXT;
+CREATE INDEX IF NOT EXISTS artefact_activation_scope_idx
+  ON artefact_activation (scope_name, scope_key) WHERE scope_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS artefact_activation_parent_idx
   ON artefact_activation (parent_span_id) WHERE parent_span_id IS NOT NULL;
 
