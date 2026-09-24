@@ -164,6 +164,11 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
     return {
         "span_id": span_id(span, "spanId", "spanID"),
         "trace_id": span_id(span, "traceId", "traceID"),
+        # ADR-010: the turn this ran under. Empty means a root, which is a real
+        # observation — a compaction has no turn, and a skill that began before
+        # the last Stop has none in this batch — so it is stored as NULL rather
+        # than as a missing value to be filled in later.
+        "parent_span_id": span_id(span, "parentSpanId", "parentSpanID") or None,
         "session_id": g("session.id", ""),
         "started_at": dt.datetime.fromtimestamp(int(span["startTimeUnixNano"]) / 1e9, dt.timezone.utc),
         "ended_at": dt.datetime.fromtimestamp(end_nanos(span) / 1e9, dt.timezone.utc),
@@ -236,7 +241,7 @@ COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","har
         "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
         "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","ticket_id","repo","team","user_hash"]
 
-ACTIVATION_COLS = ["span_id", "trace_id", "session_id", "started_at", "ended_at", "kind", "name",
+ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id", "started_at", "ended_at", "kind", "name",
                    "source", "harness", "harness_mode", "prompt_id", "parent_prompt_id", "model",
                    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
                    "llm_requests", "tool_calls", "duration_ms", "is_error",

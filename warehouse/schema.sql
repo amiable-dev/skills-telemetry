@@ -86,6 +86,10 @@ CREATE INDEX IF NOT EXISTS idx_skill_invocation_plugin ON skill_invocation (plug
 CREATE TABLE IF NOT EXISTS artefact_activation (
   span_id            TEXT PRIMARY KEY,
   trace_id           TEXT NOT NULL,
+  parent_span_id     TEXT,                   -- ADR-010: the turn this ran under. NULL is a real
+                                             -- observation, not a gap: a compaction has no turn,
+                                             -- and so does every row loaded before #75, when every
+                                             -- span was the root of its own trace
   session_id         TEXT NOT NULL,
   started_at         TIMESTAMPTZ NOT NULL,
   ended_at           TIMESTAMPTZ NOT NULL,
@@ -127,6 +131,12 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
 -- ALTER; without one the loader discovers the gap on its first INSERT after an
 -- upgrade (#55).
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS hook_ms_by_hook JSONB;
+-- ADR-010: containment. Emitted since #75 — before that every span was the root
+-- of its own trace, so this is NULL for every row loaded earlier and that is a
+-- real distinction, not a gap to backfill: those spans genuinely had no parent.
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS parent_span_id TEXT;
+CREATE INDEX IF NOT EXISTS artefact_activation_parent_idx
+  ON artefact_activation (parent_span_id) WHERE parent_span_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS ix_act_session ON artefact_activation (session_id, started_at);
 CREATE INDEX IF NOT EXISTS ix_act_kind    ON artefact_activation (kind, started_at);
