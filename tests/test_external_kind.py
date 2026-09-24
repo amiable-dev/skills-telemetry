@@ -104,3 +104,41 @@ def test_the_source_says_the_emitter_reported_it_not_the_harness():
                           started_at=1.0, ended_at=2.0)["attributes"]
     assert a["std.artefact.source"] == artefact.SOURCE_EMITTER == "emitter"
     assert a["std.artefact.source"] not in (artefact.SOURCE_HOOK, artefact.SOURCE_TRANSCRIPT)
+
+
+# --- the published contract ---------------------------------------------------
+
+#: Exactly what amiable-dev/llm-council#695 tells another team to emit. This is a
+#: copy on purpose: asserting `ALLOWED[KIND_EXTERNAL] == ALLOWED[KIND_EXTERNAL]`
+#: would pass through any edit, which is how a control ends up reporting success
+#: while covering nothing.
+PUBLISHED = frozenset({
+    "std.artefact.kind", "std.artefact.name", "std.artefact.source",
+    "std.external.system", "std.external.operation", "std.external.cost_usd",
+    "std.external.requests", "std.external.duration_ms",
+    "gen_ai.operation.name", "gen_ai.request.model",
+    "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
+    "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",
+    "session.id",
+    "std.scope.name", "std.scope.key", "std.scope.id", "std.scope.source",
+})
+
+
+def test_the_published_external_contract_does_not_move_under_a_foreign_emitter():
+    """Every other allowlist in this file is ours to change at will. This one is
+    not: it is published in another repo's ticket and code is being written
+    against it, in a repo whose CI we do not run.
+
+    Adding an optional attribute is safe and this test expects to be extended for
+    it. Renaming or removing one is not — the emitter keeps sending the old key,
+    the collector drops it silently, and the first symptom is a column of NULLs
+    nobody can date. If this test fails for a removal or a rename, say so on
+    llm-council#695 before merging, not after.
+    """
+    published, actual = PUBLISHED, artefact.ALLOWED[artefact.KIND_EXTERNAL]
+    assert not published - actual, (
+        f"removed from the published contract: {published - actual}. "
+        f"An emitter outside this repo still sends these.")
+    assert not actual - published, (
+        f"added since publication: {actual - published}. Additions are allowed — "
+        f"extend PUBLISHED and tell llm-council#695 the attribute exists.")
