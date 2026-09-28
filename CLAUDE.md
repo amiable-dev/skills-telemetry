@@ -51,7 +51,7 @@ was rejected and what the decision costs, which is what you need before re-litig
   undocumented, could regress silently. MCP servers cannot be decorated at all and are overlay-only.
   The overlay is the universal fallback and its declarations are assertions, not observations, so they
   need provenance. Scope of work includes the user documentation and widening `stdtel-onboard`.
-- **[ADR-012](docs/adrs/012-external-contract-v3.md)** (proposed) — external contract v3. An MCP
+- **[ADR-012](docs/adrs/012-external-contract-v3.md)** — external contract v3. An MCP
   emitter's `session.id` goes stale after `/clear` (the server reads it once at launch; verified
   2026-09-28), and no session id arrives per call. The fix is a join: the emitter sends the
   `_meta["claudecode/toolUseId"]` it receives, and the Stop hook records `mcp__*` tool-use ids from the

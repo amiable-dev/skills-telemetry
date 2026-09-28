@@ -1,6 +1,6 @@
 ---
 title: "ADR-012: External contract v3 — join spend to the exact tool call, and say when a cost is partial"
-status: proposed
+status: accepted
 date: 2026-09-28
 tags: [adr, contract, external, mcp, joins, data-integrity]
 links: ["005-data-integrity.md", "009-artefact-activation-as-the-unit-of-capture.md", "010-containment-and-scope.md", "011-decorating-artefacts.md"]
