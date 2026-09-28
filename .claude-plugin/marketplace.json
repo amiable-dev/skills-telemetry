@@ -9,7 +9,7 @@
       "name": "stdtel",
       "source": ".",
       "description": "Telemetry for standards-as-skills across Claude Code and Copilot.",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "author": {
         "name": "amiable-dev"
       }

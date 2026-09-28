@@ -4,6 +4,76 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## 0.5.0 — 2026-09-28
+
+### Changed
+- **Activations are children of their turn, not flat roots (ADR-010).** A skill or sub-agent
+  activation now carries the span id of the turn it ran under, so a trace shows the turn and what happened
+  inside it. Compactions, and activations whose turn is not in the batch, stay roots, because that is
+  what was observed. **Anyone querying Tempo for root spans will see fewer of them.** The warehouse
+  gains `parent_span_id` and is otherwise unaffected. A session is deliberately never a parent: one real
+  session spans seven weeks, which no trace store will hold. (#75, #80)
+- **The ticket follows the branch, not the session.** The ticket key was read once, at session start,
+  so a session that switched branches joined every later activation to the wrong PR. It is now
+  refreshed on each event, and an empty read keeps the last known ticket rather than blanking it. (#77, #81)
+- **A concurrent state write no longer ends a session's telemetry.** Sub-agent hooks fire while the
+  parent is still calling tools, so two hook processes could write the state file at once and leave it
+  unparseable. The hook swallowed the error and exited 0, and that session emitted nothing more. Writes
+  are now atomic (a finished file is renamed into place). A torn file is salvaged from its intact
+  leading document, which keeps the transcript offset, and the salvage is reported. Sub-agent and
+  compaction hooks update the state file under a lock, so parallel writers no longer drop each
+  other's updates. (#73, #74)
+
+### Added
+- **Containment across turns: scopes (ADR-010, ADR-011).** A skill that drives many turns (a loop
+  over tickets) can declare `metadata.telemetry.scope: ticket`. Everything recorded while its container
+  is open carries `std.scope.name` / `key` / `id`, and `warehouse/efficiency/06_scope_self_vs_inclusive.sql`
+  reports its own cost beside everything incurred under it. **Self cost is stored; inclusive cost is
+  derived** — no row holds a total including its children. A rollup answers containment, never
+  causation, and the analyst brief says so. `stdtel-hook scope-close` ends a scope explicitly. Nothing
+  is required of any author: an undeclared skill is turn-scoped. (#78, #79, #82)
+- **Decorated sub-agents.** An agent file's `metadata:` block (`version`, `owner`, `standard_id`,
+  `policy_ids`) is now captured on its activations. This works by tolerance, not contract: verified
+  on Claude Code 2.1.277, undocumented upstream. Agents cannot declare a scope. MCP servers cannot be
+  decorated at all and are overlay-only, which ADR-011 records as a non-goal. `stdtel-onboard` covers
+  all three artefact types. (#83)
+- **A fifth kind, `external`, for spend the harness cannot see (ADR-010 decision 7).** A process an
+  agent calls, such as an MCP server that pays for its own model calls, reports its spend as
+  `std.artefact.activation` spans with `kind=external`. `warehouse/efficiency/07_external_spend_and_coverage.sql`
+  reports the spend and, separately, how much of it is known. (#86, #87)
+- **`stdtel-conform`**, a new console script. It checks a foreign emitter's OTLP JSON against the
+  external contract in *their* CI: span name, allowlist, no content, a named system, a well-formed
+  session id, and costs that are numbers or absent. It reports cost coverage separately, because a
+  shape-only check passes a file whose costs are missing. `--print-contract` prints the contract as JSON
+  with a `contract_version`, for an emitter to diff its own copy against. (#87, #89)
+- **External contract version 2: cost provenance.** `std.external.cost_usd` keeps meaning *observed*;
+  `std.external.cost_source` (`provider` | `local`) says how; `std.external.cost_estimated_usd` carries
+  the part priced from a list, beside it and never inside it. One run can mix billed and estimated
+  calls, so one label over one figure had no honest value. Additive: every version-1 span stays valid.
+  (#88, #89)
+- **The loader names what it cannot load.** Tempo keeps an attribute nobody declared; the loader was
+  where it vanished, without a word. It now names every unread key on an external span, with counts,
+  and records them in `loader_run.unknown_attr_keys`. A renamed attribute therefore arrives as a named
+  key rather than a column of NULLs. (#88, #89)
+- **`skills/stdtel-instrument`**, a new skill. It adapts an external process to the contract and starts
+  by reconciling the process's own records against the provider's bill. It records the verified fact
+  that Claude Code strips an inherited `OTEL_*` variable before starting an MCP server, so the
+  endpoint must be set in the server's `env` block. (#87, #89)
+- **The primary metric has an input.** CI has uploaded a policy-results artefact on every PR run, and
+  nothing ever collected it, so first-time OPA pass rate had no data while CI stayed green.
+  `warehouse/fetch_policy_results.py` collects it. (#21, #72)
+
+### Fixed
+- **The loader window is guarded.** A sub-agent span is back-dated to the sub-agent's own start and is
+  not searchable until Tempo's ingester flushes. A `--since` narrower than that delay stepped over
+  such spans and never came back for them. It now warns. (#67, #71)
+- **The release checks every console script.** The wheel check named seven scripts by hand and missed
+  `stdtel-conform`, which would have shipped without ever running in the build. The list now has to
+  cover `pyproject.toml`, and a test enforces it.
+- **The exporter timeout is tested by behaviour.** `opentelemetry-exporter-otlp-proto-http` 1.45.0
+  removed the private attribute the test read, so every CI run failed while the timeout still worked:
+  1.00s against a collector that never answers. The test now measures exactly that. (#90)
+
 ## 0.4.0 — 2026-09-16
 
 ### Changed
