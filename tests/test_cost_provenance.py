@@ -243,3 +243,25 @@ def test_query_seven_says_an_empty_session_is_never_a_join_key():
     """`''` joins to `''`. Every no-session run would merge into one bucket."""
     assert "session_id = ''" in Q7 or "session_id <> ''" in Q7
     assert "never" in Q7.lower() and "join" in Q7.lower()
+
+
+def test_the_coverage_warning_does_not_blame_capture_for_an_estimate(tmp_path, capsys):
+    """An estimate-only run *did* capture something — the provider returned no
+    figure. Telling that emitter to "fix cost capture" sends them to the wrong
+    layer. The warning counts the two kinds of missing separately."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps(payload(span(**{"std.external.cost_estimated_usd": 0.3}),
+                                    span(),
+                                    span(**{"std.external.cost_usd": 1.0}))))
+    conform.main([str(p)])
+    err = capsys.readouterr().err
+    assert "2 of 3 report no observed cost" in err
+    assert "1 of them carries an estimate" in err
+
+
+def test_the_contract_points_at_the_decision_not_one_emitters_ticket():
+    """The vocabulary refuses one emitter's internals; the published contract
+    should not carry one emitter's closed ticket either."""
+    changes = conform.contract()["changes"]
+    assert "llm-council" not in changes
+    assert "ADR-010" in changes

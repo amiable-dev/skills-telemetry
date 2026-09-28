@@ -82,7 +82,8 @@ def contract() -> dict:
         "artefact_source": SOURCE_EMITTER,
         "attributes": sorted(ALLOWED[KIND_EXTERNAL]),
         "cost_sources": list(COST_SOURCES),
-        "changes": "announced on amiable-dev/llm-council#695 before merge; additive only",
+        "changes": ("additive only, announced to adopting emitters before merge; "
+                    "see ADR-010 decision 7 (docs/adrs/010-containment-and-scope.md)"),
     }
 
 
@@ -256,10 +257,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"stdtel-conform: {where}{p.message}", file=sys.stderr)
     if report.ok and report.thin_cost_coverage:
         missing = report.external - report.cost_reported
+        est = (f" {report.cost_estimated} of them carries an estimate, so something was captured "
+               f"but no provider figure was returned; the rest carry nothing."
+               if report.cost_estimated else "")
         print(f"stdtel-conform: every span is valid, but {missing} of {report.external} report no "
-              f"cost. A total over this file is an average of the part that was measured, not of "
-              f"the work that was done, and it will not reconcile against a provider's invoice — "
-              f"fix the emitter's cost capture before trusting the number.", file=sys.stderr)
+              f"observed cost.{est} A total over this file is an average of the part that was "
+              f"measured, not of the work that was done, and it will not reconcile against a "
+              f"provider's invoice — find where the observed figure is lost before trusting the "
+              f"number.", file=sys.stderr)
     return 0 if report.ok else 1
 
 
