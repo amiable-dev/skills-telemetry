@@ -89,14 +89,20 @@ reader takes that to mean all eight went to one model.
 
 2. **stdtel records the other half from the transcript.** The Stop hook's turn pass keeps the id of
    every `tool_use` block whose name begins `mcp__`. The turn activation carries them as
-   `std.turn.mcp_tool_use_ids`, a list of strings. The sub-agent pass that already reads sub-agent
+   `std.artefact.mcp_tool_use_ids`, a list of strings. The sub-agent pass that already reads sub-agent
    transcripts (ADR-009, `summarise_subagent`) does the same on the sub-agent activation, because an
    MCP call made by a sub-agent is recorded in the sub-agent's transcript, not the parent's. Checked
    2026-09-28: 13 sub-agent transcripts on one machine contain `mcp__` calls, and one sampled id
    appeared twice in its sub-agent transcript and not at all in the parent's. The loader writes one row per
-   id to a new table, `mcp_tool_call (tool_use_id PRIMARY KEY, session_id, prompt_id, tool_name,
+   id to a new table, `mcp_tool_call (tool_use_id PRIMARY KEY, session_id, prompt_id,
    activation_span_id)`, where `activation_span_id` is the turn or sub-agent activation that carried
-   the id.
+   the id, and `prompt_id` is the turn's own, or for a sub-agent its parent's.
+
+   *Amended during implementation (issue #94). The attribute is `std.artefact.mcp_tool_use_ids` on
+   both kinds, rather than a `std.turn.*` name on one: one key keeps the loader to one read. The table
+   drops the `tool_name` column this draft proposed. Carrying it would have needed a second list on
+   the span, aligned by index, and a mismatch there would silently misname every call. The external
+   row already names its system and operation.*
 
 3. **The join happens at read time, and the observed value is never overwritten.** An external row
    keeps the `session.id` it arrived with: that is what the emitter said. Queries join

@@ -46,12 +46,13 @@ CONTENT_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.co
 THIN = 0.9
 
 #: Bumped on every change to the external contract. 1 was the original set;
-#: 2 added `cost_source` and `cost_estimated_usd` (issue #88).
+#: 2 added `cost_source` and `cost_estimated_usd` (issue #88); 3 added
+#: `tool_use_id` and `requests_unpriced` (ADR-012, issue #94).
 #:
 #: Additive changes bump it too. An emitter comparing its hand copy against
 #: `--print-contract` should learn that something exists that it does not send,
 #: not only that something it sends has gone.
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 3
 
 #: The attribute set CONTRACT_VERSION describes, written out so that editing the
 #: allowlist fails a test until someone decides whether the version moves.
@@ -60,6 +61,7 @@ CONTRACT_ATTRIBUTES_AT_VERSION = frozenset({
     "std.external.system", "std.external.operation", "std.external.cost_usd",
     "std.external.requests", "std.external.duration_ms",
     "std.external.cost_source", "std.external.cost_estimated_usd",
+    "std.external.tool_use_id", "std.external.requests_unpriced",
     "gen_ai.operation.name", "gen_ai.request.model",
     "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
     "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",
@@ -99,6 +101,7 @@ class Report:
     external: int = 0
     cost_reported: int = 0
     cost_estimated: int = 0
+    cost_partial: int = 0
     problems: list = field(default_factory=list)
 
     @property
@@ -115,8 +118,10 @@ class Report:
         pct = self.cost_reported / self.external
         est = (f"; an estimate only on {self.cost_estimated}, not counted as reported"
                if self.cost_estimated else "")
+        part = (f"; a lower bound on {self.cost_partial} (requests went unpriced), not counted as "
+                f"reported" if self.cost_partial else "")
         return (f"{self.spans} span(s) checked; {self.external} external; "
-                f"cost reported on {self.cost_reported} of {self.external} ({pct:.0%}){est}")
+                f"cost reported on {self.cost_reported} of {self.external} ({pct:.0%}){est}{part}")
 
 
 def _value(raw: dict):
@@ -128,6 +133,16 @@ def _value(raw: dict):
     """
     if not raw:
         return None
+    # Decode by the type key the emitter chose. OTLP JSON carries intValue as a
+    # string, and a checker reading it raw would refuse every correct count
+    # while accepting a stringValue "2", which is the emitter's mistake.
+    if "intValue" in raw:
+        try:
+            return int(raw["intValue"])
+        except (TypeError, ValueError):
+            return raw["intValue"]
+    if "arrayValue" in raw:
+        return [_value(v) for v in (raw["arrayValue"] or {}).get("values") or []]
     return list(raw.values())[0]
 
 
@@ -180,6 +195,11 @@ def check_span(index: int, span: dict, report: Report) -> None:
         problems.append(Problem(index, f"std.artefact.source is {src!r}; an external span is "
                                        f"{SOURCE_EMITTER!r}. `hook` and `transcript` say how stdtel "
                                        f"came by a value, and it came by this one from you"))
+    unpriced = _count(attrs, "std.external.requests_unpriced", problems, index)
+    if "std.external.tool_use_id" in attrs and not attrs["std.external.tool_use_id"]:
+        problems.append(Problem(index, "std.external.tool_use_id is empty — omit it when the host "
+                                       "gave you none; an empty id joins to nothing"))
+
     if "std.external.cost_usd" in attrs:
         cost = attrs["std.external.cost_usd"]
         if cost is None:
@@ -189,6 +209,10 @@ def check_span(index: int, span: dict, report: Report) -> None:
         elif isinstance(cost, bool) or not isinstance(cost, (int, float)):
             problems.append(Problem(index, f"std.external.cost_usd is {type(cost).__name__}; it "
                                            f"must be a number, not a string"))
+        elif unpriced:
+            # ADR-012: a lower bound, kept rather than discarded, and never
+            # counted as reconciling to an invoice
+            report.cost_partial += 1
         else:
             report.cost_reported += 1
 
@@ -214,6 +238,22 @@ def check_span(index: int, span: dict, report: Report) -> None:
                                            f"it must be a number, not a string"))
         elif "std.external.cost_usd" not in attrs:
             report.cost_estimated += 1
+
+
+def _count(attrs: dict, key: str, problems: list, index: int) -> int | None:
+    """A non-negative integer attribute, or None when absent. `_value` has
+    already decoded an OTLP intValue, so a string here is the emitter's mistake."""
+    if key not in attrs:
+        return None
+    v = attrs[key]
+    if isinstance(v, bool) or v is None:
+        problems.append(Problem(index, f"{key} must be a non-negative integer count; omit it "
+                                       f"when the emitter does not know"))
+        return None
+    if isinstance(v, int) and v >= 0:
+        return v
+    problems.append(Problem(index, f"{key} is {v!r}; it must be a non-negative integer count"))
+    return None
 
 
 def check(payload: dict) -> Report:

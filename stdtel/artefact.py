@@ -106,6 +106,8 @@ ALLOWED = {
         "std.agent.version", "std.agent.owner", "std.agent.content_hash",
         "std.standard_id", "std.policy.ids",
         "gen_ai.request.model", "gen_ai.operation.name",
+        # ADR-012: MCP calls this sub-agent made, from its own transcript.
+        "std.artefact.mcp_tool_use_ids",
     },
     KIND_COMPACTION: _COMMON | {
         "std.artefact.name",
@@ -125,12 +127,17 @@ ALLOWED = {
         "std.external.cost_usd", "std.external.requests", "std.external.duration_ms",
         # Issue #88. Additive: an emitter from before these existed stays valid.
         "std.external.cost_source", "std.external.cost_estimated_usd",
+        # ADR-012, contract v3. The join key to the tool call that caused the
+        # run, and how many requests carried no cost at all.
+        "std.external.tool_use_id", "std.external.requests_unpriced",
         "gen_ai.request.model", "gen_ai.operation.name",
     },
     KIND_TURN: _COMMON | {
         "std.prompt.id", "std.turn.llm_requests", "std.turn.tool_calls",
         "std.turn.duration_ms", "std.turn.hook_ms", "std.harness.permission_mode",
         "gen_ai.request.model",
+        # ADR-012: MCP calls made in this turn — the other half of the join.
+        "std.artefact.mcp_tool_use_ids",
     },
 }
 
@@ -187,7 +194,7 @@ def _clean(kind: str, attrs: dict) -> dict:
     """
     out, refused = {}, []
     for k, v in attrs.items():
-        if v is None or v == "":
+        if v is None or v == "" or v == []:
             continue                      # never record an unobserved value
         if not allowed(kind, k):
             refused.append(k)
@@ -219,7 +226,9 @@ def external(system: str, operation: str, started_at: float, ended_at: float,
              duration_ms: int | None = None, model: str = "",
              usage_attrs: dict | None = None, source: str = SOURCE_EMITTER,
              cost_source: str | None = None,
-             cost_estimated_usd: float | None = None) -> dict:
+             cost_estimated_usd: float | None = None,
+             tool_use_id: str | None = None,
+             requests_unpriced: int | None = None) -> dict:
     """Spend that happened outside the harness, reported by whatever spent it.
 
     `system` is the emitter's name and is the activation's bounded name, so a
@@ -248,6 +257,8 @@ def external(system: str, operation: str, started_at: float, ended_at: float,
     if cost_source is not None and cost_source not in COST_SOURCES:
         raise ValueError(f"cost_source {cost_source!r} is not in {COST_SOURCES}; an estimate "
                          f"goes in cost_estimated_usd, not under a label")
+    if requests_unpriced is not None and int(requests_unpriced) < 0:
+        raise ValueError("requests_unpriced counts requests; it cannot be negative")
     if cost_source is not None and cost_usd is None:
         raise ValueError("cost_source labels an observed cost_usd, and there is none: a "
                          "provenance for a figure that does not exist")
@@ -264,6 +275,11 @@ def external(system: str, operation: str, started_at: float, ended_at: float,
         attrs["std.external.cost_source"] = cost_source
     if cost_estimated_usd is not None:
         attrs["std.external.cost_estimated_usd"] = float(cost_estimated_usd)
+    if tool_use_id:
+        attrs["std.external.tool_use_id"] = str(tool_use_id)
+    if requests_unpriced is not None:
+        # an observed zero — "every request was priced" — is kept
+        attrs["std.external.requests_unpriced"] = int(requests_unpriced)
     if requests is not None:
         attrs["std.external.requests"] = int(requests)
     if duration_ms is not None:
@@ -277,7 +293,8 @@ def subagent(agent_id: str, agent_type: str, started_at: float, ended_at: float,
              usage_attrs: dict, llm_requests: int, tool_calls: int, model: str = "",
              depth: int | None = None, parent_prompt_id: str = "",
              duration_ms: int | None = None, source: str = SOURCE_HOOK,
-             manifest_attrs: dict | None = None) -> dict:
+             manifest_attrs: dict | None = None,
+             mcp_tool_use_ids: list | None = None) -> dict:
     """A sub-agent run.
 
     `agent_type` is the catalogue name of the agent (`Explore`, `general-purpose`,
@@ -301,6 +318,8 @@ def subagent(agent_id: str, agent_type: str, started_at: float, ended_at: float,
         attrs["std.subagent.depth"] = depth
     if manifest_attrs:
         attrs.update(manifest_attrs)
+    if mcp_tool_use_ids:
+        attrs["std.artefact.mcp_tool_use_ids"] = list(mcp_tool_use_ids)
     if duration_ms is not None:
         attrs["std.subagent.duration_ms"] = duration_ms
     return activation(KIND_SUBAGENT, started_at, ended_at, attrs,
@@ -331,7 +350,8 @@ def compaction(reason: str, started_at: float, ended_at: float,
 def turn(prompt_id: str, started_at: float, ended_at: float, usage_attrs: dict,
          llm_requests: int, tool_calls: int = 0, model: str = "",
          duration_ms: int | None = None, hook_ms: dict | None = None,
-         permission_mode: str = "", source: str = SOURCE_TRANSCRIPT) -> dict:
+         permission_mode: str = "", source: str = SOURCE_TRANSCRIPT,
+         mcp_tool_use_ids: list | None = None) -> dict:
     """One prompt-to-stop turn: the denominator for per-turn ratios.
 
     Not the denominator for skill effectiveness, which is the PR — see
@@ -357,6 +377,8 @@ def turn(prompt_id: str, started_at: float, ended_at: float, usage_attrs: dict,
         attrs[hook_latency_key(command)] = ms
     if hook_ms:
         attrs["std.turn.hook_ms"] = sum(hook_ms.values())
+    if mcp_tool_use_ids:
+        attrs["std.artefact.mcp_tool_use_ids"] = list(mcp_tool_use_ids)
     return activation(KIND_TURN, started_at, ended_at, attrs, source=source)
 
 

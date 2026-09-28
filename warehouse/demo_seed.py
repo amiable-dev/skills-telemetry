@@ -28,7 +28,7 @@ from pathlib import Path
 
 DEMO_MARKER = "DEMO"
 TABLES = ("ticket", "pull_request", "policy_result", "skill_invocation", "session_cost",
-          "defect", "artefact_activation")
+          "defect", "artefact_activation", "mcp_tool_call")
 
 #: Sub-agent types the demo fleet spawns, with how expensive each is per call.
 #: Deliberately uneven: the point of the efficiency queries is that one artefact
@@ -253,6 +253,19 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
             mixed = roll < 0.12            # 0.00-0.12 billed plus an estimate
             estimate_only = 0.75 <= roll < 0.85
             outside = rng.random() < 0.25
+            # ADR-012. Inside a session most runs carry the id the MCP call was
+            # given and resolve to the turn that made it; some carry an id whose
+            # turn never loaded, so the join rate is visibly below 100%. A run
+            # outside Claude Code has no tool call and carries none.
+            join_roll = rng.random()
+            tool_use_id = None if outside or join_roll >= 0.9 else f"demo-toolu-{n:06d}-{k}"
+            if tool_use_id and join_roll < 0.8:
+                turn_no = rng.randrange(turns)
+                out["mcp_tool_call"].append({
+                    "tool_use_id": tool_use_id, "session_id": act["session_id"],
+                    "prompt_id": f"demo-prompt-{n}-{turn_no}",
+                    "activation_span_id": f"demoact-{n:06d}-t{turn_no}"})
+            partial = billed and rng.random() < 0.12
             ext_in = int(total_in * rng.uniform(0.3, 2.5))
             out["artefact_activation"].append({
                 **act,
@@ -281,6 +294,10 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "external_cost_estimated_usd": (round(rng.uniform(0.01, 1.5), 4)
                                                 if mixed or estimate_only else None),
                 "external_requests": rng.randint(3, 12) if billed or estimate_only else None,
+                "external_tool_use_id": tool_use_id,
+                # v3 runs say how many requests went unpriced; the rest predate it
+                "external_requests_unpriced": (rng.randint(1, 3) if partial
+                                               else (0 if tool_use_id else None)),
                 "external_duration_ms": int(rng.uniform(20_000, 400_000)),
             })
         # ~12% of sessions compact at least once
@@ -343,7 +360,7 @@ def load(dsn: str, data: dict[str, list[dict]]) -> dict[str, int]:
     import psycopg
     from warehouse.load_delivery import CONFLICT_KEYS, TABLES as DELIVERY_COLS
     conflict = dict(CONFLICT_KEYS, skill_invocation="span_id", session_cost="session_id",
-                    artefact_activation="span_id")
+                    artefact_activation="span_id", mcp_tool_call="tool_use_id")
     counts = {}
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         for table, rows in data.items():
@@ -369,6 +386,7 @@ def clear(dsn: str) -> dict[str, int]:
             ("pull_request", "pr_id", "demo-org/%"), ("skill_invocation", "span_id", "demo%"),
             ("session_cost", "session_id", "demo-session-%"), ("ticket", "ticket_id", f"{DEMO_MARKER}-%"),
             ("artefact_activation", "span_id", "demoact-%"),
+            ("mcp_tool_call", "tool_use_id", "demo-toolu-%"),
         ):
             cur.execute(f"DELETE FROM {table} WHERE {column} LIKE %s", (pattern,))
             counts[table] = cur.rowcount

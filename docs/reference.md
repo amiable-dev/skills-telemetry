@@ -246,8 +246,12 @@ estimate, which is not counted as reported. It says so when most carry none. A s
 file whose costs are missing, and the warehouse then averages over the holes — which is the specific
 failure this gate exists to catch.
 
+A run with `std.external.requests_unpriced` above zero is reported as a lower bound (contract v3,
+ADR-012), not as a reported cost. An empty `tool_use_id`, or a count that is negative or sent as a
+string rather than an integer, is refused.
+
 `--print-contract` prints the span name, the attribute allowlist, the cost-source vocabulary and a
-`contract_version`, which increases on every change, additions included. It is for an emitter to diff its
+`contract_version` (currently 3), which increases on every change, additions included. It is for an emitter to diff its
 own longhand copy against in CI, so drift is detected. It is not a source to generate that copy from:
 a copy pulled at build time lets a rename pass straight through.
 

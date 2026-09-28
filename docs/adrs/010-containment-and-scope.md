@@ -231,6 +231,10 @@ harness exports, so that mistake fails loudly rather than producing rows that si
    every unread key on an external span and records the count in `loader_run`. A rename then arrives
    as a named key instead of a column of NULLs.
 
+   **Version 3** ([ADR-012](012-external-contract-v3.md), 2026-09-28) adds `tool_use_id`, which joins a
+   run to the exact turn that made the MCP call, because an MCP server's `session.id` goes stale after
+   `/clear`. It also adds `requests_unpriced`, which keeps a partly priced run's cost as a lower bound.
+
    **An empty session is a category, not a key** (amended 2026-09-28). A run outside Claude Code
    sends no `session.id` and loads with `session_id = ''`, the same sentinel every kind uses. But `''`
    joins to `''`: any query grouping or joining such rows by session merges every standalone run

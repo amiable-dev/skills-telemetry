@@ -92,6 +92,10 @@ class TranscriptSlice:
     #: (ts, tool_name) per tool_use block. Names and timings only — a tool's
     #: input and result are content and are never read here.
     tool_uses: list[tuple] = field(default_factory=list)
+    #: (ts, tool_use_id) for `mcp__*` calls only (ADR-012). The id is the join
+    #: key an MCP emitter receives as `_meta["claudecode/toolUseId"]`; nothing
+    #: else about the call — no input, no result — is read.
+    mcp_calls: list[tuple] = field(default_factory=list)
     #: Last `cost-state` entry seen. Cumulative for the whole session and
     #: carries no timestamp, so it is the session's total, never a turn's.
     cost_state: dict | None = None
@@ -197,6 +201,8 @@ def read_slice(path: Path, offset: int = 0) -> TranscriptSlice:
                 tool = str(block.get("name") or "")
                 if tool:
                     out.tool_uses.append((_ts(e), tool))
+                if tool.startswith("mcp__") and block.get("id"):
+                    out.mcp_calls.append((_ts(e), str(block["id"])))
                 if tool == "Skill":
                     inp = block.get("input") or {}
                     caller = block.get("caller")
@@ -275,6 +281,7 @@ class TurnAttribution:
     tool_calls: int = 0
     duration_ms: int | None = None
     hook_ms: dict = field(default_factory=dict)   # {command: total ms}
+    mcp_tool_use_ids: list = field(default_factory=list)   # ADR-012 join key
 
 
 def attribute_turns(sl: TranscriptSlice, open_turn: str = "",
@@ -309,6 +316,7 @@ def attribute_turns(sl: TranscriptSlice, open_turn: str = "",
                 if r.model not in models:
                     models.append(r.model)
         tools = sum(1 for ts, _name in sl.tool_uses if start <= ts < end)
+        mcp_ids = [tid for ts, tid in sl.mcp_calls if start <= ts < end]
         duration = next((ms for ts, ms in sl.turn_durations if start <= ts < end), None)
         hooks: dict = {}
         for h in sl.hook_runs:
@@ -316,7 +324,8 @@ def attribute_turns(sl: TranscriptSlice, open_turn: str = "",
                 hooks[h.command] = hooks.get(h.command, 0) + h.ms
         out.append(TurnAttribution(prompt_id=pid, started_at=start, ended_at=end,
                                    usage=usage, models=models, request_count=n,
-                                   tool_calls=tools, duration_ms=duration, hook_ms=hooks))
+                                   tool_calls=tools, duration_ms=duration, hook_ms=hooks,
+                                   mcp_tool_use_ids=mcp_ids))
     return out
 
 
@@ -335,6 +344,8 @@ class SubagentSummary:
     tool_calls: int
     started_at: float
     ended_at: float
+    #: ADR-012: a sub-agent's MCP calls are recorded in its own transcript only.
+    mcp_tool_use_ids: list = field(default_factory=list)
 
 
 def summarise_subagent(path: Path) -> SubagentSummary | None:
@@ -353,4 +364,5 @@ def summarise_subagent(path: Path) -> SubagentSummary | None:
         usage=sl.totals(), models=sl.models(), request_count=len(sl.requests),
         tool_calls=len(sl.tool_uses),
         started_at=min(stamps) if stamps else 0.0,
-        ended_at=max(stamps) if stamps else 0.0)
+        ended_at=max(stamps) if stamps else 0.0,
+        mcp_tool_use_ids=[tid for _ts, tid in sl.mcp_calls])

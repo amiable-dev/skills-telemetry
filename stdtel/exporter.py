@@ -87,10 +87,21 @@ def _otlp_exporter():
     return OTLPSpanExporter(endpoint=_endpoint(), timeout=_timeout())
 
 
+def _emittable(v) -> bool:
+    """A scalar, or a list of strings (ADR-012's tool-use ids) — nothing richer.
+
+    Anything else was dropped silently before lists existed here, which would
+    have taken the ADR-012 join key with it and said nothing.
+    """
+    if isinstance(v, (str, int, float, bool)):
+        return True
+    return isinstance(v, (list, tuple)) and bool(v) and all(isinstance(x, str) for x in v)
+
+
 def scrub(attrs: dict) -> dict:
     """Defence in depth: refuse to emit content attributes even if handed to us."""
     return {k: v for k, v in attrs.items()
-            if not k.startswith(FORBIDDEN_PREFIXES) and isinstance(v, (str, int, float, bool))}
+            if not k.startswith(FORBIDDEN_PREFIXES) and _emittable(v)}
 
 
 def emit_session_cost(provider: TracerProvider, attrs: dict, session_id: str,

@@ -124,6 +124,8 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
                                              -- which predates the label and is not `provider`
   external_cost_estimated_usd NUMERIC(12,6), -- #88: priced from a list, never billed. Kept apart so
                                              -- summing external_cost_usd still means something
+  external_tool_use_id TEXT,                 -- ADR-012: joins to mcp_tool_call, never rewrites session_id
+  external_requests_unpriced INT,            -- ADR-012: > 0 makes external_cost_usd a lower bound
   external_requests  INT,
   external_duration_ms BIGINT,
   agent_version      TEXT,                   -- ADR-011: what the agent's own file asserts
@@ -177,6 +179,20 @@ ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_cost_estimated
 -- this is where it would otherwise vanish without a trace.
 ALTER TABLE loader_run ADD COLUMN IF NOT EXISTS unknown_attrs INT;
 ALTER TABLE loader_run ADD COLUMN IF NOT EXISTS unknown_attr_keys TEXT[];
+-- ADR-012, contract v3. The join key an MCP emitter received for the call that
+-- caused its run, and how many requests in that run carried no cost at all.
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_tool_use_id TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_requests_unpriced INT;
+-- The other half of the join: every MCP call a turn or sub-agent recorded from
+-- its transcript. External rows keep the session.id the emitter sent; queries
+-- resolve the real session and turn through this table at read time.
+CREATE TABLE IF NOT EXISTS mcp_tool_call (
+  tool_use_id        TEXT PRIMARY KEY,
+  session_id         TEXT NOT NULL,
+  prompt_id          TEXT,
+  activation_span_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_act_tool_use ON artefact_activation (external_tool_use_id);
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_requests INT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_duration_ms BIGINT;
 CREATE INDEX IF NOT EXISTS artefact_activation_scope_idx
