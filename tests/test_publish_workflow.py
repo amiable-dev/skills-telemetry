@@ -139,3 +139,16 @@ def test_a_release_must_be_described_in_the_changelog():
 def test_the_sdist_does_not_ship_an_unrunnable_test_suite():
     manifest = (ROOT / "MANIFEST.in").read_text()
     assert "prune tests" in manifest
+
+
+def test_every_console_script_is_run_before_publishing():
+    """The wheel check named seven scripts by hand. `stdtel-conform` was added in
+    #87 and never joined the list, so 0.5.0 would have shipped its one new
+    console script without the build ever running it — and it is the script
+    another team's CI installs. The list must follow pyproject, not memory."""
+    import tomllib
+    scripts = set(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["scripts"])
+    step = next(s for s in JOBS["build"]["steps"] if s.get("name") == "the wheel must actually install and run")
+    checked = set(re.findall(r"stdtel-[a-z-]+", step["run"]))
+    missing = scripts - checked
+    assert not missing, f"console scripts the build never checks: {sorted(missing)}"

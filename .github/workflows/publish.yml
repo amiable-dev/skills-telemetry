@@ -51,10 +51,12 @@ jobs:
           # installing nothing while appearing to succeed.
           uv pip install --python /tmp/verify/bin/python dist/*.whl
           for script in stdtel-validate stdtel-install stdtel-doctor stdtel-policy-report \
-                        stdtel-statusline stdtel-export stdtel-eval; do
+                        stdtel-statusline stdtel-export stdtel-eval stdtel-conform; do
             test -x "/tmp/verify/bin/$script" || { echo "::error::$script missing from the wheel"; exit 1; }
           done
           /tmp/verify/bin/stdtel-validate --help > /dev/null
+          # the script another team's CI installs: it must print the contract
+          /tmp/verify/bin/stdtel-conform --print-contract > /dev/null
           echo '{}' | /tmp/verify/bin/stdtel-hook session-start
           /tmp/verify/bin/stdtel-doctor --quiet || true   # reports, never gates
 
