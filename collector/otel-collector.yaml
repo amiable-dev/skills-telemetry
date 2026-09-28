@@ -98,6 +98,15 @@ connectors:
       - { name: gen_ai.request.model }
       - { name: std.team }
     metrics_flush_interval: 30s
+    # The connector keeps one cumulative counter per distinct resource. A stdtel
+    # resource carries std.ticket.id, std.repo, std.user.hash and the SDK version:
+    # none are metric labels, all of them change (a branch switch, another
+    # project, an upgrade). Keyed on the whole resource, each change started a new
+    # counter at 1 under the same labels, Prometheus kept one, and every rate()
+    # read zero while Tempo held every span. Keyed on service.name, they add up.
+    # Dimensions are still read per span, so std.team from the resource stays
+    # correct. Anything added here must not vary between hook processes.
+    resource_metrics_key_attributes: [service.name]
 
 exporters:
   otlp/tempo:

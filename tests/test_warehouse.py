@@ -91,6 +91,30 @@ def test_metrics_pipeline_drops_service_instance_id():
         "traces keep it: per-machine detail is wanted there, and costs no series"
 
 
+def test_spanmetrics_counts_across_resources_not_per_resource():
+    """The rest of #42, found 2026-09-28 with every operational panel flat.
+
+    The spanmetrics connector keeps one cumulative counter per distinct
+    *resource*, and a stdtel resource carries attributes that change all the
+    time without being metric labels: `std.ticket.id` changes with the branch,
+    `std.repo` with the project, `telemetry.sdk.version` with an upgrade. Each
+    change started a new counter at 1 under the same label set, so Prometheus
+    kept one of them and every `rate()` read zero — while Tempo held every span.
+
+    Reproduced against the pinned collector image with this config: three
+    tickets produced three counters of 1 until the connector was keyed on
+    `service.name`, then one counter of 3. Stripping `service.instance.id` on the
+    metrics pipeline cannot fix this: it runs after the connector has already
+    split the counts.
+    """
+    import yaml
+    cfg = yaml.safe_load((ROOT / "collector" / "otel-collector.yaml").read_text())
+    keys = cfg["connectors"]["spanmetrics"].get("resource_metrics_key_attributes")
+    assert keys == ["service.name"], (
+        "without this every branch switch, project and SDK upgrade restarts the "
+        "counters; any attribute added here must never vary between hook processes")
+
+
 # --- Tempo returns two different span shapes; the loader reads the OTLP one ---
 
 def test_otlp_json_ids_are_decoded_to_hex():
