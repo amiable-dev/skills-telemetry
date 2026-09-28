@@ -19,6 +19,14 @@ version until this number changes — so bump it for anything a user would recei
   - `stdtel-conform --print-contract` reports `contract_version: 3`. (#94)
 
 ### Fixed
+- **`<synthetic>` is no longer counted as a model request.** Claude Code uses that name for
+  placeholder assistant messages, such as interrupted or failed responses, which carry zero usage.
+  Counting them inflated `llm_requests`, and when one came first in a turn it became the span's model:
+  one Prometheus series was already labelled `gen_ai_request_model="<synthetic>"`. In 1,157 real
+  turns, every turn that appeared to use more than one model was really one model plus `<synthetic>`.
+- **A span names a model only when its run used exactly one.** This applies ADR-012 decision 5 to our
+  own turns, sub-agents and skill tails. Genuinely multi-model runs were sub-agents, 5 of 200 sampled,
+  and naming the first of two models said the run used one.
 - **`scrub()` dropped every list attribute without a word.** It now passes a list of strings and
   nothing richer.
 - **`stdtel-conform` read an OTLP `intValue` as a string**, and would have refused every correctly
