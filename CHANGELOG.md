@@ -4,7 +4,7 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
-## Unreleased
+## 0.6.0 — 2026-09-28
 
 ### Added
 - **External contract version 3 (ADR-012).**
