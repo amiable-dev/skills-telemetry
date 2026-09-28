@@ -29,6 +29,13 @@ KIND_EXTERNAL = "external"
 #: is stdlib-only and cannot import `stdtel.artefact.ALLOWED`, so it keeps its own
 #: copy and a test holds the two equal. Anything outside it is kept by Tempo and
 #: lost here — which is why `collect` counts it rather than skipping it (#88).
+#: Keys our own collector writes onto spans before Tempo, so they are not the
+#: emitter's and must not be reported as its drift. The Langfuse overlay copies
+#: session.id and std.* into `langfuse.*` (ADR-006). The first real external span
+#: was reported as carrying an unknown `langfuse.session.id` that council never
+#: sent; a warning that fires on every span is one people learn to ignore.
+COLLECTOR_ADDED_PREFIXES = ("langfuse.",)
+
 LOADED_EXTERNAL_ATTRIBUTES = frozenset({
     "std.artefact.kind", "std.artefact.name", "std.artefact.source",
     "std.external.system", "std.external.operation", "std.external.cost_usd",
@@ -347,7 +354,8 @@ def collect(traces: dict, fetch, unknown=None) -> tuple[list[dict], list[dict], 
                         act = parse_activation(attrs, resource, sp)
                         activations.append(act)
                         if unknown is not None and act["kind"] == KIND_EXTERNAL:
-                            unknown.update(k for k in attrs if k not in LOADED_EXTERNAL_ATTRIBUTES)
+                            unknown.update(k for k in attrs if k not in LOADED_EXTERNAL_ATTRIBUTES
+                                           and not k.startswith(COLLECTOR_ADDED_PREFIXES))
                         if act["kind"] == KIND_SKILL:
                             # ADR-009's compatibility decision lives here and
                             # nowhere else: one span, two tables, so the primary
