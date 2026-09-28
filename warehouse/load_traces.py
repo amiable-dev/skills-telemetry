@@ -41,6 +41,7 @@ LOADED_EXTERNAL_ATTRIBUTES = frozenset({
     "std.external.system", "std.external.operation", "std.external.cost_usd",
     "std.external.requests", "std.external.duration_ms",
     "std.external.cost_source", "std.external.cost_estimated_usd",
+    "std.external.tool_use_id", "std.external.requests_unpriced",
     "gen_ai.operation.name", "gen_ai.request.model",
     "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
     "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",
@@ -230,6 +231,12 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         # not say `provider`, so reading it as one would record a claim never made.
         "external_cost_source": g("std.external.cost_source"),
         "external_cost_estimated_usd": _num(g("std.external.cost_estimated_usd")),
+        # ADR-012. The join key to the call that caused the run, and a count that
+        # makes cost_usd a lower bound when above zero. The emitter's session.id
+        # above is kept as sent: queries resolve through the join, never by
+        # rewriting what the emitter said.
+        "external_tool_use_id": g("std.external.tool_use_id"),
+        "external_requests_unpriced": _int(g("std.external.requests_unpriced")),
         "external_requests": _int(g("std.external.requests")),
         "external_duration_ms": _int(g("std.external.duration_ms")),
         "agent_version": g("std.agent.version"),
@@ -312,6 +319,7 @@ ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "scope_name", "scope_key", "scope_id", "scope_source",
                    "external_system", "external_operation", "external_cost_usd",
                    "external_cost_source", "external_cost_estimated_usd",
+                   "external_tool_use_id", "external_requests_unpriced",
                    "external_requests", "external_duration_ms",
                    "agent_version", "agent_owner", "agent_content_hash",
                    "standard_id", "policy_ids", "started_at", "ended_at", "kind", "name",
@@ -327,11 +335,42 @@ LOADER_RUN_COLS = ["run_id", "started_at", "finished_at", "loader", "rows_loaded
                    "source_max_ts", "ok", "error", "unknown_attrs", "unknown_attr_keys"]
 
 
+def _value(v: dict):
+    """One OTLP attribute value. A list arrives as arrayValue.values, which the
+    old one-liner returned as a dict — and a list read as a dict joins nothing."""
+    if "arrayValue" in v:
+        return [_value(x) for x in (v["arrayValue"] or {}).get("values") or []]
+    return list(v.values())[0] if v else None
+
+
 def _attrs(items: list) -> dict:
-    return {kv["key"]: list(kv["value"].values())[0] for kv in items or []}
+    return {kv["key"]: _value(kv["value"]) for kv in items or []}
 
 
-def collect(traces: dict, fetch, unknown=None) -> tuple[list[dict], list[dict], list[dict]]:
+def _str_list(v) -> list[str]:
+    """A list attribute as strings; anything that is not a list is no list."""
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+MCP_CALL_COLS = ["tool_use_id", "session_id", "prompt_id", "activation_span_id"]
+
+
+def mcp_call_rows(act: dict, attrs: dict) -> list[dict]:
+    """ADR-012: one row per MCP tool call a turn or sub-agent recorded.
+
+    Kept out of parse_activation, whose output is exactly the activation
+    table's columns and is held to that by a test. The prompt is the turn's own
+    for a turn, and the parent's for a sub-agent, whose calls happen inside the
+    parent's turn. First writer wins on the primary key, so a turn delta
+    emitted twice cannot duplicate a call.
+    """
+    prompt = act.get("prompt_id") if act["kind"] == "turn" else act.get("parent_prompt_id")
+    return [{"tool_use_id": tid, "session_id": act["session_id"], "prompt_id": prompt,
+             "activation_span_id": act["span_id"]}
+            for tid in _str_list(attrs.get("std.artefact.mcp_tool_use_ids"))]
+
+
+def collect(traces: dict, fetch, unknown=None, mcp_calls=None) -> tuple[list[dict], list[dict], list[dict]]:
     """(activations, skill_invocations, session_costs) from a set of trace ids.
 
     `fetch(trace_id) -> OTLP JSON`, so the parsing is testable without Tempo.
@@ -340,6 +379,8 @@ def collect(traces: dict, fetch, unknown=None) -> tuple[list[dict], list[dict], 
     this loader does not read. Only external spans: every other kind is built in
     this repo against an allowlist that refuses a stray key before it is sent,
     whereas an external span comes from code this repo does not run.
+
+    `mcp_calls`, a list if given, collects ADR-012's tool-call rows.
     """
     activations, rows, session_rows = [], [], []
     for trace_id in traces:
@@ -353,6 +394,8 @@ def collect(traces: dict, fetch, unknown=None) -> tuple[list[dict], list[dict], 
                     if name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME):
                         act = parse_activation(attrs, resource, sp)
                         activations.append(act)
+                        if mcp_calls is not None:
+                            mcp_calls.extend(mcp_call_rows(act, attrs))
                         if unknown is not None and act["kind"] == KIND_EXTERNAL:
                             unknown.update(k for k in attrs if k not in LOADED_EXTERNAL_ATTRIBUTES
                                            and not k.startswith(COLLECTOR_ADDED_PREFIXES))
@@ -421,6 +464,7 @@ def main(argv=None) -> int:
            "unknown_attrs": None, "unknown_attr_keys": None}
     import collections
     unknown = collections.Counter()
+    mcp_calls: list[dict] = []
 
     def search(query):
         # Tempo returns nothing at all without start/end — it looks like a dead pipeline
@@ -434,7 +478,8 @@ def main(argv=None) -> int:
         for span_name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME):
             traces.update({t["traceID"]: t for t in search(f'{{ name = "{span_name}" }}')})
         activations, rows, session_rows = collect(
-            traces, lambda tid: requests.get(f"{a.tempo}/api/traces/{tid}").json(), unknown=unknown)
+            traces, lambda tid: requests.get(f"{a.tempo}/api/traces/{tid}").json(), unknown=unknown,
+            mcp_calls=mcp_calls)
         run["unknown_attrs"] = sum(unknown.values())
         run["unknown_attr_keys"] = sorted(unknown) or None
         run["source_max_ts"] = max((r["started_at"] for r in activations + session_rows),
@@ -443,6 +488,7 @@ def main(argv=None) -> int:
             ("artefact_activation", ACTIVATION_COLS, activations, "span_id"),
             ("skill_invocation", COLS, rows, "span_id"),
             ("session_cost", SESSION_COLS, session_rows, "session_id"),
+            ("mcp_tool_call", MCP_CALL_COLS, mcp_calls, "tool_use_id"),
         ])
         run["ok"] = True
     except Exception as e:                      # noqa: BLE001 - every run writes a row

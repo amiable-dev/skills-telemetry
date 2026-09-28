@@ -159,3 +159,25 @@ def test_the_demo_fleet_shows_every_provenance_query_seven_separates():
                for r in ext), "no run with nothing observed"
     assert any(r["session_id"] == "" for r in ext), "no run from outside a Claude session"
     assert all(r["external_cost_source"] in (None, "provider", "local") for r in ext)
+
+
+def test_the_demo_fleet_shows_the_v3_join_and_partial_runs():
+    """Query 7 version 3 adds a join rate and a lower-bound column. A fleet with
+    no mcp_tool_call rows reads 0 joined, which is indistinguishable from the
+    undocumented `_meta` key having vanished (ADR-012)."""
+    data = generate(seed=42)
+    acts = {r["span_id"]: r for r in data["artefact_activation"]}
+    calls = {c["tool_use_id"]: c for c in data["mcp_tool_call"]}
+    ext = [r for r in acts.values() if r["kind"] == "external"]
+    with_id = [r for r in ext if r.get("external_tool_use_id")]
+    joined = [r for r in with_id if r["external_tool_use_id"] in calls]
+    assert joined, "no external run resolves to a call"
+    assert len(joined) < len(with_id), "a join rate of exactly 100% hides what the column is for"
+    for r in joined:
+        c = calls[r["external_tool_use_id"]]
+        assert acts[c["activation_span_id"]]["kind"] == "turn", "a call maps to a real demo turn"
+    assert not any(r["session_id"] == "" and r.get("external_tool_use_id") for r in ext), \
+        "a run outside Claude Code has no tool call to carry"
+    assert any((r.get("external_requests_unpriced") or 0) > 0 and r["external_cost_usd"] is not None
+               for r in ext), "no partial run"
+    assert all(c["tool_use_id"].startswith("demo-") for c in calls.values()), "clear() matches demo- only"

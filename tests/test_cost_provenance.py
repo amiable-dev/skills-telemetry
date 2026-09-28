@@ -152,7 +152,7 @@ def test_an_estimate_does_not_count_as_a_reported_cost():
 def test_print_contract_emits_the_allowlist_and_its_version(capsys):
     assert conform.main(["--print-contract"]) == 0
     c = json.loads(capsys.readouterr().out)
-    assert c["contract_version"] == conform.CONTRACT_VERSION == 2
+    assert c["contract_version"] == conform.CONTRACT_VERSION == 3   # v3: ADR-012
     assert c["span_name"] == "std.artefact.activation"
     assert c["kind"] == "external"
     assert c["attributes"] == sorted(artefact.ALLOWED[artefact.KIND_EXTERNAL])

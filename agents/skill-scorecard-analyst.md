@@ -122,6 +122,12 @@ The same discipline as above, with traps specific to these kinds:
   only figure that reconciles to an invoice. `cost_usd_estimated` was priced from a list and was never
   billed. Report them side by side. Adding them is allowed only if you say you did, and the sum is
   never "the bill". Read `coverage_pct` before either: below 100 the known total is a lower bound.
+- **`cost_usd_partial` is a lower bound, not a cost.** Those runs had requests nobody priced. Report
+  them beside `cost_usd_known`, never inside it, and never in a coverage figure.
+- **Attribute external spend to a session or turn only through the join.** An MCP emitter's
+  `session_id` is the session that started its server, and it is wrong after any `/clear`.
+  `runs_joined_to_a_call` against `runs_with_a_tool_use_id` is the join rate. If it falls, the
+  undocumented key the join relies on has changed, and any per-session reading is on the stale fallback.
 - **`runs_unlabelled` is not `provider`.** Those runs report an observed cost from an emitter that
   predates the provenance label. Say they are unlabelled; do not assume they were billed.
 - **An external run with an empty session belongs to no session.** It came from a CLI, HTTP or CI

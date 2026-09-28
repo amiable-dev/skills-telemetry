@@ -3,7 +3,7 @@ name: stdtel-instrument
 description: Make an external process report what it spent, so agent work can be costed end to end — reconcile its records against the provider's bill first, then emit std.artefact.activation spans with kind=external and prove them with stdtel-conform. Use when a tool an agent shells out to, or an MCP server, spends money on models and that spend is invisible in telemetry.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   standard_id: STD-TEL-001
   policy_ids: ""
   owner: platform-observability
@@ -68,8 +68,11 @@ One span per unit of work, named `std.artefact.activation`:
 | `std.external.cost_source` | `provider` or `local` — how `cost_usd` was observed |
 | `std.external.cost_estimated_usd` | number — what was priced from a list, never billed |
 | `std.external.requests`, `std.external.duration_ms` | counts |
+| `std.external.requests_unpriced` | count of requests with **no** cost, observed or estimated (v3) |
+| `std.external.tool_use_id` | the `_meta["claudecode/toolUseId"]` your MCP server received (v3) |
 | `std.artefact.source` | `emitter` — you reported this about yourself |
-| `gen_ai.request.model`, `gen_ai.usage.*` | model and token counts |
+| `gen_ai.request.model` | the model — **only when every request in the run used it** (v3) |
+| `gen_ai.usage.*` | token counts |
 | `session.id` | the **Claude** session, from `CLAUDE_CODE_SESSION_ID` |
 
 `stdtel-conform --print-contract` prints this list as JSON, with a `contract_version`. Diff your own
@@ -91,6 +94,24 @@ your code paths, not values for the contract.
 means the Claude Code harness handed it over and `transcript` means stdtel inferred it from a session
 file. Nothing outside your process saw your spend, so stamping either would assert an observation that
 never happened. `stdtel-conform` rejects it.
+
+**Send the tool call's id, because the session id goes stale** (contract v3, ADR-012). An MCP server
+reads `CLAUDE_CODE_SESSION_ID` once, when the harness starts it, and `/clear` gives the window a new
+session without restarting the server. Verified 2026-09-28: a consult after a `/clear` was stamped
+with the previous session. No session id arrives per call, but every `tools/call` from Claude Code
+carries `_meta["claudecode/toolUseId"]`. That is the id of the tool call in the calling session's
+transcript, and stdtel records the same id from that transcript, so the receiver joins your run to
+the exact session **and turn** that made the call. Send it as `std.external.tool_use_id` on the run
+that call produced, and omit it when it is absent (a CLI, HTTP or CI run, or another host). It is
+undocumented upstream: treat its absence as normal, never as an error. Keep sending `session.id` as
+well. It means "the session that started this server", and it is the fallback when the join cannot
+resolve.
+
+**Say when a cost is only part of the bill** (v3). If some requests in a run had neither an observed
+nor an estimated cost, send `std.external.requests_unpriced` with how many. Then send the observed part
+in `cost_usd` anyway: the receiver keeps it as a lower bound, apart from complete runs, where version 2
+could only drop it. Send `0` when every request was priced, which is a measurement, and omit the
+attribute when you do not know.
 
 Five rules that are not negotiable, each because breaking it produces a number that looks right:
 

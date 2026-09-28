@@ -64,6 +64,8 @@ def _kv(attrs: dict) -> list[dict]:
             value = {"intValue": str(v)}
         elif isinstance(v, float):
             value = {"doubleValue": v}
+        elif isinstance(v, list):
+            value = {"arrayValue": {"values": [{"stringValue": str(x)} for x in v]}}
         else:
             value = {"stringValue": str(v)}
         out.append({"key": k, "value": value})
@@ -128,9 +130,21 @@ def seed_spans() -> list[dict]:
             "std.turn.duration_ms": 120000, "std.turn.hook_ms": 312,
             "std.turn.hook.stdtel-hook.ms": 12, "std.turn.hook.format-sh.ms": 300,
             "gen_ai.request.model": "claude-opus-5",
+            # ADR-012: the MCP calls this turn made, the half stdtel records
+            "std.artefact.mcp_tool_use_ids": [PREFIX + "toolu-1", PREFIX + "toolu-2"],
             "gen_ai.usage.input_tokens": 900, "gen_ai.usage.output_tokens": 600,
             "gen_ai.usage.cache_read_input_tokens": 70000,
             "gen_ai.usage.cache_creation_input_tokens": 3000,
+        }, start=at(2)),
+        # ADR-012: an external run from an MCP server whose session id went
+        # stale after /clear. It carries the id of the call that caused it.
+        otlp_span(mod.SPAN_NAME, PREFIX + "act-ext-1", {
+            "session.id": PREFIX + "stale-session", "std.artefact.kind": "external",
+            "std.artefact.name": PREFIX + "council", "std.artefact.source": "emitter",
+            "std.external.system": PREFIX + "council", "std.external.operation": "consult",
+            "std.external.cost_usd": 0.5, "std.external.cost_source": "provider",
+            "std.external.requests": 4, "std.external.requests_unpriced": 1,
+            "std.external.tool_use_id": PREFIX + "toolu-1",
         }, start=at(2)),
         otlp_span(mod.SPAN_NAME, PREFIX + "act-turn-1b", {
             "session.id": SESSION, "std.artefact.kind": "turn",
@@ -230,7 +244,8 @@ def _delete_wtest_rows(cur) -> None:
     """
     for table, column in (("artefact_activation", "session_id"), ("artefact_activation", "span_id"),
                           ("skill_invocation", "session_id"), ("skill_invocation", "span_id"),
-                          ("session_cost", "session_id"), ("loader_run", "run_id")):
+                          ("session_cost", "session_id"), ("loader_run", "run_id"),
+                          ("mcp_tool_call", "tool_use_id")):
         # session_id as well as span_id: the loader rewrites ids it recognises as
         # OTLP base64, so scoping on span_id alone once left rows behind
         cur.execute(f"DELETE FROM {table} WHERE {column} LIKE %s", (PREFIX + "%",))
@@ -292,7 +307,8 @@ def test_every_kind_reaches_the_activation_table(loaded):
     got = {r["kind"]: r["n"] for r in rows(
         "SELECT kind, count(*) AS n FROM artefact_activation "
         "WHERE span_id LIKE %(p)s GROUP BY kind", {"p": PREFIX + "%"})}
-    assert got == {"skill": 2, "turn": 3, "subagent": 3, "compaction": 1}, got
+    # external joined the round trip with ADR-012; before that no external row ever loaded here
+    assert got == {"skill": 2, "turn": 3, "subagent": 3, "compaction": 1, "external": 1}, got
 
 
 def test_a_skill_activation_lands_in_both_tables(loaded):
@@ -535,3 +551,28 @@ def test_no_efficiency_query_contains_a_bare_percent_sign():
         bare = [l for l in path.read_text().splitlines()
                 if re.search(r"(?<!%)%(?![%sbt])", l)]
         assert not bare, f"{path.name}: psycopg will read these as placeholders: {bare}"
+
+
+# --- ADR-012: the join, through the real loader and the real query ------------------
+
+def test_a_turns_mcp_calls_become_rows(loaded):
+    got = rows("SELECT tool_use_id, session_id, prompt_id FROM mcp_tool_call "
+               "WHERE tool_use_id LIKE %(p)s ORDER BY tool_use_id", {"p": PREFIX + "%"})
+    assert [(r["tool_use_id"], r["session_id"], r["prompt_id"]) for r in got] == [
+        (PREFIX + "toolu-1", SESSION, PREFIX + "prompt-1"),
+        (PREFIX + "toolu-2", SESSION, PREFIX + "prompt-1")]
+
+
+def test_the_stale_session_is_kept_and_the_call_resolves_the_real_one(loaded):
+    """What the emitter said stays as it said it; the join supplies the truth."""
+    ext = rows("SELECT session_id, external_tool_use_id, external_requests_unpriced "
+               "FROM artefact_activation WHERE external_system = %(s)s", {"s": PREFIX + "council"})
+    assert ext == [{"session_id": PREFIX + "stale-session", "external_tool_use_id": PREFIX + "toolu-1",
+                    "external_requests_unpriced": 1}]
+    q7 = [r for r in efficiency("07_external_spend_and_coverage.sql", {"since": SINCE})
+          if r["external_system"] == PREFIX + "council"]
+    assert len(q7) == 1
+    r = q7[0]
+    assert (r["runs"], r["runs_with_a_tool_use_id"], r["runs_joined_to_a_call"]) == (1, 1, 1)
+    assert (r["runs_with_cost"], r["runs_partial"]) == (0, 1), "a lower bound is not coverage"
+    assert float(r["cost_usd_partial"]) == 0.5 and r["cost_usd_known"] is None

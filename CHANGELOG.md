@@ -4,6 +4,30 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Added
+- **External contract version 3 (ADR-012).**
+  - `std.external.tool_use_id` joins an external run to the exact turn that made the MCP call. The
+    Stop hook now records `mcp__*` tool-use ids from the transcript, including sub-agent transcripts,
+    as `std.artefact.mcp_tool_use_ids`, and the loader writes them to `mcp_tool_call`. An MCP server's
+    `session.id` goes stale after `/clear`, so the join is what attributes its spend correctly. Through
+    the joined turn, external spend also gains a scope.
+  - `std.external.requests_unpriced` keeps a partly priced run's observed cost as a lower bound
+    instead of dropping it.
+  - Query 7 version 3 reports partial runs apart from complete ones, and reports the join rate.
+  - `stdtel-conform --print-contract` reports `contract_version: 3`. (#94)
+
+### Fixed
+- **`scrub()` dropped every list attribute without a word.** It now passes a list of strings and
+  nothing richer.
+- **`stdtel-conform` read an OTLP `intValue` as a string**, and would have refused every correctly
+  sent count.
+- **Collector:** spanmetrics now counts across resources instead of per resource, so dashboards no
+  longer read zero after a branch switch, a project change or an SDK upgrade. (#92)
+- **`mise run load`** works again, having failed since #68, and the loader no longer reports keys that
+  our own Langfuse overlay adds. (#93)
+
 ## 0.5.0 — 2026-09-28
 
 ### Changed

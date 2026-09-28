@@ -349,7 +349,8 @@ def _subagent_activations(st, sl, transcript: Path, agents: dict | None = None) 
             tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
             depth=w.depth or None, parent_prompt_id=w.parent_prompt_id,
             duration_ms=duration, source=artefact.SOURCE_HOOK,
-            manifest_attrs=_agent_attrs(agents, w.agent_type or "")))
+            manifest_attrs=_agent_attrs(agents, w.agent_type or ""),
+            mcp_tool_use_ids=summary.mcp_tool_use_ids))
     if "subagent-stop" in st.observed_events:
         return out
     for path in _subagent_transcripts(transcript):
@@ -366,7 +367,8 @@ def _subagent_activations(st, sl, transcript: Path, agents: dict | None = None) 
             usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
             tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
             source=artefact.SOURCE_TRANSCRIPT,
-            manifest_attrs=_agent_attrs(agents, _subagent_type(path) or "")))
+            manifest_attrs=_agent_attrs(agents, _subagent_type(path) or ""),
+            mcp_tool_use_ids=summary.mcp_tool_use_ids))
     return out
 
 
@@ -449,7 +451,8 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
             prompt_id=t.prompt_id, started_at=t.started_at or now, ended_at=t.ended_at or now,
             usage_attrs=t.usage.as_attributes(), llm_requests=t.request_count,
             tool_calls=t.tool_calls, model=(t.models or [""])[0],
-            duration_ms=t.duration_ms, hook_ms=t.hook_ms, permission_mode=permission_mode))
+            duration_ms=t.duration_ms, hook_ms=t.hook_ms, permission_mode=permission_mode,
+            mcp_tool_use_ids=t.mcp_tool_use_ids))
     if sl.turns:
         st.turn_count += len(sl.turns)
         st.open_prompt_id = sl.turns[-1].prompt_id
