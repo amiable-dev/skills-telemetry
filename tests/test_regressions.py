@@ -73,9 +73,39 @@ def test_timeout_is_bounded(monkeypatch):
 
 
 def test_exporter_carries_the_timeout(monkeypatch):
-    """force_flush(timeout_millis=) is ignored upstream (#4043); only this works."""
-    monkeypatch.setenv("STDTEL_OTLP_TIMEOUT", "1")
-    assert exp_mod._otlp_exporter()._timeout == 1
+    """force_flush(timeout_millis=) is ignored upstream (#4043); only the
+    exporter's own timeout bounds a dead collector.
+
+    Asserted by behaviour, not by reading the exporter's private `_timeout`: that
+    attribute vanished in opentelemetry-exporter-otlp-proto-http 1.45.0, when the
+    timeout moved into a delegate, and a test reading it failed on every new CI
+    run while the timeout itself still worked. The collector here accepts the
+    connection and never answers, which is the case that stalled every turn.
+
+    A window, not a ceiling: an export that fails *instantly* — before touching
+    the network — would pass a ceiling while proving nothing about the timeout.
+    """
+    import socket
+    import threading
+    import time
+
+    from opentelemetry.sdk.trace import TracerProvider
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    held = []
+    threading.Thread(target=lambda: [held.append(srv.accept()) for _ in range(8)],
+                     daemon=True).start()
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", f"http://127.0.0.1:{srv.getsockname()[1]}")
+    monkeypatch.setenv("STDTEL_OTLP_TIMEOUT", "2")
+    span = TracerProvider().get_tracer("t").start_span("x")
+    span.end()
+    t0 = time.monotonic()
+    exp_mod._otlp_exporter().export([span])
+    elapsed = time.monotonic() - t0
+    srv.close()
+    assert 1.5 < elapsed < 4.0, f"a 2s timeout took {elapsed:.2f}s against a silent collector"
 
 
 # --- 4. Copilot reads .claude/settings.json, so its events arrived as claude-code ---
