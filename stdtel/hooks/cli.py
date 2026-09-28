@@ -332,7 +332,7 @@ def _subagent_activations(st, sl, transcript: Path, agents: dict | None = None) 
     """
     agents = agents if agents is not None else {}
     from stdtel import artefact
-    from stdtel.transcript import summarise_subagent
+    from stdtel.transcript import single_model, summarise_subagent
 
     out = []
     for w in st.drain_subagents():
@@ -346,7 +346,7 @@ def _subagent_activations(st, sl, transcript: Path, agents: dict | None = None) 
             started_at=summary.started_at or w.started_at,
             ended_at=summary.ended_at or (w.ended_at or w.started_at),
             usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
-            tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
+            tool_calls=summary.tool_calls, model=single_model(summary.models),
             depth=w.depth or None, parent_prompt_id=w.parent_prompt_id,
             duration_ms=duration, source=artefact.SOURCE_HOOK,
             manifest_attrs=_agent_attrs(agents, w.agent_type or ""),
@@ -365,7 +365,7 @@ def _subagent_activations(st, sl, transcript: Path, agents: dict | None = None) 
             agent_id=agent_id, agent_type=_subagent_type(path) or "unknown",
             started_at=summary.started_at, ended_at=summary.ended_at,
             usage_attrs=summary.usage.as_attributes(), llm_requests=summary.request_count,
-            tool_calls=summary.tool_calls, model=(summary.models or [""])[0],
+            tool_calls=summary.tool_calls, model=single_model(summary.models),
             source=artefact.SOURCE_TRANSCRIPT,
             manifest_attrs=_agent_attrs(agents, _subagent_type(path) or ""),
             mcp_tool_use_ids=summary.mcp_tool_use_ids))
@@ -439,7 +439,7 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
     `DISTINCT std.prompt.id`, which `warehouse/efficiency/` does.
     """
     from stdtel import artefact
-    from stdtel.transcript import attribute_turns
+    from stdtel.transcript import attribute_turns, single_model
 
     out = []
     turns = attribute_turns(sl, open_turn=st.open_prompt_id,
@@ -450,7 +450,7 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
         out.append(artefact.turn(
             prompt_id=t.prompt_id, started_at=t.started_at or now, ended_at=t.ended_at or now,
             usage_attrs=t.usage.as_attributes(), llm_requests=t.request_count,
-            tool_calls=t.tool_calls, model=(t.models or [""])[0],
+            tool_calls=t.tool_calls, model=single_model(t.models),
             duration_ms=t.duration_ms, hook_ms=t.hook_ms, permission_mode=permission_mode,
             mcp_tool_use_ids=t.mcp_tool_use_ids))
     if sl.turns:
@@ -539,7 +539,7 @@ def stop(p: dict, exporter=None) -> int:
     from stdtel.exporter import build_provider, emit_activations, emit_session_cost
     from stdtel.state import SessionState
     from stdtel.manifest import DEFAULT_SCOPE
-    from stdtel.transcript import attribute, read_slice
+    from stdtel.transcript import attribute, read_slice, single_model
 
     sid = p.get("session_id", "unknown")
     st = SessionState.load(sid)
@@ -589,7 +589,12 @@ def stop(p: dict, exporter=None) -> int:
             attrs["std.skill.tail_tokens"] = a.tail.total
             attrs["std.skill.tail_tokens_first_only"] = a.tail_first_only.total
             attrs["std.skill.llm_requests"] = a.request_count
-            attrs["gen_ai.request.model"] = a.models[0] if a.models else "unknown"
+            # "unknown" when no request fell in the tail, as before; a tail across
+            # two models names neither (ADR-012 decision 5)
+            if not a.models:
+                attrs["gen_ai.request.model"] = "unknown"
+            elif single_model(a.models):
+                attrs["gen_ai.request.model"] = single_model(a.models)
             attrs.update(a.tail.as_attributes())
         # ADR-010 decision 8: the OpenTelemetry gen-ai conventions distinguish a
         # tool execution from a workflow invocation, and a skill that declares a

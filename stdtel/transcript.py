@@ -127,6 +127,19 @@ class TranscriptSlice:
         return seen
 
 
+SYNTHETIC_MODEL = "<synthetic>"
+
+
+def single_model(models: list[str]) -> str:
+    """The model a span may name: the only one used, or none.
+
+    ADR-012 decision 5, applied to our own spans. Naming the first of two says
+    the run used one; measured, genuinely multi-model runs are sub-agents
+    (5 of 200 sampled), and those carry no model rather than a wrong one.
+    """
+    return models[0] if len(models) == 1 else ""
+
+
 def _ts(entry: dict) -> float:
     t = entry.get("timestamp")
     if isinstance(t, (int, float)):
@@ -192,7 +205,12 @@ def read_slice(path: Path, offset: int = 0) -> TranscriptSlice:
             continue
         if etype == "assistant" and isinstance(msg, dict):
             usage = msg.get("usage")
-            if usage:
+            # `<synthetic>` is Claude Code's name for a placeholder assistant
+            # message — an interrupted or failed response — with zero usage. It
+            # made no model call: counted, it inflated llm_requests and, first in
+            # a turn, became the span's model (one Prometheus series was already
+            # labelled with it). Its tool_use blocks, if any, are still read below.
+            if usage and msg.get("model") != SYNTHETIC_MODEL:
                 out.requests.append(LlmRequest(ts=_ts(e), model=msg.get("model", "unknown"),
                                                usage=Usage().add(usage)))
             for block in msg.get("content") or []:
