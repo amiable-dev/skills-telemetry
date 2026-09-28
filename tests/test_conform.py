@@ -164,7 +164,7 @@ def test_the_coverage_warning_counts_rather_than_says_most(tmp_path, capsys):
     p.write_text(json.dumps(payload(span(**a), good())))
     conform.main([str(p)])
     err = capsys.readouterr().err
-    assert "1 of 2 report no cost" in err
+    assert "1 of 2 report no observed cost" in err
     assert "most" not in err
 
 

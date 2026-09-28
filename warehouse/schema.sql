@@ -116,10 +116,14 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
   subagent_depth     INT,
   external_system    TEXT,                   -- kind = external: the process that reported the spend
   external_operation TEXT,                   -- its own bounded verb, e.g. consult | verify
-  external_cost_usd  NUMERIC(12,6),          -- the ONLY currency amount in the schema, and the only
-                                             -- figure here the harness cannot observe. NULL means the
-                                             -- emitter did not report one, which is common and must
-                                             -- never be read as zero
+  external_cost_usd  NUMERIC(12,6),          -- what was OBSERVED: billed by a provider, or a
+                                             -- self-hosted figure. NULL means the emitter did not
+                                             -- report one, which is common and must never be read
+                                             -- as zero. The only amount that reconciles to an invoice
+  external_cost_source TEXT,                 -- #88: provider | local. NULL = the emitter did not say,
+                                             -- which predates the label and is not `provider`
+  external_cost_estimated_usd NUMERIC(12,6), -- #88: priced from a list, never billed. Kept apart so
+                                             -- summing external_cost_usd still means something
   external_requests  INT,
   external_duration_ms BIGINT,
   agent_version      TEXT,                   -- ADR-011: what the agent's own file asserts
@@ -164,6 +168,15 @@ ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS policy_ids TEXT[];
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_system TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_operation TEXT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_cost_usd NUMERIC(12,6);
+-- #88: provenance of the observed cost, and the estimate that travels beside it.
+-- The estimate is a separate column, never folded into external_cost_usd, so a
+-- sum over the observed column still reconciles against an invoice.
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_cost_source TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_cost_estimated_usd NUMERIC(12,6);
+-- #88: what the loader saw and could not load. Tempo keeps an unknown attribute;
+-- this is where it would otherwise vanish without a trace.
+ALTER TABLE loader_run ADD COLUMN IF NOT EXISTS unknown_attrs INT;
+ALTER TABLE loader_run ADD COLUMN IF NOT EXISTS unknown_attr_keys TEXT[];
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_requests INT;
 ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS external_duration_ms BIGINT;
 CREATE INDEX IF NOT EXISTS artefact_activation_scope_idx
@@ -194,6 +207,8 @@ CREATE TABLE IF NOT EXISTS loader_run (
   rows_loaded   INT,
   source_max_ts TIMESTAMPTZ,                 -- newest source timestamp seen: the lag measurement
   ok            BOOLEAN,
-  error         TEXT
+  error         TEXT,
+  unknown_attrs INT,                         -- #88: attributes on external spans this loader
+  unknown_attr_keys TEXT[]                   -- does not read. Kept by Tempo, lost here
 );
 CREATE INDEX IF NOT EXISTS ix_loader_run_recent ON loader_run (loader, started_at DESC);

@@ -239,13 +239,26 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
         # to be worth reading. Roughly a fifth of these deliberately report no
         # cost: a real emitter's early records had none, and the demo should show
         # what that looks like rather than a tidy 100%.
+        #
+        # #88 widens that to every provenance query 7 separates: billed and
+        # labelled, billed with an estimate beside it (a mixed run), billed but
+        # unlabelled (an emitter from before the label), estimate only, and
+        # nothing at all. About a quarter run outside a Claude session, as a CLI
+        # or CI invocation would, and so carry the empty session.
         for k in range(rng.choice([0, 0, 0, 1, 2])):
             at = opened + dt.timedelta(minutes=rng.uniform(2, 50))
-            reported = rng.random() > 0.2
+            roll = rng.random()
+            billed = roll < 0.75           # 0.00-0.75 some observed cost
+            labelled = roll < 0.67         # 0.67-0.75 billed but unlabelled
+            mixed = roll < 0.12            # 0.00-0.12 billed plus an estimate
+            estimate_only = 0.75 <= roll < 0.85
+            outside = rng.random() < 0.25
             ext_in = int(total_in * rng.uniform(0.3, 2.5))
             out["artefact_activation"].append({
                 **act,
                 "span_id": f"demoact-{n:06d}-x{k}", "trace_id": f"demotrace{n:06d}",
+                **({"session_id": "", "scope_name": None, "scope_key": None,
+                    "scope_id": None, "scope_source": None} if outside else {}),
                 "started_at": _iso(at), "ended_at": _iso(at + dt.timedelta(seconds=rng.uniform(30, 600))),
                 "kind": "external", "name": "demo-council", "source": "emitter",
                 "prompt_id": None, "parent_prompt_id": None,
@@ -263,8 +276,11 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 # absent, never zero: a zero would be averaged over and read as
                 # "this call was free", which is the misreading the contract exists
                 # to prevent (ADR-005)
-                "external_cost_usd": round(rng.uniform(0.05, 4.5), 4) if reported else None,
-                "external_requests": rng.randint(3, 12) if reported else None,
+                "external_cost_usd": round(rng.uniform(0.05, 4.5), 4) if billed else None,
+                "external_cost_source": "provider" if billed and labelled else None,
+                "external_cost_estimated_usd": (round(rng.uniform(0.01, 1.5), 4)
+                                                if mixed or estimate_only else None),
+                "external_requests": rng.randint(3, 12) if billed or estimate_only else None,
                 "external_duration_ms": int(rng.uniform(20_000, 400_000)),
             })
         # ~12% of sessions compact at least once

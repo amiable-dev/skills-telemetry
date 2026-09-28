@@ -30,6 +30,16 @@ KIND_SUBAGENT = "subagent"
 KIND_COMPACTION = "compaction"
 KIND_TURN = "turn"
 KIND_EXTERNAL = "external"
+
+#: Where an external `cost_usd` came from. Deliberately generic: an emitter's own
+#: names for its code paths (`registry_estimate`, `local_zero`) are its business,
+#: and a contract several emitters adopt cannot carry one emitter's vocabulary.
+#:
+#: `provider` — the provider billed this amount. `local` — self-hosted, so no
+#: provider bill exists and the figure is the emitter's own (normally zero).
+#: An *estimate* is not a source of `cost_usd` at all: it travels separately in
+#: `cost_estimated_usd`, so that coverage against an invoice never counts a guess.
+COST_SOURCES = ("provider", "local")
 KINDS = (KIND_SKILL, KIND_SUBAGENT, KIND_COMPACTION, KIND_TURN, KIND_EXTERNAL)
 
 #: Set where a value was observed rather than reported by the harness. A
@@ -113,6 +123,8 @@ ALLOWED = {
         "std.artefact.name",
         "std.external.system", "std.external.operation",
         "std.external.cost_usd", "std.external.requests", "std.external.duration_ms",
+        # Issue #88. Additive: an emitter from before these existed stays valid.
+        "std.external.cost_source", "std.external.cost_estimated_usd",
         "gen_ai.request.model", "gen_ai.operation.name",
     },
     KIND_TURN: _COMMON | {
@@ -205,7 +217,9 @@ def activation(kind: str, started_at: float, ended_at: float, attrs: dict,
 def external(system: str, operation: str, started_at: float, ended_at: float,
              cost_usd: float | None = None, requests: int | None = None,
              duration_ms: int | None = None, model: str = "",
-             usage_attrs: dict | None = None, source: str = SOURCE_EMITTER) -> dict:
+             usage_attrs: dict | None = None, source: str = SOURCE_EMITTER,
+             cost_source: str | None = None,
+             cost_estimated_usd: float | None = None) -> dict:
     """Spend that happened outside the harness, reported by whatever spent it.
 
     `system` is the emitter's name and is the activation's bounded name, so a
@@ -222,10 +236,21 @@ def external(system: str, operation: str, started_at: float, ended_at: float,
     `session.id` is deliberately absent unless the emitter supplies one. A
     council run outside a Claude session is real spend, and a span that is never
     emitted is a total that cannot reconcile against the provider's bill.
+
+    **The amount is split by provenance, not labelled once** (issue #88). One run
+    can mix billed calls with calls priced from a list, and a single label over a
+    single figure has no honest value for that run. `cost_usd` stays *observed*
+    and `cost_source` says how; `cost_estimated_usd` carries the priced part.
     """
     if not system:
         raise ValueError("external spend with no system named is unattributable: "
                          "it inflates a total nobody can trace back")
+    if cost_source is not None and cost_source not in COST_SOURCES:
+        raise ValueError(f"cost_source {cost_source!r} is not in {COST_SOURCES}; an estimate "
+                         f"goes in cost_estimated_usd, not under a label")
+    if cost_source is not None and cost_usd is None:
+        raise ValueError("cost_source labels an observed cost_usd, and there is none: a "
+                         "provenance for a figure that does not exist")
     attrs = {
         "std.artefact.name": system,
         "std.external.system": system,
@@ -235,6 +260,10 @@ def external(system: str, operation: str, started_at: float, ended_at: float,
     }
     if cost_usd is not None:
         attrs["std.external.cost_usd"] = float(cost_usd)
+    if cost_source is not None:
+        attrs["std.external.cost_source"] = cost_source
+    if cost_estimated_usd is not None:
+        attrs["std.external.cost_estimated_usd"] = float(cost_estimated_usd)
     if requests is not None:
         attrs["std.external.requests"] = int(requests)
     if duration_ms is not None:

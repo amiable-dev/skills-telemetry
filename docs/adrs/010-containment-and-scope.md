@@ -186,7 +186,9 @@ harness exports, so that mistake fails loudly rather than producing rows that si
    std.artefact.name                the system, e.g. "llm-council" — bounded
    std.external.system              same value, explicit
    std.external.operation           bounded verb, e.g. "consult", "verify"
-   std.external.cost_usd            what the caller actually paid
+   std.external.cost_usd            what was observed: billed, or a self-hosted figure
+   std.external.cost_source         provider | local — how cost_usd was observed   (v2, #88)
+   std.external.cost_estimated_usd  priced from a list, never billed               (v2, #88)
    std.external.requests            request count
    std.external.duration_ms
    gen_ai.request.model
@@ -194,17 +196,46 @@ harness exports, so that mistake fails loudly rather than producing rows that si
    std.scope.*                      so external spend rolls up like everything else
    ```
 
-   It carries no free-text and no identifiers beyond the scope keys. `std.external.cost_usd` is the
-   only place in the schema where a currency amount is recorded, because it is the only place where
-   the spending process knows something the harness cannot observe.
+   It carries no free-text and no identifiers beyond the scope keys. The external amounts are the
+   only currency figures in the schema, because this is the only place where the spending process
+   knows something the harness cannot observe.
+
+   **The amount is split by provenance rather than labelled once** (amended 2026-09-28, issue #88,
+   contract version 2). The first emitter labels each call's cost as billed by a provider, estimated
+   from a price list, or local, and emits one span per run — and a run can mix them. One label over one
+   figure has no honest value for that run: either the estimate enters `cost_usd` and a sum stops
+   reconciling to any invoice, or it is dropped and the total quietly under-counts every route whose
+   provider returns no cost. The emitter did the second, correctly, because version 1 left it no third
+   option. So `cost_usd` keeps meaning *observed*, `cost_source` says how, and the estimate travels
+   beside it in its own attribute. Coverage is still computed from `cost_usd` alone. The vocabulary
+   is generic on purpose: an emitter's names for its own code paths are not contract values. A
+   `cost_usd` with no `cost_source` stays valid — it is what every version-1 span looks like — and
+   is its own category downstream, never assumed to be `provider`.
 
    **An unobserved cost is omitted, never zeroed**, and an observed zero is kept. Free tiers and cached
    responses really do cost nothing, so "zero observed" and "nothing observed" are different claims;
    the loader stores NULL rather than 0 for the second, because NULL is excluded from an average and 0
-   is not. `stdtel-conform` (`stdtel/conform.py`) is the gate, meant to run in the **emitter's** CI
-   rather than this one's: stdtel owns the code that produces every other kind and enforces the
-   allowlist at construction, but external spend arrives from a repository this project does not own,
-   where the only available enforcement is a check that repository runs itself.
+   is not. `stdtel-conform` (`stdtel/conform.py`) runs in the **emitter's** CI rather than this
+   one's: stdtel owns the code that produces every other kind and enforces the allowlist at
+   construction, but external spend arrives from a repository this project does not own, where the
+   only available enforcement is a check that repository runs itself. It is a second opinion there,
+   not the gate: the emitter's own test, comparing its constant longhand against the published set,
+   is what must fail its build, so that a missing or lagging checker cannot let a violation through.
+
+   **How the contract changes** (amended 2026-09-28). Additively, announced to adopting emitters
+   before merge. `tests/test_external_kind.py` pins the published set, so any edit fails until
+   someone extends it deliberately, and its failure message says to announce first. `stdtel-conform
+   --print-contract` publishes the set with a `contract_version` that increases on every change,
+   additions included, for an emitter to diff its hand copy against — never to generate it from.
+   Tempo keeps an attribute nobody declared; the loader is where it would vanish, so the loader names
+   every unread key on an external span and records the count in `loader_run`. A rename then arrives
+   as a named key instead of a column of NULLs.
+
+   **An empty session is a category, not a key** (amended 2026-09-28). A run outside Claude Code
+   sends no `session.id` and loads with `session_id = ''`, the same sentinel every kind uses. But `''`
+   joins to `''`: any query grouping or joining such rows by session merges every standalone run
+   into one fictitious session. External rows with an empty session are attributable to system and
+   operation only — never joined by session, turn or scope — and query 7 counts them.
 
    The checker also reports how many external spans carry a cost at all. That is not decoration: a
    shape-only check passes a file whose costs are missing, and a total computed over it is an average

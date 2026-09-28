@@ -23,6 +23,23 @@ SPAN_NAME = "std.artefact.activation"
 LEGACY_SKILL_SPAN_NAME = "std.skill.invocation"   # pre-ADR-009 rows still in Tempo
 SESSION_SPAN_NAME = "std.session.cost"
 KIND_SKILL = "skill"
+KIND_EXTERNAL = "external"
+
+#: Every attribute an external span may carry that this loader reads. The loader
+#: is stdlib-only and cannot import `stdtel.artefact.ALLOWED`, so it keeps its own
+#: copy and a test holds the two equal. Anything outside it is kept by Tempo and
+#: lost here — which is why `collect` counts it rather than skipping it (#88).
+LOADED_EXTERNAL_ATTRIBUTES = frozenset({
+    "std.artefact.kind", "std.artefact.name", "std.artefact.source",
+    "std.external.system", "std.external.operation", "std.external.cost_usd",
+    "std.external.requests", "std.external.duration_ms",
+    "std.external.cost_source", "std.external.cost_estimated_usd",
+    "gen_ai.operation.name", "gen_ai.request.model",
+    "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
+    "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",
+    "session.id",
+    "std.scope.name", "std.scope.key", "std.scope.id", "std.scope.source",
+})
 LOADER = "load_traces"
 
 #: Tempo does not make a span searchable the moment it arrives. A span whose own
@@ -201,6 +218,11 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         "external_system": g("std.external.system"),
         "external_operation": g("std.external.operation"),
         "external_cost_usd": _num(g("std.external.cost_usd")),
+        # #88: provenance of the observed figure, and the estimate kept beside it.
+        # Unlabelled stays NULL — an emitter from before the label existed did
+        # not say `provider`, so reading it as one would record a claim never made.
+        "external_cost_source": g("std.external.cost_source"),
+        "external_cost_estimated_usd": _num(g("std.external.cost_estimated_usd")),
         "external_requests": _int(g("std.external.requests")),
         "external_duration_ms": _int(g("std.external.duration_ms")),
         "agent_version": g("std.agent.version"),
@@ -282,6 +304,7 @@ COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","har
 ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "scope_name", "scope_key", "scope_id", "scope_source",
                    "external_system", "external_operation", "external_cost_usd",
+                   "external_cost_source", "external_cost_estimated_usd",
                    "external_requests", "external_duration_ms",
                    "agent_version", "agent_owner", "agent_content_hash",
                    "standard_id", "policy_ids", "started_at", "ended_at", "kind", "name",
@@ -294,17 +317,22 @@ ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "ticket_id", "repo", "team", "user_hash"]
 
 LOADER_RUN_COLS = ["run_id", "started_at", "finished_at", "loader", "rows_loaded",
-                   "source_max_ts", "ok", "error"]
+                   "source_max_ts", "ok", "error", "unknown_attrs", "unknown_attr_keys"]
 
 
 def _attrs(items: list) -> dict:
     return {kv["key"]: list(kv["value"].values())[0] for kv in items or []}
 
 
-def collect(traces: dict, fetch) -> tuple[list[dict], list[dict], list[dict]]:
+def collect(traces: dict, fetch, unknown=None) -> tuple[list[dict], list[dict], list[dict]]:
     """(activations, skill_invocations, session_costs) from a set of trace ids.
 
     `fetch(trace_id) -> OTLP JSON`, so the parsing is testable without Tempo.
+
+    `unknown`, a Counter if given, collects attribute keys on external spans that
+    this loader does not read. Only external spans: every other kind is built in
+    this repo against an allowlist that refuses a stray key before it is sent,
+    whereas an external span comes from code this repo does not run.
     """
     activations, rows, session_rows = [], [], []
     for trace_id in traces:
@@ -318,6 +346,8 @@ def collect(traces: dict, fetch) -> tuple[list[dict], list[dict], list[dict]]:
                     if name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME):
                         act = parse_activation(attrs, resource, sp)
                         activations.append(act)
+                        if unknown is not None and act["kind"] == KIND_EXTERNAL:
+                            unknown.update(k for k in attrs if k not in LOADED_EXTERNAL_ATTRIBUTES)
                         if act["kind"] == KIND_SKILL:
                             # ADR-009's compatibility decision lives here and
                             # nowhere else: one span, two tables, so the primary
@@ -379,7 +409,10 @@ def main(argv=None) -> int:
               f"rows are keyed on span_id, so overlapping runs cost nothing.", file=sys.stderr)
     run = {"run_id": uuid.uuid4().hex, "loader": LOADER,
            "started_at": dt.datetime.now(dt.timezone.utc), "finished_at": None,
-           "rows_loaded": 0, "source_max_ts": None, "ok": False, "error": None}
+           "rows_loaded": 0, "source_max_ts": None, "ok": False, "error": None,
+           "unknown_attrs": None, "unknown_attr_keys": None}
+    import collections
+    unknown = collections.Counter()
 
     def search(query):
         # Tempo returns nothing at all without start/end — it looks like a dead pipeline
@@ -393,7 +426,9 @@ def main(argv=None) -> int:
         for span_name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME):
             traces.update({t["traceID"]: t for t in search(f'{{ name = "{span_name}" }}')})
         activations, rows, session_rows = collect(
-            traces, lambda tid: requests.get(f"{a.tempo}/api/traces/{tid}").json())
+            traces, lambda tid: requests.get(f"{a.tempo}/api/traces/{tid}").json(), unknown=unknown)
+        run["unknown_attrs"] = sum(unknown.values())
+        run["unknown_attr_keys"] = sorted(unknown) or None
         run["source_max_ts"] = max((r["started_at"] for r in activations + session_rows),
                                   default=None)
         run["rows_loaded"] = write(a.dsn, [
@@ -413,6 +448,14 @@ def main(argv=None) -> int:
     print(f"loaded {len(activations)} activation(s) "
           f"({len(rows)} of kind skill, also written to skill_invocation), "
           f"{len(session_rows)} session cost row(s)")
+    if unknown:
+        # Loud on purpose. Each of these is a column of NULLs somebody will
+        # otherwise find weeks later with no way to date it.
+        detail = ", ".join(f"{k} ({n})" for k, n in unknown.most_common())
+        print(f"stdtel: external spans carried attribute(s) this loader does not read, kept in "
+              f"Tempo but absent from the warehouse: {detail}. A renamed attribute looks exactly "
+              f"like this — check the emitter against `stdtel-conform --print-contract`.",
+              file=sys.stderr)
     return 0
 
 
