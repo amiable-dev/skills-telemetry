@@ -231,17 +231,25 @@ CI, not ours.
 
 ```
 stdtel-conform spans.json        # or: ... | stdtel-conform -
+stdtel-conform --print-contract  # the contract itself, as JSON
 ```
 
 Input is OTLP JSON — what an OTLP/HTTP exporter posts (`resourceSpans`) or what Tempo returns
 (`batches`). It checks the span name, that the kind is one of the closed set, that every attribute is
 in that kind's allowlist, that no attribute carries content, that an external span names its system,
 that a session id (optional — a run outside a Claude session is still real spend) is in the format the
-harness exports, and that a cost is a number.
+harness exports, and that a cost is a number. A `cost_source` must be `provider` or `local` and must
+describe an observed `cost_usd`; an estimate belongs in `cost_estimated_usd`, never under a label.
 
-It also reports **how many external spans carry a cost at all**, and says so when most do not. A
-shape-only check passes a file whose costs are missing, and the warehouse then averages over the holes
-— which is the specific failure this gate exists to catch.
+It also reports **how many external spans carry an observed cost at all**, and how many carry only an
+estimate, which is not counted as reported. It says so when most carry none. A shape-only check passes a
+file whose costs are missing, and the warehouse then averages over the holes — which is the specific
+failure this gate exists to catch.
+
+`--print-contract` prints the span name, the attribute allowlist, the cost-source vocabulary and a
+`contract_version`, which increases on every change, additions included. It is for an emitter to diff its
+own longhand copy against in CI, so drift is detected. It is not a source to generate that copy from:
+a copy pulled at build time lets a rename pass straight through.
 
 Exit codes: `0` conforming · `1` at least one violation · `2` the file could not be read or parsed.
 An absent cost is not a violation; a null one is, because omitting the attribute is how absence is

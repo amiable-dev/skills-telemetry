@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from stdtel.artefact import ALLOWED, KIND_EXTERNAL, KINDS, SOURCE_EMITTER, SPAN_NAME
+from stdtel.artefact import ALLOWED, COST_SOURCES, KIND_EXTERNAL, KINDS, SOURCE_EMITTER, SPAN_NAME
 
 #: What the harness exports, and therefore what an emitter should be copying.
 #: Anything else joins to nothing, which is worse than carrying no id at all.
@@ -45,6 +45,46 @@ CONTENT_PREFIXES = ("gen_ai.input", "gen_ai.output", "gen_ai.prompt", "gen_ai.co
 #: when every span is individually valid.
 THIN = 0.9
 
+#: Bumped on every change to the external contract. 1 was the original set;
+#: 2 added `cost_source` and `cost_estimated_usd` (issue #88).
+#:
+#: Additive changes bump it too. An emitter comparing its hand copy against
+#: `--print-contract` should learn that something exists that it does not send,
+#: not only that something it sends has gone.
+CONTRACT_VERSION = 2
+
+#: The attribute set CONTRACT_VERSION describes, written out so that editing the
+#: allowlist fails a test until someone decides whether the version moves.
+CONTRACT_ATTRIBUTES_AT_VERSION = frozenset({
+    "std.artefact.kind", "std.artefact.name", "std.artefact.source",
+    "std.external.system", "std.external.operation", "std.external.cost_usd",
+    "std.external.requests", "std.external.duration_ms",
+    "std.external.cost_source", "std.external.cost_estimated_usd",
+    "gen_ai.operation.name", "gen_ai.request.model",
+    "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
+    "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",
+    "session.id",
+    "std.scope.name", "std.scope.key", "std.scope.id", "std.scope.source",
+})
+
+
+def contract() -> dict:
+    """The external contract as data, for an emitter to diff its own copy against.
+
+    For *detecting* drift, not for generating the emitter's constant: both sides
+    keep a longhand copy precisely so that neither compares a list with itself.
+    An emitter that pulls this at build time lets a rename flow straight through.
+    """
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "span_name": SPAN_NAME,
+        "kind": KIND_EXTERNAL,
+        "artefact_source": SOURCE_EMITTER,
+        "attributes": sorted(ALLOWED[KIND_EXTERNAL]),
+        "cost_sources": list(COST_SOURCES),
+        "changes": "announced on amiable-dev/llm-council#695 before merge; additive only",
+    }
+
 
 @dataclass
 class Problem:
@@ -57,6 +97,7 @@ class Report:
     spans: int = 0
     external: int = 0
     cost_reported: int = 0
+    cost_estimated: int = 0
     problems: list = field(default_factory=list)
 
     @property
@@ -71,8 +112,10 @@ class Report:
         if not self.external:
             return f"{self.spans} span(s) checked; none reported external spend"
         pct = self.cost_reported / self.external
+        est = (f"; an estimate only on {self.cost_estimated}, not counted as reported"
+               if self.cost_estimated else "")
         return (f"{self.spans} span(s) checked; {self.external} external; "
-                f"cost reported on {self.cost_reported} of {self.external} ({pct:.0%})")
+                f"cost reported on {self.cost_reported} of {self.external} ({pct:.0%}){est}")
 
 
 def _value(raw: dict):
@@ -116,8 +159,9 @@ def check_span(index: int, span: dict, report: Report) -> None:
                                            f"only, and an emitter's payload is not ours to scrub"))
     stray = sorted(k for k in attrs if k not in ALLOWED[kind] and not k.startswith(CONTENT_PREFIXES))
     for key in stray:
-        problems.append(Problem(index, f"{key} is not in the allowlist for kind={kind}; it would be "
-                                       f"dropped downstream and you would never learn why"))
+        problems.append(Problem(index, f"{key} is not in the allowlist for kind={kind}; the trace "
+                                       f"store would keep it but the warehouse would never load "
+                                       f"it, so every query would read it as absent"))
 
     sid = attrs.get("session.id")
     if sid is not None and not SESSION_ID.match(str(sid)):
@@ -147,6 +191,29 @@ def check_span(index: int, span: dict, report: Report) -> None:
         else:
             report.cost_reported += 1
 
+    label = attrs.get("std.external.cost_source")
+    if "std.external.cost_source" in attrs:
+        if label not in COST_SOURCES:
+            problems.append(Problem(index, f"std.external.cost_source is {label!r}; the vocabulary is "
+                                           f"{list(COST_SOURCES)}. An estimate is not a source — send "
+                                           f"it as std.external.cost_estimated_usd"))
+        if "std.external.cost_usd" not in attrs:
+            problems.append(Problem(index, "std.external.cost_source is set with no observed "
+                                           "std.external.cost_usd: a provenance for a figure that "
+                                           "does not exist"))
+
+    if "std.external.cost_estimated_usd" in attrs:
+        est = attrs["std.external.cost_estimated_usd"]
+        if est is None:
+            problems.append(Problem(index, "std.external.cost_estimated_usd is null — omit the "
+                                           "attribute instead; nothing estimated and an estimate of "
+                                           "nothing are different claims"))
+        elif isinstance(est, bool) or not isinstance(est, (int, float)):
+            problems.append(Problem(index, f"std.external.cost_estimated_usd is {type(est).__name__}; "
+                                           f"it must be a number, not a string"))
+        elif "std.external.cost_usd" not in attrs:
+            report.cost_estimated += 1
+
 
 def check(payload: dict) -> Report:
     report = Report()
@@ -163,8 +230,17 @@ def check(payload: dict) -> Report:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="stdtel-conform", description=__doc__.splitlines()[0])
-    ap.add_argument("path", help="OTLP JSON file, or - for stdin")
+    ap.add_argument("path", nargs="?", help="OTLP JSON file, or - for stdin")
+    ap.add_argument("--print-contract", action="store_true",
+                    help="print the external contract as JSON, for diffing an emitter's copy")
     a = ap.parse_args(argv)
+
+    if a.print_contract:
+        print(json.dumps(contract(), indent=2))
+        return 0
+    if not a.path:
+        print("stdtel-conform: a path is required (or --print-contract)", file=sys.stderr)
+        return 2
 
     try:
         raw = sys.stdin.read() if a.path == "-" else Path(a.path).read_text()

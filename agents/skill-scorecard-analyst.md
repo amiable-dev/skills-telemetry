@@ -90,6 +90,7 @@ whole point of asking twice.
 | how often does context compact, and after what | `03_compaction_frequency.sql` |
 | which hook is spending the wall time | `04_hook_latency_by_hook.sql` |
 | how much of a skill's tail is cache creation, not reuse | `05_skill_cache_creation_share.sql` |
+| what was spent outside the harness, and how much of it is known | `07_external_spend_and_coverage.sql` |
 
 Lead every answer with the row count and the newest timestamp in the data. `loader_run` says when the
 warehouse was last filled; if the newest span is older than the loader interval, say so before quoting
@@ -117,6 +118,15 @@ The same discipline as above, with traps specific to these kinds:
   beside any mean.
 - **Cost in dollars is cumulative session state**, not a per-turn figure, and it arrives only when the
   harness wrote it. Do not divide it by turns and call the result a turn's cost.
+- **External spend is split by provenance; keep it split.** `cost_usd_known` is observed spend and the
+  only figure that reconciles to an invoice. `cost_usd_estimated` was priced from a list and was never
+  billed. Report them side by side. Adding them is allowed only if you say you did, and the sum is
+  never "the bill". Read `coverage_pct` before either: below 100 the known total is a lower bound.
+- **`runs_unlabelled` is not `provider`.** Those runs report an observed cost from an emitter that
+  predates the provenance label. Say they are unlabelled; do not assume they were billed.
+- **An external run with an empty session belongs to no session.** It came from a CLI, HTTP or CI
+  invocation. `''` joins to `''`, so never group or join these rows by session, turn or scope — every
+  standalone run would merge into one invented session. Attribute them to system and operation only.
 - **A rising auto-compaction rate is a finding**, not noise: it means the session is repeatedly
   spending tokens re-reading itself. `03` shows what preceded each one.
 

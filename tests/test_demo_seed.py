@@ -142,3 +142,20 @@ def test_every_seeded_artefact_kind_carries_its_own_columns(data):
     cols = columns(rows)
     for c in ("external_system", "external_cost_usd", "scope_name", "hook_ms_by_hook"):
         assert c in cols, f"{c} would never reach the database"
+
+
+def test_the_demo_fleet_shows_every_provenance_query_seven_separates():
+    """Query 7 version 2 splits external spend five ways. A fleet that seeds only
+    billed-and-labelled runs shows four columns of zero, which reads as a broken
+    query rather than an empty category (#88)."""
+    ext = [r for r in generate(seed=42)["artefact_activation"] if r["kind"] == "external"]
+    billed = [r for r in ext if r["external_cost_usd"] is not None]
+    assert any(r["external_cost_source"] == "provider" for r in billed)
+    assert any(r["external_cost_source"] is None for r in billed), "no unlabelled (pre-v2) runs"
+    assert any(r["external_cost_estimated_usd"] is not None for r in billed), "no mixed runs"
+    assert any(r["external_cost_usd"] is None and r["external_cost_estimated_usd"] is not None
+               for r in ext), "no estimate-only runs"
+    assert any(r["external_cost_usd"] is None and r["external_cost_estimated_usd"] is None
+               for r in ext), "no run with nothing observed"
+    assert any(r["session_id"] == "" for r in ext), "no run from outside a Claude session"
+    assert all(r["external_cost_source"] in (None, "provider", "local") for r in ext)

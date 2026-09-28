@@ -51,7 +51,12 @@ def scorecard_rows() -> list[dict]:
 @pytest.fixture(scope="module", autouse=True)
 def seeded():
     """Load the synthetic fleet; leave the warehouse as we found it."""
-    _connect().close()
+    # Apply the schema first. It is idempotent, and without it these tests read
+    # whatever columns an *earlier* test module happened to add: a query using a
+    # new column failed in a full run and passed alone, depending only on the
+    # alphabetical order of test files (#88).
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute((Path(__file__).resolve().parent.parent / "warehouse" / "schema.sql").read_text())
     from warehouse.demo_seed import clear, generate, load
     try:
         load(DSN, generate(seed=42))

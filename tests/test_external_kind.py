@@ -116,6 +116,8 @@ PUBLISHED = frozenset({
     "std.artefact.kind", "std.artefact.name", "std.artefact.source",
     "std.external.system", "std.external.operation", "std.external.cost_usd",
     "std.external.requests", "std.external.duration_ms",
+    # contract version 2 (#88), announced on llm-council#695 before merge
+    "std.external.cost_source", "std.external.cost_estimated_usd",
     "gen_ai.operation.name", "gen_ai.request.model",
     "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
     "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.cache_creation_input_tokens",

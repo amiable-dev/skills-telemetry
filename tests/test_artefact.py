@@ -23,6 +23,12 @@ def test_every_builder_stays_inside_its_kinds_allowlist():
         artefact.turn("p1", 1.0, 2.0, {"gen_ai.usage.output_tokens": 7}, llm_requests=2,
                       tool_calls=3, model="claude-opus-5", duration_ms=500,
                       hook_ms={"/usr/local/bin/cc-status": 12}, permission_mode="default"),
+        # Every optional argument set, so no emitted key escapes the check. It was
+        # missing from this list while the kind it builds was published to another repo.
+        artefact.external("llm-council", "consult", 1.0, 2.0, cost_usd=1.0, requests=3,
+                          duration_ms=900, model="m", cost_source="provider",
+                          cost_estimated_usd=0.2,
+                          usage_attrs={"gen_ai.usage.input_tokens": 5}),
     ]
     for act in built:
         kind = act["kind"]
