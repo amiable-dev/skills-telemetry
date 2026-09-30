@@ -6,7 +6,12 @@ skills across Claude Code and GitHub Copilot, joined to OPA/Rego policy results,
 and quality signals. Purpose: a data-driven keep / refine / merge / deprecate loop for skills, and a fair
 Claude Code vs Copilot (VS Code) comparison. Full rationale and industry scan: `docs/design-proposal.md`.
 
-Public repo: `github.com/amiable-dev/skills-telemetry`. Metadata only — never emit prompt/response/file content.
+Public repo: `github.com/amiable-dev/skills-telemetry`. **Nothing stored or forwarded past the collector ever
+holds content** (prompts, responses, file contents, command lines, tool inputs or results). stdtel's own
+hooks and exporter emit none at all. A harness sends content to the collector only by the user's explicit,
+informed opt-in through `stdtel-setup`, once the collector has proven on that machine that it drops it
+([ADR-014](docs/adrs/014-harness-native-telemetry.md) decision 14; this replaced "metadata only — never emit
+prompt/response/file content").
 
 ## Key design decisions (do not revisit without reading the ADR)
 Decisions live in `docs/adrs/`. These bullets are pointers, not the reasoning — the ADR records what
@@ -64,6 +69,19 @@ was rejected and what the decision costs, which is what you need before re-litig
   about and invented fake tickets (`RELEASE-0`, `ANALYZE-4`). Delivery data loads through a
   forge-neutral change-request record, with a GitHub adapter now and GitLab in #103. The ticket becomes
   enrichment: forge issue links first, then a fixed regex. Issue #102.
+- **[ADR-014](docs/adrs/014-harness-native-telemetry.md)** — both harnesses now measure
+  what stdtel estimated. Claude Code's `claude_code.api_request` events carry `skill.name`,
+  `agent.name`, `plugin.name`, `mcp_server.name`, `cost_usd` and `prompt.id` per request. Copilot's
+  native OTel has `github.copilot.tool.parameters.skill_name` and `github.copilot.git.*`, but no
+  per-skill tokens and no cost. Consume native records into one `llm_request` table (Copilot per-skill
+  attribution derived and labelled), keep stdtel for the join, the standard, the outcome, external
+  spend and containment. Native metrics stay out of Prometheus (`session.id` is a label on each; #92).
+  Verified live: native `prompt.id` equals the transcript's `promptId`, and identity is on every
+  record. `OTEL_LOG_TOOL_DETAILS` (names third-party skills, but exports content to the collector) is
+  recommended through a new `stdtel-setup` skill: explained, enabled only on the user's yes, and only
+  after a doctor check proves the collector drops a content marker. The "metadata only" rule is now
+  "nothing past the collector ever holds content" (decision 14, applied 2026-09-30). Blocks on the collector first: no record-level pseudonymising, events stored
+  nowhere. Survey and sources: `docs/landscape.md`. Issue #107.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
@@ -97,7 +115,7 @@ Still true and not yet an ADR:
 
 ## Docs
 `docs/for-developers.md` (what is collected + opt-out) · `docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
-skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/local-stack.md` (endpoints + `mise run smoke`) · `docs/adrs/`.
+skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/local-stack.md` (endpoints + `mise run smoke`) · `docs/landscape.md` (what else exists, with sources) · `docs/adrs/`.
 Adding a console script or a skill without documenting it fails `tests/test_docs_coverage.py`.
 
 ## Commands
@@ -126,16 +144,16 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
   `tail_tokens=28199`.
 - Langfuse v4 writes the `events_*` model while `GET /api/public/traces` reads the legacy tables, so
   that endpoint reads empty even when ingestion worked. Query `events_core` to confirm.
-- Unverified before acting on: Copilot's `skill_name` / `github.copilot.git.*` span attributes, and its
+- Documented but not yet seen in a live trace (ADR-014): Copilot's `github.copilot.tool.parameters.skill_name` / `github.copilot.git.*` span attributes, and its
   PascalCase compatibility mode. microsoft/vscode#326254 (spans carry content despite
   `captureContent:false`) means metadata-only must be enforced collector-side, not by config.
 
 ## Next steps (agreed)
-1. Decide the open ADR-001 question: consume native `claude_code.token.usage` instead of chars/4.
-   `std.prompt.id` is now captured, which is the join key that makes this implementable. Live evidence
-   that the heuristic is weak: a real invocation recorded `load_tokens=7` against `tail_tokens=28199`.
+1. Implement ADR-014 (accepted), collector privacy first: record-level identity and both harnesses'
+   content keys on every pipeline, and a store for events, before any native telemetry is switched on.
 2. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
-3. Verify Copilot's `skill_name` attribute against a live trace before retiring `copilot-skill-map.yaml`.
+3. Verify Copilot's `github.copilot.tool.parameters.skill_name` and `github.copilot.git.*` against a
+   live trace (documented 2026-09-16, not yet seen) before retiring `copilot-skill-map.yaml` (ADR-014 d11).
 4. Onboard a real project end to end (#21). Since ADR-013 any branch name joins; it needs a real repo
    with a remote, PRs, and the CI policy artefact.
 5. Publish to PyPI (workflow ready; needs a Trusted Publisher + a tagged release).
