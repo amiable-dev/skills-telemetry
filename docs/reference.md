@@ -316,7 +316,7 @@ The authoritative list. Everything else that mentions these links here.
 
 | variable | default | read by | meaning |
 |---|---|---|---|
-| `STDTEL_OTLP_ENDPOINT` | `http://localhost:4318` | exporter | collector base URL. **Use this, not `OTEL_EXPORTER_OTLP_ENDPOINT`** — Claude Code strips `OTEL_*` from every subprocess, so the OTel name cannot reach a hook |
+| `STDTEL_OTLP_ENDPOINT` | `http://localhost:4318` | exporter | collector base URL. **Use this, not `OTEL_EXPORTER_OTLP_ENDPOINT`** — Claude Code strips `OTEL_*` from every subprocess, so the OTel name cannot reach a hook. `stdtel-install settings` also writes this value into Claude Code's own `env` as `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `STDTEL_OTLP_TIMEOUT` | `2` | exporter | seconds before a flush gives up. Bounds a dead-collector stall; measured 7.34s unbounded |
 | `STDTEL_SKILLS_ROOT` | `~/.claude/skills` | hooks | `os.pathsep` list of catalogue roots. Relative entries resolve against `CLAUDE_PROJECT_DIR`; the user directory is always searched last; earliest root wins |
 | `STDTEL_AGENTS_ROOT` | `~/.claude/agents` | hooks | `os.pathsep` list of **sub-agent** roots. Same precedence rules as `STDTEL_SKILLS_ROOT`, and relative entries resolve against `CLAUDE_PROJECT_DIR`, so `agents` picks up a project's own directory. Agents are flat `.md` files, not `<name>/SKILL.md`; a `SKILL.md` found here is skipped rather than loaded as an agent. Plugin-shipped agents live in the plugin cache rather than here, so symlink them in the same way the README suggests for skills, or add the plugin's `agents/` directory to this list |
@@ -338,7 +338,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |
 | `CLAUDE_CODE_SESSION_ID` | *(unset)* | `scope-close` | set by the harness and **exported to processes the agent spawns**, so a skill can run `stdtel-hook scope-close` without knowing which session it is in. A sub-agent's shell sees the *parent* session's id, alongside `CLAUDE_CODE_CHILD_SESSION` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | exporter | fallback for direct CLI/CI use only, where nothing scrubs it |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | exporter, doctor | for stdtel's exporter, a fallback for direct CLI/CI use only, where nothing scrubs it. In Claude Code's settings `env` (written by `stdtel-install settings`) it is where **Claude Code's own** telemetry goes, and the endpoint `stdtel-doctor --content-check` and `detailed-view on` probe |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | exporter | fallback, checked before the base URL; must be the full `/v1/traces` URL |
 | `OTEL_SERVICE_NAME` | `stdtel` | exporter | `service.name` on the resource |
 | `OTEL_LOG_TOOL_DETAILS` | unset | doctor | **Claude Code's** setting, not stdtel's: it makes Claude Code export tool inputs and commands. stdtel only reads it, from the environment and Claude Code's settings files, to decide whether `stdtel-doctor` must prove the collector drops content. Never set it before `stdtel-doctor --content-check` passes |
