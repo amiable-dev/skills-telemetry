@@ -1,6 +1,6 @@
 ---
 title: "ADR-014: Consume harness-native telemetry for cost; stdtel keeps the join, the standard and the outcome"
-status: proposed
+status: accepted
 date: 2026-09-30
 tags: [adr, telemetry, copilot, claude-code, cost, privacy, landscape]
 links: ["001-distribution-and-capture-surface.md", "003-hook-execution-constraints.md", "005-data-integrity.md", "009-artefact-activation-as-the-unit-of-capture.md", "012-external-contract-v3.md", "013-join-work-to-change-requests.md"]
@@ -281,7 +281,7 @@ values:
     The loaders ignore `service.name = stdtel-probe`, so a probe never becomes a row.
 
 14. **The project rule on content is reworded, because it is being narrowed deliberately.**
-    CLAUDE.md now says "never emit prompt/response/file content". With decision 12's opt-in, the
+    CLAUDE.md said "never emit prompt/response/file content". With decision 12's opt-in, the
     harness does emit content — as far as a collector that deletes it. On acceptance, the rule
     becomes:
 

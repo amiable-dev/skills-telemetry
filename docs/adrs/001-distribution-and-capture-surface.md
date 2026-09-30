@@ -8,7 +8,7 @@ research: "2026-09-10, four parallel research threads (Claude Code channels, Cop
 ---
 
 > **Its open question — consume Claude Code's native telemetry instead of estimating tokens — is
-> answered by [ADR-014](014-harness-native-telemetry.md) (proposed, 2026-09-30):** yes, for both
+> answered by [ADR-014](014-harness-native-telemetry.md) (accepted, 2026-09-30):** yes, for both
 > harnesses where they measure, with stdtel keeping the join, the standard and the outcome.
 
 ## Context
