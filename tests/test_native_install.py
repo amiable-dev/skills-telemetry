@@ -143,3 +143,146 @@ def test_copilot_refuses_a_settings_file_with_comments(tmp_path, capsys):
     assert install.main(["copilot", "--vscode-settings", str(target)]) == 1
     assert target.read_text() == original
     assert "comments" in capsys.readouterr().err
+
+
+# --- the detailed view: enabled only through a gate enforced in code (decisions 12, 13) ------------
+
+from stdtel import doctor  # noqa: E402
+
+
+@pytest.fixture
+def probe(monkeypatch):
+    result = {"ok": True, "endpoints": []}
+
+    def fake(**kw):
+        result["endpoints"].append(kw.get("endpoint"))
+        return doctor.Check("content dropped", result["ok"], "dropped" if result["ok"] else "leaked to Loki")
+    monkeypatch.setattr(doctor, "probe_content", fake)
+    return result
+
+
+def _env(path):
+    return json.loads(path.read_text()).get("env", {}) if path.is_file() else {}
+
+
+def test_detailed_view_on_after_the_check_passes(tmp_path, probe, monkeypatch):
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "http://localhost:4318")
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"MY_VAR": "x"}}))
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 0
+    assert _env(target) == {"MY_VAR": "x", "OTEL_LOG_TOOL_DETAILS": "1"}
+
+
+def test_detailed_view_refused_when_the_check_fails(tmp_path, probe, monkeypatch, capsys):
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+    probe["ok"] = False
+    target = tmp_path / "settings.json"
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
+    assert "OTEL_LOG_TOOL_DETAILS" not in _env(target)
+    assert "leaked to Loki" in capsys.readouterr().err
+
+
+def test_a_remote_collector_needs_the_user_to_vouch_for_it(tmp_path, probe, monkeypatch, capsys):
+    """The check can only see the stores it can query; a remote collector may
+    forward somewhere it cannot (ADR-014, known limitations)."""
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "https://otel.example.com")
+    target = tmp_path / "settings.json"
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
+    assert "OTEL_LOG_TOOL_DETAILS" not in _env(target)
+    assert "the collector at https://otel.example.com is not on this machine" in capsys.readouterr().err
+    assert install.main(["detailed-view", "on", "--path", str(target), "--collector-confirmed"]) == 0
+    assert _env(target)["OTEL_LOG_TOOL_DETAILS"] == "1"
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_loopback_counts_as_local(host):
+    assert install._collector_is_local(f"http://{host}:4318")
+
+
+def test_a_lookalike_host_is_not_local():
+    assert not install._collector_is_local("http://localhost.evil.example:4318")
+
+
+def test_detailed_view_off_removes_only_the_flag(tmp_path):
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_LOG_TOOL_DETAILS": "1", "MY_VAR": "x"}}))
+    assert install.main(["detailed-view", "off", "--path", str(target)]) == 0
+    assert _env(target) == {"MY_VAR": "x"}
+
+
+# The flag makes *Claude Code* send content, to the endpoint in *its* settings. The
+# gate must judge and probe that one, not stdtel's own, or it proves something
+# about a collector Claude Code will never use.
+
+def test_the_gate_judges_the_endpoint_claude_code_will_use(tmp_path, probe, monkeypatch, capsys):
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "project"))
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.example.com"}}))
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
+    assert "the collector at https://otel.example.com is not on this machine" in capsys.readouterr().err
+    assert "OTEL_LOG_TOOL_DETAILS" not in _env(target)
+
+
+def test_the_probe_goes_where_claude_code_will_send(tmp_path, probe, monkeypatch):
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "https://otel.example.com")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "project"))
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318"}}))
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 0
+    assert probe["endpoints"] == ["http://127.0.0.1:4318"]
+
+
+def test_a_project_setting_overrides_the_user_file(tmp_path, probe, monkeypatch, capsys):
+    """Claude Code's precedence: project local, then project, then user."""
+    project = tmp_path / "project"
+    (project / ".claude").mkdir(parents=True)
+    (project / ".claude" / "settings.local.json").write_text(
+        json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.example.com"}}))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318"}}))
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
+    assert "the collector at https://otel.example.com is not on this machine" in capsys.readouterr().err
+
+
+def test_the_doctors_recheck_probes_claude_codes_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps(
+        {"env": {"OTEL_LOG_TOOL_DETAILS": "1", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9999"}}))
+    seen = []
+    monkeypatch.setattr(doctor, "probe_content",
+                        lambda **kw: seen.append(kw.get("endpoint")) or doctor.Check("content dropped", True, "x"))
+    doctor.content_dropped()
+    assert seen == ["http://127.0.0.1:9999"]
+
+
+def test_probe_content_sends_to_the_endpoint_it_is_given():
+    sent = []
+    doctor.probe_content(endpoint="http://127.0.0.1:9999", read_tempo=lambda i: i, read_loki=lambda i: i,
+                         attempts=1, wait=0, post=lambda url, body: sent.append(url))
+    assert sorted(sent) == ["http://127.0.0.1:9999/v1/logs", "http://127.0.0.1:9999/v1/traces"]
+
+
+def test_the_skill_names_the_gate_and_never_the_raw_flag():
+    """ADR-007: a string check, not a behaviour test. It catches a rename that
+    would strand the skill's instructions, and a paste-able bypass."""
+    from pathlib import Path
+    body = (Path(__file__).resolve().parent.parent / "skills" / "stdtel-setup" / "SKILL.md").read_text()
+    for needed in ("stdtel-install detailed-view on", "--collector-confirmed", "--content-check",
+                   "stdtel-install settings", "stdtel-install copilot", "captureContent"):
+        assert needed in body, needed
+    assert '"OTEL_LOG_TOOL_DETAILS": "1"' not in body and "OTEL_LOG_TOOL_DETAILS=1 " not in body
+
+
+def test_project_local_settings_beat_project_settings(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    (project / ".claude").mkdir(parents=True)
+    (project / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318"}}))
+    (project / ".claude" / "settings.local.json").write_text(
+        json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.example.com/"}}))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    assert doctor.claude_code_endpoint(tmp_path / "user.json") == "https://otel.example.com"

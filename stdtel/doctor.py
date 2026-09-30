@@ -391,9 +391,32 @@ def _http_json(url: str, body: dict | None = None) -> str:
         return r.read().decode()
 
 
-def _send_probe(path: str, body: dict) -> None:
+def _claude_settings_files(user: Path | None = None) -> list[Path]:
+    """Claude Code's settings, highest precedence first: project local, project, user."""
+    project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()) / ".claude"
+    return [project / "settings.local.json", project / "settings.json",
+            user or Path.home() / ".claude" / "settings.json"]
+
+
+def _settings_env(f: Path) -> dict:
+    import json
+    try:
+        return json.loads(f.read_text()).get("env") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def claude_code_endpoint(user: Path | None = None) -> str:
+    """Where Claude Code itself will send its telemetry — the collector the
+    detailed view would send content to. Not stdtel's own endpoint: the two
+    agree after `stdtel-install settings`, and differ after a hand edit, a
+    reinstall with another STDTEL_OTLP_ENDPOINT, or a project override."""
     from stdtel.exporter import _endpoint
-    _http_json(_endpoint().removesuffix("/v1/traces") + path, body)
+    for f in _claude_settings_files(user):
+        v = _settings_env(f).get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if v:
+            return str(v).rstrip("/")
+    return (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or _endpoint().removesuffix("/v1/traces")).rstrip("/")
 
 
 def _read_tempo(probe_id: str) -> str:
@@ -417,12 +440,16 @@ def _read_loki(probe_id: str) -> str:
 
 
 def probe_content(send=None, read_tempo=None, read_loki=None, attempts: int = 30,
-                  wait: float = 1.0) -> Check:
-    """Send one span and one event holding a marker in content-shaped keys, then
-    read both stores back. The stores are injectable so the verdict is testable."""
+                  wait: float = 1.0, endpoint: str | None = None, post=None) -> Check:
+    """Send one span and one event holding a marker in content-shaped keys to
+    `endpoint` (default: Claude Code's), then read both stores back. The I/O is
+    injectable so the verdict is testable."""
     import time
     import uuid
-    send, read_tempo, read_loki = send or _send_probe, read_tempo or _read_tempo, read_loki or _read_loki
+    if send is None:
+        base, post = (endpoint or claude_code_endpoint()).rstrip("/"), post or _http_json
+        send = lambda path, body: post(base + path, body)          # noqa: E731
+    read_tempo, read_loki = read_tempo or _read_tempo, read_loki or _read_loki
     probe_id, marker = f"probe-{uuid.uuid4().hex}", f"CONTENT-{uuid.uuid4().hex}"
     try:
         for path, body in _probe_bodies(probe_id, marker).items():
@@ -449,24 +476,15 @@ def probe_content(send=None, read_tempo=None, read_loki=None, attempts: int = 30
 
 
 def _tool_details_enabled() -> bool:
-    """Is OTEL_LOG_TOOL_DETAILS on, in the environment or Claude Code's settings?"""
-    import json
+    """Is OTEL_LOG_TOOL_DETAILS on, in the environment or any of Claude Code's
+    settings files? Any one saying on is enough to warrant the probe."""
 
     def on(v) -> bool:
         return str(v or "").strip().lower() not in ("", "0", "false", "no", "off")
 
     if on(os.environ.get("OTEL_LOG_TOOL_DETAILS")):
         return True
-    files = [Path.home() / ".claude" / "settings.json"]
-    project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    files += [Path(project) / ".claude" / f for f in ("settings.json", "settings.local.json")]
-    for f in files:
-        try:
-            if on((json.loads(f.read_text()).get("env") or {}).get("OTEL_LOG_TOOL_DETAILS")):
-                return True
-        except (OSError, ValueError, AttributeError):
-            continue
-    return False
+    return any(on(_settings_env(f).get("OTEL_LOG_TOOL_DETAILS")) for f in _claude_settings_files())
 
 
 def content_dropped() -> Check:
@@ -476,7 +494,7 @@ def content_dropped() -> Check:
         return Check("content dropped", True,
                      "detailed view off (OTEL_LOG_TOOL_DETAILS unset), so nothing sends content; "
                      "`--content-check` probes anyway")
-    return probe_content()
+    return probe_content(endpoint=claude_code_endpoint())
 
 
 CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, branch_identity, catalogue_ok,
@@ -503,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
                          "Loki back (ADR-014 decision 13; run before enabling OTEL_LOG_TOOL_DETAILS)")
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
 
-    checks = [probe_content()] if a.content_check else check_all()
+    checks = [probe_content(endpoint=claude_code_endpoint())] if a.content_check else check_all()
     failed = [c for c in checks if not c.ok]
     for c in checks:
         if c.ok and a.quiet:

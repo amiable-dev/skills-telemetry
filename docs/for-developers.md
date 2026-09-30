@@ -71,7 +71,8 @@ connections). Each carries:
 
 It also carries **your email address and account ids**. The collector deletes those on arrival and
 keeps only a hash of the email, and a test proves this against the real collector image. Prompts are
-not sent: Claude Code replaces them with their length. Native *metrics* are not switched on, and the
+not stored: Claude Code redacts them (2.1.284 sent `<REDACTED>`, 2.1.285 sends only their length),
+and whatever it sends, the collector deletes the `prompt` key. Native *metrics* are not switched on, and the
 collector drops them if they arrive.
 
 What it does **not** switch on is `OTEL_LOG_TOOL_DETAILS`, which would make Claude Code send tool
