@@ -22,9 +22,15 @@ def test_doc_contains_runnable_sql():
     assert len(sql_blocks()) >= 4
 
 
+#: Tables and views. ADR-013's activation_change_request is the one place
+#: attribution is defined, so the walkthroughs read it like a table.
+RELATIONS = r"CREATE (?:TABLE IF NOT EXISTS|OR REPLACE VIEW) (\w+)"
+VIEW_COLUMNS = {"span_id", "cr_id", "method"}
+
+
 def test_every_table_referenced_exists():
     """Catches a renamed table or a query copied from an older schema."""
-    tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA))
+    tables = set(re.findall(RELATIONS, SCHEMA))
     for block in sql_blocks():
         for ref in re.findall(r"\b(?:FROM|JOIN)\s+(\w+)", block):
             assert ref in tables, f"unknown table {ref!r} in walkthrough SQL"
@@ -33,12 +39,15 @@ def test_every_table_referenced_exists():
 def test_every_column_referenced_exists():
     from tests.test_warehouse import schema_columns
     tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA))
-    known = {c for t in tables for c in schema_columns(t)} | tables
+    known = ({c for t in tables for c in schema_columns(t)} | tables
+             | set(re.findall(RELATIONS, SCHEMA)) | VIEW_COLUMNS)
     # identifiers that are SQL keywords, aliases or functions, not columns
     ignore = {"count", "sum", "round", "select", "from", "join", "on", "group", "by", "order",
               "desc", "as", "left", "where", "and", "numeric", "nullif", "distinct", "sc", "p",
               "i", "invocations", "session_rows", "matched_prs", "policy_rows", "cache_read",
-              "cache_hit_rate", "sessions", "prs", "policy_results", "tail_tokens_col"}
+              "cache_hit_rate", "sessions", "prs", "policy_results", "tail_tokens_col",
+              "change_requests", "turns", "attributed", "no_branch_identity", "filter", "kind", "turn",
+              "null", "left"}
     for block in sql_blocks():
         for ident in re.findall(r"\b([a-z_][a-z0-9_]{3,})\b", block.lower()):
             if ident in ignore or ident in known:

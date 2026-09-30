@@ -29,14 +29,12 @@ def test_every_identifier_is_marked_as_demo(data):
     """Nothing here may read as a real ticket, repo or team."""
     for ticket in data["ticket"]:
         assert ticket["ticket_id"].startswith(DEMO_MARKER), ticket["ticket_id"]
-    for pr in data["pull_request"]:
-        assert pr["repo"].startswith(DEMO_MARKER.lower()), pr["repo"]
-        assert DEMO_MARKER in pr["pr_id"] or pr["repo"].startswith(DEMO_MARKER.lower())
-    # "unattributed" is the system's own sentinel for a branch with no ticket key,
-    # not an identifier that could be mistaken for real. The demo includes it on
-    # purpose, because real data does.
-    for inv in data["skill_invocation"]:
-        assert inv["ticket_id"].startswith(DEMO_MARKER) or inv["ticket_id"] == "unattributed"
+    for cr in data["change_request"]:
+        assert "/demo-org/" in cr["repo_id"] and "demo-org" in cr["cr_id"], cr["cr_id"]
+    for link in data["change_request_ticket"]:
+        assert link["ticket_id"].startswith(DEMO_MARKER), link["ticket_id"]
+    for ev in data["commit_evidence"]:
+        assert ev["patch_id"].startswith("demo-patch-"), ev["patch_id"]
 
 
 def test_teams_are_obviously_fictional(data):
@@ -77,8 +75,8 @@ def test_has_both_arms_so_a_comparison_is_possible(data):
 
 def test_first_ci_run_is_recorded_for_every_pr(data):
     """run_seq=1 is what first-time pass rate reads."""
-    first = {r["pr_id"] for r in data["policy_result"] if r["run_seq"] == 1}
-    merged = {p["pr_id"] for p in data["pull_request"] if p["merged_at"]}
+    first = {r["cr_id"] for r in data["policy_result"] if r["run_seq"] == 1}
+    merged = {c["cr_id"] for c in data["change_request"] if c["state"] == "merged"}
     assert merged <= first, "a merged PR with no first CI run cannot be scored"
 
 
@@ -103,11 +101,19 @@ def test_includes_a_skill_with_too_little_data_to_judge(data):
     assert min(counts.values()) < 10, f"no under-sampled skill to demonstrate refusal: {counts}"
 
 
-def test_includes_unattributed_and_unversioned_rows(data):
-    """Both are real data-quality faults; a demo without them hides the common case."""
-    assert any(i["ticket_id"] == "unattributed" or i["skill_version"] == "unversioned"
-               for i in data["skill_invocation"]) or \
-           any(s["ticket_id"] == "unattributed" for s in data["session_cost"])
+def test_includes_the_faults_that_still_bound_a_conclusion(data):
+    """ADR-013 moved the fault: any branch joins, so what bounds a conclusion is
+    activity with no branch identity, a skill link with no commit evidence, and
+    unversioned skills. A demo without them hides the common cases."""
+    assert any(s["branch_hash"] is None for s in data["session_cost"]), "no identity-less session"
+    assert any(i["skill_version"] == "unversioned" for i in data["skill_invocation"])
+    confirmed = {c["cr_id"] for c in data["change_request_commit"]}
+    used = {c["cr_id"] for c in data["change_request"]
+            if any(i["branch_hash"] == c["branch_hash"] for i in data["skill_invocation"])}
+    assert used - confirmed, "no skill-using change request without evidence: the uncertain arm is never shown"
+    assert any(c["state"] == "closed" for c in data["change_request"]), "no abandoned change request"
+    assert any(c["source_branch"].startswith("fix/demo-hardening-") for c in data["change_request"]), \
+        "no branch without a ticket key: the case ADR-013 exists for"
 
 
 # --- the seeder must write every column, not just the first row's ------------

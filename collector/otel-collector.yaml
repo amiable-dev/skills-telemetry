@@ -84,7 +84,7 @@ connectors:
       - { name: std.artefact.name }
       - { name: std.artefact.source }
       # ADR-010 containment. name is the scoping artefact and key is the unit
-      # instance (the ticket), both bounded. std.scope.id is deliberately NOT
+      # instance (a branch hash, ADR-013), both bounded. std.scope.id is NOT
       # here: it is unique per container instance, which is #42 again.
       - { name: std.scope.name }
       - { name: std.scope.key }
@@ -99,7 +99,7 @@ connectors:
       - { name: std.team }
     metrics_flush_interval: 30s
     # The connector keeps one cumulative counter per distinct resource. A stdtel
-    # resource carries std.ticket.id, std.repo, std.user.hash and the SDK version:
+    # resource carries std.branch.hash, std.repo, std.user.hash and the SDK version:
     # none are metric labels, all of them change (a branch switch, another
     # project, an upgrade). Keyed on the whole resource, each change started a new
     # counter at 1 under the same labels, Prometheus kept one, and every rate()

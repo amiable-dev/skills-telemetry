@@ -85,7 +85,7 @@ def otlp_span(name: str, span_id: str, attrs: dict, *, start: dt.datetime,
 
 
 RESOURCE = {"std.harness": "claude-code", "std.harness.mode": "agent",
-            "std.ticket.id": "WTEST-1", "std.repo": "wtest-repo", "std.team": "wtest-team",
+            "std.branch.hash": PREFIX + "branch-1", "std.repo": "wtest-repo", "std.team": "wtest-team",
             "std.user.hash": "wtest-user-a"}
 
 
@@ -132,6 +132,8 @@ def seed_spans() -> list[dict]:
             "gen_ai.request.model": "claude-opus-5",
             # ADR-012: the MCP calls this turn made, the half stdtel records
             "std.artefact.mcp_tool_use_ids": [PREFIX + "toolu-1", PREFIX + "toolu-2"],
+            # ADR-013: a commit this turn made, as its patch-id
+            "std.artefact.commit_patch_ids": [PREFIX + "patch-1"],
             "gen_ai.usage.input_tokens": 900, "gen_ai.usage.output_tokens": 600,
             "gen_ai.usage.cache_read_input_tokens": 70000,
             "gen_ai.usage.cache_creation_input_tokens": 3000,
@@ -245,7 +247,8 @@ def _delete_wtest_rows(cur) -> None:
     for table, column in (("artefact_activation", "session_id"), ("artefact_activation", "span_id"),
                           ("skill_invocation", "session_id"), ("skill_invocation", "span_id"),
                           ("session_cost", "session_id"), ("loader_run", "run_id"),
-                          ("mcp_tool_call", "tool_use_id")):
+                          ("mcp_tool_call", "tool_use_id"), ("commit_evidence", "patch_id"),
+                          ("change_request_commit", "cr_id"), ("change_request", "cr_id")):
         # session_id as well as span_id: the loader rewrites ids it recognises as
         # OTLP base64, so scoping on span_id alone once left rows behind
         cur.execute(f"DELETE FROM {table} WHERE {column} LIKE %s", (PREFIX + "%",))
@@ -356,7 +359,7 @@ def test_every_new_column_round_trips(loaded):
     assert sub["duration_ms"] == 65000
     assert sub["cache_read_tokens"] == 3200000
     assert sub["source"] == "hook" and sub["model"] == "claude-haiku-5"
-    assert sub["ticket_id"] == "WTEST-1" and sub["team"] == "wtest-team"
+    assert sub["branch_hash"] == PREFIX + "branch-1" and sub["team"] == "wtest-team"
     assert sub["user_hash"] == "wtest-user-a" and sub["harness"] == "claude-code"
 
     comp = rows("SELECT * FROM artefact_activation WHERE span_id = %(s)s",
@@ -576,3 +579,52 @@ def test_the_stale_session_is_kept_and_the_call_resolves_the_real_one(loaded):
     assert (r["runs"], r["runs_with_a_tool_use_id"], r["runs_joined_to_a_call"]) == (1, 1, 1)
     assert (r["runs_with_cost"], r["runs_partial"]) == (0, 1), "a lower bound is not coverage"
     assert float(r["cost_usd_partial"]) == 0.5 and r["cost_usd_known"] is None
+
+
+
+# --- ADR-013: attribution, through the real loader and the real view ------------------
+
+def _change_request(cur, number, branch_hash, opened, closed, patches=()):
+    cid = f"{PREFIX}cr!{number}"
+    cur.execute("INSERT INTO change_request (cr_id, forge, repo_id, number, source_branch, branch_hash, "
+                "opened_at, merged_at, closed_at, state) VALUES (%s,'github','wtest',%s,'b',%s,%s,%s,%s,'merged')",
+                (cid, number, branch_hash, opened, closed, closed))
+    for pid in patches:
+        cur.execute("INSERT INTO change_request_commit (cr_id, patch_id, sha) VALUES (%s,%s,'x')", (cid, pid))
+    return cid
+
+
+def test_evidence_confirms_the_branch_join(loaded):
+    """The loaded turn carries patch-1 on branch-1; a change request on branch-1
+    containing patch-1 makes every activation on that branch `branch+commit`."""
+    with _connect() as conn, conn.cursor() as cur:
+        cid = _change_request(cur, 1, PREFIX + "branch-1", at(0), at(600), patches=[PREFIX + "patch-1"])
+    got = {r["method"] for r in rows(
+        "SELECT v.method FROM activation_change_request v JOIN artefact_activation a ON a.span_id = v.span_id "
+        "WHERE a.session_id = %(s)s AND v.cr_id = %(c)s", {"s": SESSION, "c": cid})}
+    assert got == {"branch+commit"}, got
+
+
+def test_a_renamed_branch_is_joined_through_its_commits(loaded):
+    """No change request carries branch-1's hash here — the branch was renamed
+    before the PR opened — but this session's patch-1 landed in it, so the work
+    is joined by `commit`, not lost."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM change_request_commit WHERE cr_id LIKE %s", (PREFIX + "%",))
+        cur.execute("DELETE FROM change_request WHERE cr_id LIKE %s", (PREFIX + "%",))
+        cid = _change_request(cur, 2, PREFIX + "renamed", at(0), at(600), patches=[PREFIX + "patch-1"])
+    got = {r["method"] for r in rows(
+        "SELECT v.method FROM activation_change_request v JOIN artefact_activation a ON a.span_id = v.span_id "
+        "WHERE a.session_id = %(s)s AND v.cr_id = %(c)s", {"s": SESSION, "c": cid})}
+    assert got == {"commit"}, got
+
+
+def test_work_after_the_change_request_closed_is_not_claimed_by_it(loaded):
+    """The earliest close at or after the activation: a change request that
+    closed before the work happened cannot have been where it went."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM change_request_commit WHERE cr_id LIKE %s", (PREFIX + "%",))
+        cur.execute("DELETE FROM change_request WHERE cr_id LIKE %s", (PREFIX + "%",))
+        _change_request(cur, 3, PREFIX + "branch-1", at(-600), at(-1))
+    assert rows("SELECT v.cr_id FROM activation_change_request v JOIN artefact_activation a "
+                "ON a.span_id = v.span_id WHERE a.session_id = %(s)s", {"s": SESSION}) == []

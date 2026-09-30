@@ -1,12 +1,15 @@
-"""Load delivery data from GitHub into ticket / pull_request / policy_result / defect.
+"""The GitHub adapter for the change-request record (ADR-013).
 
     python -m warehouse.load_delivery --repo owner/name --dsn postgresql://... --since 30d
     python -m warehouse.load_delivery --repo owner/name --dry-run          # print rows, touch nothing
 
-This is the other half of the primary metric. `skill_invocation` says what a skill
-cost; these tables say what happened to the work it was used on, joined on
-`std.ticket.id` — the ticket key parsed from the branch, which is why
-ticket-prefixed branches are a hard requirement rather than a convention.
+This is the other half of the primary metric. Capture says what a skill cost;
+these tables say what happened to the work it was used on. The join is not a
+ticket parsed from a branch name — that needed a naming convention nobody was
+told about and invented fake tickets — but a branch identity plus a time window,
+confirmed by commit patch-ids. The neutral record and its helpers live in
+`change_requests.py`; everything GitHub-shaped lives here, so a GitLab adapter
+(#103) is a sibling of this file, not a change to the schema.
 
 Requires the `gh` CLI, already authenticated. Policy results come from a CI
 artefact rather than the API: `run_seq` (which CI run this was) cannot be
@@ -17,38 +20,21 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import re
 import subprocess
 import sys
 import uuid
 from pathlib import Path
 
+from warehouse.change_requests import (CR_COLS, CR_COMMIT_COLS, CR_TICKET_COLS, branch_hash, cr_id,
+                                       key_in, repo_id, ticket_links, ticket_rows)
 from warehouse.load_traces import record_run
 
-PR_FIELDS = ("number,title,headRefName,createdAt,mergedAt,closedAt,labels,"
-             "reviews,reviewDecision,url,author,additions,deletions,changedFiles")
+FORGE = "github"
+
+PR_FIELDS = ("number,title,body,state,headRefName,headRepository,headRepositoryOwner,"
+             "isCrossRepository,closingIssuesReferences,createdAt,mergedAt,closedAt,labels,"
+             "reviews,reviewDecision,url,author")
 HARNESS_LABELS = {"claude-code": "claude-code", "copilot": "copilot", "no-ai": "none"}
-
-# A ticket key begins a branch name or a branch segment. `stdtel.enrich.TICKET`
-# is `\b`-anchored because it reads prose as well as branches, and on a branch
-# that is wrong: `dependabot/github_actions/actions/upload-artifact-7` upper-cased
-# contains `ARTIFACT-7` after a hyphen, so every Dependabot PR minted a phantom
-# ticket, a phantom `ticket` row and a phantom cohort member (#62). Anchoring to
-# the start of a path segment is the whole fix: ARTIFACT does not start one.
-TICKET_IN_BRANCH = re.compile(r"(?:^|/)([A-Z][A-Z0-9]{1,9}-\d{1,6})")
-
-
-def ticket_from_branch(branch: str) -> str:
-    """The ticket key a branch is named for, or 'unattributed'.
-
-    Deliberately stricter than the capture-side parser, which sees the same
-    branch and would still stamp `std.ticket.id = ARTIFACT-7` on a span. The
-    delivery side is where the phantom became a row, so it is fixed here first;
-    the two want reconciling, and the ADR-002 join is what depends on it.
-    """
-    m = TICKET_IN_BRANCH.search((branch or "").upper())
-    return m.group(1) if m else "unattributed"
-
 
 def is_bot(pr: dict) -> bool:
     """A PR opened by a bot.
@@ -116,14 +102,30 @@ def first_approval_at(reviews: list[dict]) -> dt.datetime | None:
     return None
 
 
-def parse_pr(pr: dict, repo: str) -> dict:
-    opened, merged = _ts(pr.get("createdAt")), _ts(pr.get("mergedAt"))
+def _github(owner_name: str) -> str:
+    return repo_id(f"https://github.com/{owner_name}")
+
+
+def to_change_request(pr: dict, base: str) -> dict:
+    """One GitHub PR as a neutral change-request row.
+
+    `base` is the repository the PR targets and owns it. The branch hash uses the
+    repository the *branch* lives in, which for a fork is the contributor's:
+    their hook sees the fork's remote, so hashing the base would never join.
+    """
+    opened, merged, closed = _ts(pr.get("createdAt")), _ts(pr.get("mergedAt")), _ts(pr.get("closedAt"))
+    head_owner = (pr.get("headRepositoryOwner") or {}).get("login") or base.split("/")[0]
+    head_name = (pr.get("headRepository") or {}).get("name") or base.split("/")[-1]
+    head_repo = _github(f"{head_owner}/{head_name}") if pr.get("isCrossRepository") else _github(base)
+    state = "merged" if merged else "closed" if closed else "open"
     return {
-        "pr_id": f"{repo}#{pr['number']}",
-        "repo": repo,
-        "ticket_id": ticket_from_branch(pr.get("headRefName") or ""),
-        "opened_at": opened,
-        "merged_at": merged,
+        "cr_id": cr_id(FORGE, _github(base), pr["number"]),
+        "forge": FORGE,
+        "repo_id": _github(base),
+        "number": pr["number"],
+        "source_branch": pr.get("headRefName") or "",
+        "branch_hash": branch_hash(head_repo, pr.get("headRefName") or ""),
+        "opened_at": opened, "merged_at": merged, "closed_at": closed, "state": state,
         "review_rounds": review_rounds(pr.get("reviews")),
         "hours_to_first_approval": _hours(opened, first_approval_at(pr.get("reviews"))),
         "ci_failures": None,          # populated from the CI artefact, not the API
@@ -131,52 +133,76 @@ def parse_pr(pr: dict, repo: str) -> dict:
     }
 
 
-def ticket_rows(prs: list[dict], team: str) -> list[dict]:
-    """One ticket row per ticket key seen, with cycle time derived from its PRs.
+def ticket_link_rows(pr: dict, base: str) -> list[dict]:
+    closes = [i.get("number") for i in pr.get("closingIssuesReferences") or [] if i.get("number")]
+    this = cr_id(FORGE, _github(base), pr["number"])
+    return [{"cr_id": this, "ticket_id": ticket, "source": source}
+            for ticket, source in ticket_links(FORGE, _github(base), closes, pr.get("title") or "",
+                                               pr.get("body") or "", pr.get("headRefName") or "")]
 
-    Real cycle time starts when work starts, which lives in Linear. Until that
-    source is wired, first-PR-opened to last-PR-merged is the honest proxy — it
-    understates cycle time and is labelled as a proxy wherever it surfaces.
-    """
-    by_ticket: dict[str, list[dict]] = {}
-    for pr in prs:
-        if pr["ticket_id"] != "unattributed":
-            by_ticket.setdefault(pr["ticket_id"], []).append(pr)
+
+def _patch_id(patch: str) -> str | None:
+    """`git patch-id` works with no repository, reading the patch on stdin; the
+    GitHub patch of a commit gives the same id as local git (verified on
+    6aa924d, 2026-09-30), so no clone is needed."""
+    if not patch.strip():
+        return None
+    try:
+        out = subprocess.run(["git", "patch-id", "--stable"], input=patch, capture_output=True,
+                             text=True, check=True).stdout.split()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out[0] if out else None
+
+
+def commit_rows(this_cr: str, shas: list[str], fetch_patch) -> list[dict]:
+    """(cr_id, patch_id, sha) per commit. A commit whose patch cannot be read is
+    skipped, never given an invented id."""
     rows = []
-    for ticket_id, group in by_ticket.items():
-        opened = min((p["opened_at"] for p in group if p["opened_at"]), default=None)
-        merged = [p["merged_at"] for p in group if p["merged_at"]]
-        done = max(merged) if merged else None
-        arms = {p["assisted_by"] for p in group} - {"unknown"}
-        rows.append({
-            "ticket_id": ticket_id, "team": team, "story_points": None,
-            "created_at": opened, "started_at": opened, "done_at": done,
-            "cycle_time_hours": _hours(opened, done), "lead_time_hours": _hours(opened, done),
-            "harness_arm": arms.pop() if len(arms) == 1 else "mixed" if arms else "unknown",
-        })
+    for sha in shas:
+        pid = _patch_id(fetch_patch(sha) or "")
+        if pid:
+            rows.append({"cr_id": this_cr, "patch_id": pid, "sha": sha})
     return rows
+
+
+def _pr_commits(base: str, number: int) -> list[str]:
+    data = gh_json(["api", "--paginate", f"repos/{base}/pulls/{number}/commits"])
+    return [c["sha"] for c in data if c.get("sha")]
+
+
+def _commit_patch(base: str, sha: str) -> str:
+    out = subprocess.run(["gh", "api", f"repos/{base}/commits/{sha}",
+                          "-H", "Accept: application/vnd.github.patch"],
+                         capture_output=True, text=True)
+    return out.stdout if out.returncode == 0 else ""
+
+
+def _cr_from_ci(pr_id: str) -> str:
+    """CI writes `owner/repo#number`, GitHub-shaped; the adapter owns the mapping."""
+    owner_name, _, number = (pr_id or "").partition("#")
+    return cr_id(FORGE, _github(owner_name), number) if number else ""
 
 
 def policy_rows(path: Path) -> list[dict]:
     """Policy results from a CI artefact: JSONL of
-    {pr_id, policy_id, run_seq, passed, evaluated_at}."""
+    {pr_id, policy_id, run_seq, passed, evaluated_at}, keyed onto change requests."""
     rows = []
     for line in path.read_text().splitlines():
         if line.strip():
             r = json.loads(line)
-            r["evaluated_at"] = _ts(r.get("evaluated_at"))
-            rows.append(r)
+            rows.append({"cr_id": _cr_from_ci(r.get("pr_id", "")), "policy_id": r.get("policy_id"),
+                         "run_seq": r.get("run_seq"), "passed": r.get("passed"),
+                         "evaluated_at": _ts(r.get("evaluated_at"))})
     return rows
 
 
 def defect_rows(issues: list[dict], repo: str) -> list[dict]:
     rows = []
     for issue in issues:
-        body = f"{issue.get('title','')} {issue.get('body','')}"
-        m = re.search(r"\b([A-Z][A-Z0-9]{1,9}-\d{1,6})\b", body.upper())
         rows.append({
             "defect_id": f"{repo}#{issue['number']}",
-            "ticket_id": m.group(1) if m else None,
+            "ticket_id": key_in(issue.get("title", "")) or key_in(issue.get("body", "")),
             "opened_at": _ts(issue.get("createdAt")),
             "severity": next((l["name"] for l in issue.get("labels", [])
                               if l.get("name", "").lower().startswith(("sev", "p0", "p1"))), None),
@@ -186,15 +212,17 @@ def defect_rows(issues: list[dict], repo: str) -> list[dict]:
 
 
 TABLES = {
-    "pull_request": ["pr_id", "repo", "ticket_id", "opened_at", "merged_at", "review_rounds",
-                     "hours_to_first_approval", "ci_failures", "assisted_by"],
+    "change_request": CR_COLS,
+    "change_request_commit": CR_COMMIT_COLS,
+    "change_request_ticket": CR_TICKET_COLS,
     "ticket": ["ticket_id", "team", "story_points", "created_at", "started_at", "done_at",
                "cycle_time_hours", "lead_time_hours", "harness_arm"],
-    "policy_result": ["pr_id", "policy_id", "run_seq", "passed", "evaluated_at"],
+    "policy_result": ["cr_id", "policy_id", "run_seq", "passed", "evaluated_at"],
     "defect": ["defect_id", "ticket_id", "opened_at", "severity", "source"],
 }
-CONFLICT_KEYS = {"pull_request": "pr_id", "ticket": "ticket_id",
-                 "policy_result": "pr_id, policy_id, run_seq", "defect": "defect_id"}
+CONFLICT_KEYS = {"change_request": "cr_id", "change_request_commit": "cr_id, patch_id",
+                 "change_request_ticket": "cr_id, ticket_id", "ticket": "ticket_id",
+                 "policy_result": "cr_id, policy_id, run_seq", "defect": "defect_id"}
 
 
 def write(dsn: str, table: str, rows: list[dict]) -> int:
@@ -219,6 +247,8 @@ def main(argv=None) -> int:
     ap.add_argument("--policy-results", type=Path, help="JSONL artefact from CI")
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-commits", action="store_true",
+                    help="skip commit patch-ids (one API call per commit); the branch join still works")
     a = ap.parse_args(argv)
     if not a.dry_run and not a.dsn:
         raise SystemExit("--dsn is required unless --dry-run")
@@ -232,21 +262,31 @@ def main(argv=None) -> int:
            "started_at": dt.datetime.now(dt.timezone.utc), "finished_at": None,
            "rows_loaded": 0, "source_max_ts": None, "ok": False, "error": None}
     try:
-        raw = gh_json(["pr", "list", "--repo", a.repo, "--state", "merged", "--limit", str(a.limit),
-                       "--search", f"merged:>={cutoff}", "--json", PR_FIELDS])
+        # every state (ADR-013 decision 3): closed-unmerged work has a cost, and
+        # an open PR is where in-flight work joins until it closes
+        raw = gh_json(["pr", "list", "--repo", a.repo, "--state", "all", "--limit", str(a.limit),
+                       "--search", f"updated:>={cutoff}", "--json", PR_FIELDS])
         bots = [p for p in raw if is_bot(p)]
         if bots:
             print(f"skipped {len(bots)} bot-authored PR(s) (#62)", file=sys.stderr)
-        prs = [parse_pr(p, a.repo) for p in raw if not is_bot(p)]
+        humans = [p for p in raw if not is_bot(p)]
+        prs = [to_change_request(p, a.repo) for p in humans]
+        links = [row for p in humans for row in ticket_link_rows(p, a.repo)]
+        commits = [] if a.no_commits else [
+            row for p, c in zip(humans, prs)
+            for row in commit_rows(c["cr_id"], _pr_commits(a.repo, p["number"]),
+                                   lambda sha: _commit_patch(a.repo, sha))]
         issues = gh_json(["issue", "list", "--repo", a.repo, "--state", "all", "--label", "bug",
                           "--limit", str(a.limit), "--json", "number,title,body,createdAt,labels"])
         batches = {
-            "pull_request": prs,
-            "ticket": ticket_rows(prs, a.team),
+            "change_request": prs,
+            "change_request_commit": commits,
+            "change_request_ticket": links,
+            "ticket": ticket_rows(prs, links, a.team),
             "defect": defect_rows(issues, a.repo),
             "policy_result": policy_rows(a.policy_results) if a.policy_results else [],
         }
-        run["source_max_ts"] = max((p["merged_at"] for p in prs if p["merged_at"]), default=None)
+        run["source_max_ts"] = max((p["closed_at"] or p["opened_at"] for p in prs), default=None)
         for table, rows in batches.items():
             if a.dry_run:
                 print(f"{table}: {len(rows)} row(s)")

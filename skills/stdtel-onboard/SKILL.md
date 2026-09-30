@@ -3,7 +3,7 @@ name: stdtel-onboard
 description: Decorate a skill, sub-agent or MCP server to the standards-telemetry contract so its cost can be attributed — adds the metadata block, picks a standard_id and policy_ids, sets telemetry.scope, and writes an overlay entry for artefacts you do not own. Use when onboarding a skill or agent to telemetry, when stdtel-validate fails, when something reports as unversioned, or when a long-running skill's cost needs rolling up.
 license: MIT
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -50,7 +50,7 @@ the catalogue loads rather than kept somewhere it does nothing.
 Most skills need nothing here. The default is `turn`, and a turn already has real span parentage, so
 its contents are attributed without any declaration.
 
-Set `telemetry.scope: ticket` **only** when the skill drives work over many turns — a loop that walks
+Set `telemetry.scope: branch` **only** when the skill drives work over many turns — a loop that walks
 an epic ticket by ticket is the case this exists for. Its own activation is seconds of tool call while
 the work it causes is the largest line item, and without a declared unit that work is attributed to
 nothing but individual turns.

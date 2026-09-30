@@ -115,7 +115,7 @@ stdtel-policy-report --pr-id owner/repo#42 (--run-seq N | --derive-run-seq REPO 
 
 | flag | default | meaning |
 |---|---|---|
-| `--pr-id` | *(required)* | must match `pull_request.pr_id`, i.e. `owner/repo#number` |
+| `--pr-id` | *(required)* | `owner/repo#number`; the GitHub adapter maps it onto `change_request.cr_id` (ADR-013) |
 | `--run-seq` | — | explicit sequence number; `1` is the first CI run on the PR |
 | `--derive-run-seq` | — | count prior completed runs with `gh` and use the next number |
 | `--policies` | `policies` | Rego root |
@@ -152,7 +152,7 @@ stdtel-doctor [--quiet]
 | hook resolvable | a hook cannot run `stdtel-hook`; probed under `/bin/sh -c`, not your interactive shell |
 | hooks registered | not registered, or registered **twice** (settings *and* plugin), which double-counts every skill window |
 | plugin in step | the plugin and the package are different releases. They are separate installs and neither updates the other; a stale plugin keeps working while the skills it ships lag |
-| ticket key | this branch yields `unattributed`, so the work is excluded from outcome analysis |
+| branch identity | no branch readable, or no remote: this work cannot join a change request (ADR-013). Any branch name joins; `main`/`master` passes with a note that work committed straight to it has no change request |
 | skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
 | collector reachable | spans are being dropped right now |
 | hooks running | registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up |
@@ -176,9 +176,9 @@ setting; Claude Code sends session JSON on stdin.
 ```
 
 ```
-stdtel STDTEL-16                        everything fine
-stdtel ⚠ no ticket                      this branch yields no ticket key
-stdtel ⚠ no ticket · 1 unversioned      ...and a skill is not in the catalogue
+stdtel fix/media-hardening-233         everything fine: the local branch name
+stdtel ⚠ no branch identity            not a git checkout, or no remote: work here cannot join a PR
+stdtel ⚠ 1 unversioned                 a skill is not in the catalogue
 stdtel ⚠ spans dropping                 the last export failed
 ```
 
@@ -314,7 +314,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_STATUSLINE` | unset | statusline | `off`/`0`/`false`/`no` hides the status line without disabling telemetry |
 | `STDTEL_DISABLED` | unset | hooks | `1`/`true`/`yes`/`on` disables telemetry entirely; checked before the payload is read |
 | `STDTEL_STATE_DIR` | `~/.stdtel/sessions` | state | per-session state between hook processes |
-| `STDTEL_BRANCH` | *(git)* | enrich | overrides branch detection; the ticket key is parsed from it |
+| `STDTEL_BRANCH` | *(git)* | enrich | overrides branch detection; `std.branch.hash` is computed from it (ADR-013) |
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |

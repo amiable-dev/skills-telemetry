@@ -3,7 +3,7 @@ name: stdtel-query
 description: Query standards-telemetry data to answer questions about skill cost, token usage, cache-hit rate, and delivery outcomes — tokens per merged PR, tokens per cycle-time hour, first-time policy pass rate. Use when asked what a skill cost, which skills are expensive, how a harness compares, or to pull numbers out of Tempo, Prometheus or the warehouse.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -39,12 +39,17 @@ skills, harnesses or arms are not. See [`docs/evaluation-power.md`](../../docs/e
 
 Tokens per merged PR, by skill:
 
+Work reaches a change request (a PR, or a GitLab MR) through `activation_change_request`, the one
+place attribution is defined ([ADR-013](../../docs/adrs/013-join-work-to-change-requests.md)). Its
+`method` says how: `branch`, `branch+commit` (confirmed by a commit patch-id) or `commit`. Use it;
+never join on anything else.
+
 ```sql
-SELECT i.skill_name, count(DISTINCT p.pr_id) AS prs,
-       sum(i.tail_tokens)::numeric / NULLIF(count(DISTINCT p.pr_id), 0) AS tokens_per_pr
+SELECT i.skill_name, count(DISTINCT c.cr_id) AS prs,
+       sum(i.tail_tokens)::numeric / NULLIF(count(DISTINCT c.cr_id), 0) AS tokens_per_pr
 FROM skill_invocation i
-JOIN pull_request p ON p.ticket_id = i.ticket_id AND p.merged_at IS NOT NULL
-WHERE i.ticket_id <> 'unattributed'
+JOIN activation_change_request v ON v.span_id = i.span_id
+JOIN change_request c ON c.cr_id = v.cr_id AND c.state = 'merged'
 GROUP BY 1 ORDER BY tokens_per_pr DESC;
 ```
 
@@ -52,7 +57,10 @@ Tokens per cycle-time hour (cost per unit of delivery speed):
 
 ```sql
 SELECT i.skill_name, sum(i.tail_tokens) / NULLIF(sum(t.cycle_time_hours), 0) AS tokens_per_hour
-FROM skill_invocation i JOIN ticket t USING (ticket_id)
+FROM skill_invocation i
+JOIN activation_change_request v ON v.span_id = i.span_id
+JOIN change_request_ticket ct ON ct.cr_id = v.cr_id
+JOIN ticket t ON t.ticket_id = ct.ticket_id
 WHERE t.cycle_time_hours IS NOT NULL GROUP BY 1;
 ```
 
@@ -66,17 +74,10 @@ FROM skill_invocation GROUP BY 1;
 ```
 
 Tool-call failure rate, by harness — a leading indicator of a skill telling the model to do
-something the environment cannot do:
-
-```sql
-SELECT harness,
-       sum(tool_failures)::numeric / NULLIF(sum(tool_calls), 0) AS failure_rate,
-       sum(tool_calls) AS calls
-FROM session_cost GROUP BY 1;
-```
-
-Per-tool counts live on the span as `std.session.tool.<name>.calls` / `.failures`; query them in
-Tempo or Prometheus rather than Postgres, which stores the session totals.
+something the environment cannot do — is **not in Postgres**. The per-tool counts live only on the
+session span, as `std.session.tool.<name>.calls` and `.failures`: query them in Tempo, or in
+Prometheus through spanmetrics. (This section used to give SQL against `session_cost.tool_failures`,
+a column that has never existed; it failed for anyone who ran it.)
 
 First-time policy pass rate is the primary effectiveness metric; `warehouse/scorecard.sql` computes
 it with the with/without arms already separated. Run that rather than rewriting it.
@@ -89,20 +90,28 @@ it with the with/without arms already separated. Run that rather than rewriting 
   session total. State which denominator a ratio uses:
 
   ```sql
-  -- total spend per merged PR (the honest cost-per-PR)
-  SELECT p.pr_id, sum(sc.input_tokens + sc.output_tokens) AS total_tokens
-  FROM session_cost sc JOIN pull_request p ON p.ticket_id = sc.ticket_id
-  WHERE p.merged_at IS NOT NULL GROUP BY 1;
+  -- total spend per merged PR (the honest cost-per-PR): turn tokens, which are
+  -- per-turn deltas, attributed to the change request each turn's work became
+  SELECT c.cr_id, sum(coalesce(a.input_tokens, 0) + coalesce(a.output_tokens, 0)) AS total_tokens
+  FROM artefact_activation a
+  JOIN activation_change_request v ON v.span_id = a.span_id
+  JOIN change_request c ON c.cr_id = v.cr_id AND c.state = 'merged'
+  WHERE a.kind = 'turn' GROUP BY 1;
 
-  -- how much of that total any skill was able to claim
-  SELECT sc.ticket_id, sum(sc.input_tokens + sc.output_tokens) AS total,
+  -- how much of each session's total any skill was able to claim
+  SELECT sc.session_id, sum(sc.input_tokens + sc.output_tokens) AS total,
          coalesce(sum(i.tail_tokens), 0) AS skill_attributed
   FROM session_cost sc LEFT JOIN skill_invocation i USING (session_id) GROUP BY 1;
   ```
 - **`unversioned` means not in the catalogue**, not unversioned upstream. Exclude from outcome
   analysis, keep for cost, and suggest `stdtel-onboard`.
-- **`unattributed` means the branch carried no ticket key.** Same rule. Report what share of rows
-  this is — it bounds every delivery-joined conclusion.
+- **Work that joined no change request is unattributed.** Any branch name joins, so this means no
+  branch identity (no git repository or no remote), work committed straight to the default branch,
+  or a change request not yet loaded. Keep it for cost, exclude it from outcome, and report its share —
+  it bounds every delivery-joined conclusion.
+- **A `branch`-only link is not evidence the skill contributed.** The scorecard counts only
+  `branch+commit` and `commit` in the with-arm, and keeps `branch`-only change requests out of *both*
+  arms. Do the same in any comparison you write.
 - **`load_tokens` is chars/4.** An ordering signal, never a token count.
 - **`harness_arm = 'mixed'`** on a ticket means its PRs disagreed; exclude it from crossover
   comparisons rather than picking one.
@@ -113,7 +122,7 @@ it with the with/without arms already separated. Run that rather than rewriting 
 
 ```bash
 curl -s --get http://localhost:3200/api/search \
-  --data-urlencode 'q={ resource.std.ticket.id = "PLAT-42" }' \
+  --data-urlencode 'q={ span.session.id = "<session id>" }' \
   --data-urlencode "start=$(( $(date +%s) - 86400 ))" --data-urlencode "end=$(date +%s)"
 ```
 

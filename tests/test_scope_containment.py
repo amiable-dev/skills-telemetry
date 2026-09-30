@@ -17,6 +17,17 @@ import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from stdtel.artefact import SCOPE_ID, SCOPE_KEY, SCOPE_NAME, SCOPE_SOURCE
+from stdtel.enrich import branch_hash
+
+REPO = "git@github.com:a/b.git"
+
+
+def key(branch: str) -> str:
+    """ADR-013: a branch scope is keyed on the branch identity, never a ticket."""
+    return branch_hash("github.com/a/b", branch)
+
+
+K11, K12 = key("feature/STDTEL-11-one"), key("feature/STDTEL-12-two")
 from stdtel.hooks import cli as hooks
 from stdtel.state import SessionState
 
@@ -45,9 +56,10 @@ def catalogue(tmp_path, monkeypatch):
         line = f"  telemetry.scope: {scope}\n" if scope else ""
         (d / "SKILL.md").write_text(SKILL.format(name=name, scope=line))
 
-    add("epic-loop", scope="ticket")
+    add("epic-loop", scope="branch")
     add("formatter")                       # declares nothing: turn-scoped
     monkeypatch.setenv("STDTEL_SKILLS_ROOT", str(root))
+    monkeypatch.setenv("STDTEL_REPO", REPO)
     return root
 
 
@@ -90,7 +102,7 @@ def test_a_ticket_scoped_skill_opens_a_container_on_the_current_ticket(catalogue
     use_skill(sid, "epic-loop", "t1")
     spans = run(sid, tmp_path)
     assert scopes(spans, SCOPE_NAME) == {"epic-loop"}
-    assert scopes(spans, SCOPE_KEY) == {"STDTEL-11"}
+    assert scopes(spans, SCOPE_KEY) == {K11}
     assert all(s.attributes.get(SCOPE_ID) for s in activations(spans))
 
 
@@ -104,14 +116,14 @@ def test_the_key_rolls_when_the_ticket_moves_without_a_new_activation(catalogue,
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
     use_skill(sid, "epic-loop", "t1")
     first = run(sid, tmp_path)
-    assert scopes(first) == {"STDTEL-11"}
+    assert scopes(first) == {K11}
 
     monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-12-two")
     # the loop does ordinary work in the next iteration; note it is a *different*,
     # unscoped skill, so the container comes from state rather than this activation
     use_skill(sid, "formatter", "t2", prompt_id="p2")
     second = run(sid, tmp_path)
-    assert scopes(second) == {"STDTEL-12"}, "the second iteration still reads as the first"
+    assert scopes(second) == {K12}, "the second iteration still reads as the first"
 
 
 def test_the_scope_name_survives_the_roll_so_a_run_can_be_totalled(catalogue, tmp_path, monkeypatch):
@@ -144,7 +156,7 @@ def test_a_spans_scope_key_never_contradicts_its_own_ticket(catalogue, tmp_path,
     """The boundary Stop, where a loop skill's per-iteration cost actually lands.
 
     The ticket refreshes per Stop, so the spans in the Stop that follows a branch
-    change already carry the new `std.ticket.id`. Stamping them with the key the
+    change already carry the new `std.branch.hash`. Stamping them with the key the
     scope opened on would make a span disagree with itself, which is worse than a
     boundary that is one turn out.
     """
@@ -157,7 +169,7 @@ def test_a_spans_scope_key_never_contradicts_its_own_ticket(catalogue, tmp_path,
     monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-12-two")
     use_skill(sid, "formatter", "t2", prompt_id="p2")
     for s in activations(run(sid, tmp_path)):
-        assert s.attributes[SCOPE_KEY] == s.resource.attributes["std.ticket.id"]
+        assert s.attributes[SCOPE_KEY] == s.resource.attributes["std.branch.hash"]
 
 
 def test_a_second_scoping_skill_supersedes_the_first(catalogue, tmp_path, monkeypatch):
@@ -165,7 +177,7 @@ def test_a_second_scoping_skill_supersedes_the_first(catalogue, tmp_path, monkey
     known limitation, not a half-built feature."""
     (catalogue / "other-loop").mkdir()
     (catalogue / "other-loop" / "SKILL.md").write_text(
-        SKILL.format(name="other-loop", scope="  telemetry.scope: ticket\n"))
+        SKILL.format(name="other-loop", scope="  telemetry.scope: branch\n"))
     sid = "scope-supersede"
     monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
@@ -201,7 +213,7 @@ def test_everything_in_the_window_inherits_the_scope_not_just_the_skill(catalogu
     spans = run(sid, tmp_path)
     kinds = {s.attributes["std.artefact.kind"] for s in activations(spans)}
     assert "subagent" in kinds, f"fixture produced no sub-agent: {kinds}"
-    assert scopes(spans) == {"STDTEL-11"}, "a sub-agent inside the iteration was left unscoped"
+    assert scopes(spans) == {K11}, "a sub-agent inside the iteration was left unscoped"
 
 
 def test_the_session_cost_span_is_never_scoped(catalogue, tmp_path, monkeypatch):
@@ -224,7 +236,7 @@ def test_an_overlay_supplied_scope_is_marked_as_assumed(catalogue, tmp_path, mon
     overlay = tmp_path / "overlay" / "third-party"
     overlay.mkdir(parents=True)
     (overlay / "SKILL.md").write_text(SKILL.format(
-        name="third-party", scope="  telemetry.scope: ticket\n"))
+        name="third-party", scope="  telemetry.scope: branch\n"))
     plain = catalogue / "third-party"
     plain.mkdir()
     (plain / "SKILL.md").write_text(SKILL.format(name="third-party", scope=""))
@@ -241,11 +253,11 @@ def test_the_scope_survives_a_save_load_cycle(catalogue, tmp_path):
     """Each hook is a separate process, so an unpersisted scope reads as "no
     container" at the next event and the run silently stops being measured."""
     st = SessionState.load("scope-persist")
-    st.open_scope("epic-loop", "ticket", "STDTEL-11", "artefact")
+    st.open_scope("epic-loop", "branch", K11, "artefact")
     st.save()
     back = SessionState.load("scope-persist")
     assert (back.scope_name, back.scope_unit, back.scope_key, back.scope_source) == \
-        ("epic-loop", "ticket", "STDTEL-11", "artefact")
+        ("epic-loop", "branch", K11, "artefact")
     assert back.scope_id == st.scope_id
 
 
@@ -263,7 +275,7 @@ def test_a_skill_closes_its_own_container_and_later_work_is_unscoped(catalogue, 
     monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-11-one")
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
     use_skill(sid, "epic-loop", "t1")
-    assert scopes(run(sid, tmp_path)) == {"STDTEL-11"}
+    assert scopes(run(sid, tmp_path)) == {K11}
 
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", sid)
     assert hooks.main(["scope-close"]) == 0
@@ -279,7 +291,7 @@ def test_closing_takes_the_session_from_the_environment(tmp_path, monkeypatch, c
     from stdtel.state import SessionState
 
     with SessionState.mutate("env-sid") as st:
-        st.open_scope("epic-loop", "ticket", "STDTEL-11", "artefact")
+        st.open_scope("epic-loop", "branch", K11, "artefact")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sid")
     assert hooks.scope_close([]) == 0
     assert SessionState.load("env-sid").scope_name == ""

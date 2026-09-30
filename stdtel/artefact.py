@@ -138,6 +138,9 @@ ALLOWED = {
         "gen_ai.request.model",
         # ADR-012: MCP calls made in this turn — the other half of the join.
         "std.artefact.mcp_tool_use_ids",
+        # ADR-013: patch-ids of the commits this session made, the evidence that
+        # confirms the branch join and repairs a rename or a cherry-pick.
+        "std.artefact.commit_patch_ids",
     },
 }
 
@@ -351,7 +354,8 @@ def turn(prompt_id: str, started_at: float, ended_at: float, usage_attrs: dict,
          llm_requests: int, tool_calls: int = 0, model: str = "",
          duration_ms: int | None = None, hook_ms: dict | None = None,
          permission_mode: str = "", source: str = SOURCE_TRANSCRIPT,
-         mcp_tool_use_ids: list | None = None) -> dict:
+         mcp_tool_use_ids: list | None = None,
+         commit_patch_ids: list | None = None) -> dict:
     """One prompt-to-stop turn: the denominator for per-turn ratios.
 
     Not the denominator for skill effectiveness, which is the PR — see
@@ -379,6 +383,8 @@ def turn(prompt_id: str, started_at: float, ended_at: float, usage_attrs: dict,
         attrs["std.turn.hook_ms"] = sum(hook_ms.values())
     if mcp_tool_use_ids:
         attrs["std.artefact.mcp_tool_use_ids"] = list(mcp_tool_use_ids)
+    if commit_patch_ids:
+        attrs["std.artefact.commit_patch_ids"] = list(commit_patch_ids)
     return activation(KIND_TURN, started_at, ended_at, attrs, source=source)
 
 

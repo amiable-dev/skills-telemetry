@@ -9,10 +9,20 @@ metric whose whole claim rests on n being truthful.
 Two fixes, tested here together because either alone leaves the other's rows: a
 ticket key must start the branch or a branch segment, and a bot-authored PR is
 not developer work.
+
+Since ADR-013 the ticket is no longer the join key, only enrichment, found by
+this regex when the forge links no issue. The phantoms stay tested here because
+a phantom ticket still mis-groups work, even if it can no longer mis-join it.
 """
 import pytest
 
-from warehouse.load_delivery import is_bot, parse_pr, ticket_from_branch, ticket_rows
+from warehouse.change_requests import key_in_branch, ticket_rows
+from warehouse.load_delivery import is_bot, ticket_link_rows, to_change_request
+
+
+def ticket_from_branch(branch: str) -> str:
+    """The branch half of the fallback, spelled the way these tests always read."""
+    return key_in_branch(branch) or "unattributed"
 
 
 # --- the phantoms, exactly as they appeared ---
@@ -25,10 +35,10 @@ PHANTOMS = [
     "dependabot/github_actions/docker/build-push-action-6",
 ]
 
-#: Branches the anchor does NOT fix, because the phantom key *does* start a
-#: segment. `requests-2.32.5` is indistinguishable from a ticket key by shape
-#: alone, and a regex that excluded it would exclude real keys too. These are
-#: removed by the bot filter, which is why both halves of the fix are needed.
+#: Branches the anchor did NOT fix, because the phantom key *does* start a
+#: segment. ADR-013 closed them twice over: a key followed by `.` is a version,
+#: and dependabot/ and renovate/ branches carry no ticket by construction. The
+#: bot filter still removes the PRs themselves.
 PHANTOMS_ONLY_THE_BOT_FILTER_CATCHES = [
     "dependabot/pip/requests-2.32.5",
     "dependabot/npm_and_yarn/types/node-24",
@@ -42,15 +52,9 @@ def test_a_dependabot_branch_mints_no_ticket(branch):
 
 
 @pytest.mark.parametrize("branch", PHANTOMS_ONLY_THE_BOT_FILTER_CATCHES)
-def test_the_anchor_alone_does_not_catch_every_phantom(branch):
-    """Written down rather than wished away.
-
-    A branch segment that begins with a package name and ends in a version is
-    the same shape as a ticket key, and no regex can tell them apart. The bot
-    filter is what removes these rows; if it is ever relaxed, this test says
-    what comes back.
-    """
-    assert ticket_from_branch(branch) != "unattributed", branch
+def test_the_phantoms_the_anchor_missed_are_now_closed(branch):
+    """These minted ANALYZE-4, INIT-4 and REQUESTS-2 until ADR-013."""
+    assert ticket_from_branch(branch) == "unattributed", branch
     assert is_bot({"author": {"login": "dependabot[bot]"}})
 
 
@@ -87,11 +91,12 @@ def test_a_phantom_ticket_produces_no_ticket_row():
     """The row is what the scorecard counts, so this is the assertion that
     matters: unattributed PRs are kept for cost analysis and excluded from
     outcome analysis, which is exactly what a Dependabot PR deserves."""
-    prs = [parse_pr({"number": 7, "headRefName": PHANTOMS[0],
-                     "createdAt": "2026-09-01T09:00:00Z",
-                     "mergedAt": "2026-09-02T09:00:00Z"}, "o/r")]
-    assert prs[0]["ticket_id"] == "unattributed"
-    assert ticket_rows(prs, "payments") == []
+    raw = {"number": 7, "headRefName": PHANTOMS[0], "title": "bump", "body": "",
+           "createdAt": "2026-09-01T09:00:00Z", "mergedAt": "2026-09-02T09:00:00Z"}
+    prs = [to_change_request(raw, "o/r")]
+    links = ticket_link_rows(raw, "o/r")
+    assert links == []
+    assert ticket_rows(prs, links, "payments") == []
 
 
 # --- bot authorship, in all three spellings gh has used ---
@@ -131,29 +136,6 @@ def test_the_bot_filter_and_the_regex_cover_different_rows():
     assert ticket_from_branch("dependabot/bump-thing") == "unattributed"
 
 
-# --- the two halves of the ADR-002 join must agree ---
-
-def test_the_capture_and_delivery_parsers_cannot_drift():
-    """`warehouse/` is standalone and imports nothing from `stdtel`, so the same
-    expression exists twice on purpose. ADR-002 joins a span's `std.ticket.id`
-    to a PR's `ticket_id` on equality, so a difference between them fails
-    nothing and silently stops rows matching — which is how #62's phantoms were
-    on spans as well as in the `ticket` table.
-    """
-    from stdtel.enrich import ticket_from_branch as capture_side
-
-    corpus = (PHANTOMS + PHANTOMS_ONLY_THE_BOT_FILTER_CATCHES +
-              ["PLAT-42-audit-log", "feature/PLAT-42-audit-log", "chris/STDTEL-63-adr-009-capture",
-               "fix/plat-42-lowercase-branch", "release/v2/OPS-1234-rollback",
-               "fix-typo", "", "main", "chore/bump-deps"])
-    disagreements = [b for b in corpus if capture_side(b) != ticket_from_branch(b)]
-    assert not disagreements, f"the join key differs between capture and delivery for: {disagreements}"
-
-
-@pytest.mark.parametrize("branch", PHANTOMS)
-def test_a_dependabot_branch_stamps_no_ticket_on_a_span_either(branch):
-    """The fix had to reach capture too: the delivery half stopped minting
-    phantom `ticket` rows while spans kept carrying `ARTIFACT-7`."""
-    from stdtel.enrich import ticket_from_branch as capture_side
-
-    assert capture_side(branch) == "unattributed", branch
+# --- the capture half no longer parses tickets at all (ADR-013) ---
+# Its join key is a branch hash, held equal to this side's by
+# tests/test_change_requests.py; there is no second regex left to drift.

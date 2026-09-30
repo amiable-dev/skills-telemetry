@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
   cache_creation_tokens INT DEFAULT 0,
   llm_requests       INT DEFAULT 0,
   is_error           BOOLEAN DEFAULT FALSE,
-  ticket_id          TEXT NOT NULL DEFAULT 'unattributed',
+  branch_hash        TEXT,                   -- ADR-013 join key; NULL = no repo or branch readable
   repo               TEXT,
   team               TEXT,
   user_hash          TEXT
@@ -36,11 +36,10 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
 -- INSERT after an upgrade, which is the worst possible moment to find out.
 ALTER TABLE skill_invocation ADD COLUMN IF NOT EXISTS content_hash TEXT;
 
-CREATE INDEX IF NOT EXISTS ix_inv_ticket ON skill_invocation (ticket_id);
 CREATE INDEX IF NOT EXISTS ix_inv_skill  ON skill_invocation (skill_name, skill_version, harness);
 
 CREATE TABLE IF NOT EXISTS session_cost (           -- harness-native token metrics rolled up per session
-  session_id TEXT PRIMARY KEY, harness TEXT, model TEXT, ticket_id TEXT, team TEXT,
+  session_id TEXT PRIMARY KEY, harness TEXT, model TEXT, branch_hash TEXT, team TEXT,
   input_tokens BIGINT, output_tokens BIGINT, cache_read_tokens BIGINT, cache_creation_tokens BIGINT,
   cost_usd NUMERIC(12,4), active_seconds INT, started_at TIMESTAMPTZ,
   api_ms BIGINT, tool_ms BIGINT, duration_ms BIGINT   -- harness wall time, cumulative per session
@@ -52,16 +51,38 @@ CREATE TABLE IF NOT EXISTS ticket (                  -- from Linear
   harness_arm TEXT                                   -- crossover assignment: claude-code | copilot | control
 );
 
-CREATE TABLE IF NOT EXISTS pull_request (            -- from GitHub
-  pr_id TEXT PRIMARY KEY, repo TEXT, ticket_id TEXT, opened_at TIMESTAMPTZ, merged_at TIMESTAMPTZ,
+-- ADR-013: a pull request on GitHub, a merge request on GitLab. Filled by a
+-- per-forge adapter; every query reads only this shape.
+CREATE TABLE IF NOT EXISTS change_request (
+  cr_id TEXT PRIMARY KEY,                            -- forge:host/owner/name!number
+  forge TEXT NOT NULL, repo_id TEXT NOT NULL, number INT NOT NULL,
+  source_branch TEXT,                                -- readable here; spans carry only the hash
+  branch_hash TEXT,                                  -- the join key, as the capture side computes it
+  opened_at TIMESTAMPTZ, merged_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
+  state TEXT NOT NULL,                               -- merged | closed | open
   review_rounds INT, hours_to_first_approval NUMERIC, ci_failures INT,
-  assisted_by TEXT                                   -- claude-code | copilot | none (from harness labels)
+  assisted_by TEXT                                   -- claude-code | copilot | none | unknown
+);
+CREATE INDEX IF NOT EXISTS ix_cr_branch ON change_request (branch_hash, closed_at);
+
+-- Commit patch-ids per change request: the evidence side of the join.
+CREATE TABLE IF NOT EXISTS change_request_commit (
+  cr_id TEXT NOT NULL, patch_id TEXT NOT NULL, sha TEXT,
+  PRIMARY KEY (cr_id, patch_id)
+);
+CREATE INDEX IF NOT EXISTS ix_crc_patch ON change_request_commit (patch_id);
+
+-- The ticket as enrichment: the forge's issue links first, then a key found in
+-- title, body or branch. `source` says which, so a query can trust the forge.
+CREATE TABLE IF NOT EXISTS change_request_ticket (
+  cr_id TEXT NOT NULL, ticket_id TEXT NOT NULL, source TEXT NOT NULL,   -- forge | title | body | branch
+  PRIMARY KEY (cr_id, ticket_id)
 );
 
-CREATE TABLE IF NOT EXISTS policy_result (           -- OPA/Rego outcome per PR per policy (CI artefact)
-  pr_id TEXT, policy_id TEXT, run_seq INT,           -- run_seq 1 = first CI run on the PR
+CREATE TABLE IF NOT EXISTS policy_result (           -- OPA/Rego outcome per change request per policy (CI artefact)
+  cr_id TEXT, policy_id TEXT, run_seq INT,           -- run_seq 1 = first CI run on the change request
   passed BOOLEAN, evaluated_at TIMESTAMPTZ,
-  PRIMARY KEY (pr_id, policy_id, run_seq)
+  PRIMARY KEY (cr_id, policy_id, run_seq)
 );
 
 CREATE TABLE IF NOT EXISTS defect (                  -- linked defects/incidents within window
@@ -140,10 +161,10 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
   hook_ms            BIGINT,                 -- kind = turn: every hook that fired, summed
   hook_ms_by_hook    JSONB,                  -- {hook basename: ms}; basenames only, never paths
   scope_name         TEXT,                   -- ADR-010: the scoping artefact, stable for a run
-  scope_key          TEXT,                   -- the unit instance (the ticket), rolls each iteration
+  scope_key          TEXT,                   -- the unit instance (a branch hash), rolls each iteration
   scope_id           TEXT,                   -- unique per container instance; never a metrics label
   scope_source       TEXT,                   -- artefact | overlay: declared, or assumed for it
-  ticket_id          TEXT NOT NULL DEFAULT 'unattributed',
+  branch_hash        TEXT,                   -- ADR-013 join key; NULL = no repo or branch readable
   repo               TEXT,
   team               TEXT,
   user_hash          TEXT
@@ -202,7 +223,6 @@ CREATE INDEX IF NOT EXISTS artefact_activation_parent_idx
 
 CREATE INDEX IF NOT EXISTS ix_act_session ON artefact_activation (session_id, started_at);
 CREATE INDEX IF NOT EXISTS ix_act_kind    ON artefact_activation (kind, started_at);
-CREATE INDEX IF NOT EXISTS ix_act_ticket  ON artefact_activation (ticket_id);
 CREATE INDEX IF NOT EXISTS ix_act_prompt  ON artefact_activation (session_id, prompt_id);
 
 -- Real money and real wall time, from the harness's own cost-state entry. These
@@ -228,3 +248,92 @@ CREATE TABLE IF NOT EXISTS loader_run (
   unknown_attr_keys TEXT[]                   -- does not read. Kept by Tempo, lost here
 );
 CREATE INDEX IF NOT EXISTS ix_loader_run_recent ON loader_run (loader, started_at DESC);
+
+-- ADR-013: the ticket leaves the capture tables. The join to delivery data is a
+-- branch identity plus a time window, confirmed by commit evidence. Prior data
+-- was dropped at the cutover (single user, 2026-09-30), so the old column goes
+-- rather than being migrated; DROP COLUMN takes its index with it.
+ALTER TABLE skill_invocation    ADD COLUMN IF NOT EXISTS branch_hash TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS branch_hash TEXT;
+ALTER TABLE session_cost        ADD COLUMN IF NOT EXISTS branch_hash TEXT;
+ALTER TABLE skill_invocation    DROP COLUMN IF EXISTS ticket_id;
+ALTER TABLE artefact_activation DROP COLUMN IF EXISTS ticket_id;
+ALTER TABLE session_cost        DROP COLUMN IF EXISTS ticket_id;
+CREATE INDEX IF NOT EXISTS ix_inv_branch ON skill_invocation (branch_hash, started_at);
+CREATE INDEX IF NOT EXISTS ix_act_branch ON artefact_activation (branch_hash, started_at);
+
+-- ADR-013: patch-ids of commits a session made, per turn. The evidence that
+-- confirms a branch join and repairs a rename or a cherry-pick. Patch-ids, not
+-- SHAs: a rebase keeps the diff and loses the SHA.
+CREATE TABLE IF NOT EXISTS commit_evidence (
+  patch_id           TEXT NOT NULL,
+  activation_span_id TEXT NOT NULL,
+  session_id         TEXT NOT NULL,
+  prompt_id          TEXT,
+  branch_hash        TEXT,
+  observed_at        TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (patch_id, activation_span_id)
+);
+CREATE INDEX IF NOT EXISTS ix_evidence_patch ON commit_evidence (patch_id);
+
+-- ADR-013 cutover for a warehouse created before it: pull_request is replaced by
+-- change_request, and policy_result is keyed on cr_id. Prior delivery data is
+-- dropped rather than migrated (single user, confirmed); a policy_result still
+-- keyed on pr_id is recreated empty.
+DROP TABLE IF EXISTS pull_request;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'policy_result' AND column_name = 'pr_id') THEN
+    DROP TABLE policy_result;
+    CREATE TABLE policy_result (cr_id TEXT, policy_id TEXT, run_seq INT, passed BOOLEAN,
+                                evaluated_at TIMESTAMPTZ, PRIMARY KEY (cr_id, policy_id, run_seq));
+  END IF;
+END $$;
+
+-- ADR-013 decision 4: which change request each activation's work became, and
+-- how that was established. Read-time, so arrival order never matters, and the
+-- only place attribution is defined — the scorecard and every panel read this.
+--
+--   branch         same branch hash; the change request with the earliest close
+--                  at or after the activation, else the one still open. Bounded
+--                  to 30 days before the change request opened, so a reused
+--                  branch name (`fix/typo`) cannot claim year-old activity.
+--   branch+commit  as above, confirmed: a patch-id recorded on that branch is in
+--                  that change request.
+--   commit         no branch match, but this session's own patch-ids landed in a
+--                  change request: a branch renamed before its PR opened, or a
+--                  cherry-pick onto another branch.
+CREATE OR REPLACE VIEW activation_change_request AS
+WITH by_branch AS (
+  SELECT DISTINCT ON (a.span_id) a.span_id, a.branch_hash, c.cr_id
+  FROM artefact_activation a
+  JOIN change_request c
+    ON c.branch_hash = a.branch_hash
+   AND (c.closed_at IS NULL OR c.closed_at >= a.started_at)
+   AND a.started_at >= c.opened_at - interval '30 days'
+  WHERE a.branch_hash IS NOT NULL
+  ORDER BY a.span_id, c.closed_at ASC NULLS LAST, c.opened_at ASC
+),
+confirmed AS (
+  SELECT DISTINCT e.branch_hash, cc.cr_id
+  FROM commit_evidence e
+  JOIN change_request_commit cc ON cc.patch_id = e.patch_id
+),
+by_commit AS (
+  SELECT DISTINCT ON (a.span_id) a.span_id, c.cr_id
+  FROM artefact_activation a
+  JOIN commit_evidence e ON e.session_id = a.session_id
+                        AND e.branch_hash IS NOT DISTINCT FROM a.branch_hash
+  JOIN change_request_commit cc ON cc.patch_id = e.patch_id
+  JOIN change_request c ON c.cr_id = cc.cr_id
+  WHERE (c.closed_at IS NULL OR c.closed_at >= a.started_at)
+    AND NOT EXISTS (SELECT 1 FROM by_branch b WHERE b.span_id = a.span_id)
+  ORDER BY a.span_id, c.closed_at ASC NULLS LAST
+)
+SELECT b.span_id, b.cr_id,
+       CASE WHEN EXISTS (SELECT 1 FROM confirmed f
+                         WHERE f.branch_hash = b.branch_hash AND f.cr_id = b.cr_id)
+            THEN 'branch+commit' ELSE 'branch' END AS method
+FROM by_branch b
+UNION ALL
+SELECT span_id, cr_id, 'commit' FROM by_commit;

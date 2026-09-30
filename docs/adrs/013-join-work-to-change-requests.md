@@ -169,6 +169,10 @@ only in a forge. What can be avoided is letting one forge's shape reach the join
   evidence. The branch join still holds.
 - **Copilot's native spans carry no branch hash.** Copilot outcomes stay unjoinable until its
   `github.copilot.git.*` attributes are verified, which is an existing open item.
+- **One issue can surface as two ticket ids.** A repository whose keys mirror its issue numbers
+  (`STDTEL-94` in a title, GitHub issue #94 in a closing link) gets both, and nothing general can map
+  one onto the other. Per-ticket grouping splits them; the join and the scorecard, which work per
+  change request, are unaffected. Seen on the first real run, 2026-09-30.
 - **A change request with no linked issue and no key anywhere gets no ticket.** That is correct, and
   it costs nothing at change-request grain.
 

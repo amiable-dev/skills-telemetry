@@ -20,7 +20,7 @@ SUCCESS_SIGNALS = {"policy", "test", "manual"}
 #: session is resumed and persists, and it is exactly what the author of a
 #: long-running skill would reach for. Offering it here and rejecting it in the
 #: pipeline would be a labelled foot-gun.
-SCOPES = {"turn", "ticket"}
+SCOPES = {"turn", "branch"}
 DEFAULT_SCOPE = "turn"
 
 
@@ -211,7 +211,9 @@ def parse_manifest(text: str, path: Path | None = None) -> SkillManifest:
     if scope and scope not in SCOPES:
         hint = (" — a session is resumed and persists, so it is not a unit of work; "
                 "a long-running skill is still `turn`-scoped and rolls up by its scope key"
-                ) if scope == "session" else ""
+                ) if scope == "session" else (
+                " — renamed `branch` (ADR-013): the hook observes the branch at runtime, "
+                "before any ticket or change request exists") if scope == "ticket" else ""
         errors.append(f"telemetry.scope must be one of {sorted(SCOPES)}, got {scope!r}{hint}")
     if errors:
         _fail(errors, path)

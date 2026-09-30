@@ -1,4 +1,4 @@
--- Q3 — how often context compacts, and what preceded each one.   version: 1
+-- Q3 — how often context compacts, and what preceded each one.   version: 2
 --
 -- ANSWERS: one row per compaction in the window, with the harness's own
 -- before/after estimates, the gap since the previous compaction in the same
@@ -18,7 +18,7 @@
 --
 -- Parameters: :since, :until
 WITH c AS (
-  SELECT span_id, session_id, started_at, ended_at, ticket_id, harness,
+  SELECT span_id, session_id, started_at, ended_at, branch_hash, harness,
          compaction_reason, compaction_tokens_before, compaction_tokens_after,
          compaction_turns_since_previous, source,
          lag(started_at) OVER (PARTITION BY session_id ORDER BY started_at) AS previous_at
@@ -32,7 +32,7 @@ SELECT
   c.session_id,
   c.started_at,
   c.harness,
-  c.ticket_id,
+  c.branch_hash,                                        -- ADR-013: was the ticket
   c.compaction_reason,
   c.source,
   c.compaction_tokens_before,

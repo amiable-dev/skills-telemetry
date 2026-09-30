@@ -10,7 +10,11 @@ def test_lifecycle(tmp_path, monkeypatch):
     sid = "sess-1"; transcript = tmp_path / "t.jsonl"; make_transcript(transcript)
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
     st = SessionState.load(sid)
-    assert st.resource["std.ticket.id"] == "PLAT-123" and st.resource["std.repo"] == "payments-api"
+    # ADR-013: a branch identity, never a ticket; the repo is owner/name
+    from stdtel.enrich import branch_hash
+    expected = branch_hash("github.com/org/payments-api", "feature/PLAT-123-structured-logging")
+    assert st.resource["std.branch.hash"] == expected and st.resource["std.repo"] == "org/payments-api"
+    assert "std.ticket.id" not in st.resource
 
     hooks.pre_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1", "tool_input": {"skill": "structured-logging"}})
     hooks.pre_tool_use({"session_id": sid, "tool_name": "Read", "tool_use_id": "zz", "tool_input": {}})  # ignored
@@ -31,7 +35,7 @@ def test_lifecycle(tmp_path, monkeypatch):
     assert sl.attributes["std.skill.load_tokens"] == 100
     assert sl.attributes["std.skill.tail_tokens"] == 170
     assert sl.attributes["gen_ai.usage.cache_read_input_tokens"] == 100
-    assert sl.resource.attributes["std.ticket.id"] == "PLAT-123"
+    assert sl.resource.attributes["std.branch.hash"] == expected
     assert sl.resource.attributes["std.harness"] == "claude-code"
     assert spans["other"].attributes["std.skill.version"] == "unversioned"
     # state drained; second stop emits nothing

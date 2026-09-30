@@ -96,7 +96,7 @@ def test_spanmetrics_counts_across_resources_not_per_resource():
 
     The spanmetrics connector keeps one cumulative counter per distinct
     *resource*, and a stdtel resource carries attributes that change all the
-    time without being metric labels: `std.ticket.id` changes with the branch,
+    time without being metric labels: `std.ticket.id` changed with the branch,
     `std.repo` with the project, `telemetry.sdk.version` with an upgrade. Each
     change started a new counter at 1 under the same label set, so Prometheus
     kept one of them and every `rate()` read zero — while Tempo held every span.
@@ -169,10 +169,10 @@ def test_parse_session_carries_totals_and_join_keys():
     mod = loader()
     attrs = {"session.id": "s1", "gen_ai.usage.input_tokens": 500,
              "gen_ai.usage.cache_read_input_tokens": 100, "gen_ai.request.model": "claude-opus-5"}
-    resource = {"std.ticket.id": "PLAT-42", "std.team": "payments", "std.harness": "claude-code"}
+    resource = {"std.branch.hash": "bh42", "std.team": "payments", "std.harness": "claude-code"}
     row = mod.parse_session(attrs, resource, {"startTimeUnixNano": "1000000000",
                                               "endTimeUnixNano": "61000000000"})
-    assert row["session_id"] == "s1" and row["ticket_id"] == "PLAT-42"
+    assert row["session_id"] == "s1" and row["branch_hash"] == "bh42"   # ADR-013 join key
     assert row["input_tokens"] == 500 and row["cache_read_tokens"] == 100
     assert row["active_seconds"] == 60
     assert row["cost_usd"] is None, "harness currencies differ; price downstream"
@@ -184,7 +184,7 @@ def test_langfuse_overlay_duplicates_rather_than_moves_attributes():
     """std.* must survive: Tempo, the warehouse loader and spanmetrics all read it."""
     overlay = (ROOT / "collector" / "overlay-langfuse.yaml").read_text()
     assert "delete_key" not in overlay and "delete_matching_keys" not in overlay
-    for attr in ("std.skill.name", "std.skill.version", "std.ticket.id", "std.team", "std.harness"):
+    for attr in ("std.skill.name", "std.skill.version", "std.branch.hash", "std.team", "std.harness"):
         assert f'attributes["{attr}"]' in overlay, f"{attr} not carried into Langfuse"
 
 

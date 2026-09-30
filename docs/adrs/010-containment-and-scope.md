@@ -34,6 +34,10 @@ A third fact bounds the solution space. A session is not a bounded unit of work.
 persists. The session behind this ADR ran from 2026-07-26 to 2026-09-18 with a five-week gap in the
 middle. Any design whose container is the session inherits that duration.
 
+> **Amended by [ADR-013](013-join-work-to-change-requests.md) (2026-09-30):** the scope unit `ticket` is
+> renamed `branch` and keyed on `std.branch.hash`, the only unit the hook observes at runtime. The
+> context below describes `std.ticket.id` as it was.
+
 ## Options considered
 
 **One trace per session, every activation parented to it.** This is what ADR-009's wording implies. It

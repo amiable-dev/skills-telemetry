@@ -114,7 +114,7 @@ not a failure to answer. Pressed for one anyway, it gives the cost picture and s
 would be needed.
 
 It also knows this dataset's traps: `unversioned` means *not catalogued* (recommend onboarding rather
-than reporting a finding), `unattributed` rows are kept for cost and excluded from outcome, and a wide
+than reporting a finding), work that joined no change request is kept for cost and excluded from outcome, and a wide
 gap between `tail_tokens` and `tail_tokens_first_only` means the per-skill split is an assumption
 rather than a measurement.
 

@@ -190,6 +190,11 @@ def session_start(p: dict) -> None:
     st = SessionState.load(p.get("session_id", "unknown"))
     st.resource = resource_attributes(Path(p.get("cwd", ".")), payload=p)
     st.started_at = st.started_at or time.time()
+    # ADR-013: commit evidence starts from HEAD as it is now. Reset on every
+    # start, resume included: commits made between sessions are not this one's.
+    from stdtel.enrich import current_branch, git_head
+    st.branch = current_branch(Path(p.get("cwd", "."))) or st.branch
+    st.last_head = git_head(Path(p.get("cwd", ".")))
     # ADR-010 decision 4, first termination condition, observed at the next start
     # rather than at the end. `startup` covers `claude --resume` too, which keeps
     # the session id: the process died, so whatever loop was running has stopped,
@@ -463,11 +468,13 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
 def _scope_key(st, unit: str) -> str:
     """The current instance of the unit a scope is measured in.
 
-    Only `ticket` opens a container: `turn` is the default and needs none, and
+    Only `branch` opens a container: `turn` is the default and needs none, and
     `session` is not in the enum at all (ADR-011).
     """
-    if unit == "ticket":
-        return str(st.resource.get("std.ticket.id") or "unattributed")
+    if unit == "branch":
+        # ADR-013: the branch identity, the only unit the hook can observe at
+        # runtime; no change request exists yet while the work is happening
+        return str(st.resource.get("std.branch.hash") or "")
     return ""
 
 
@@ -508,30 +515,40 @@ def _roll_scope_if_the_unit_moved(st) -> None:
         st.roll_scope(key)
 
 
-def _refresh_ticket(st, cwd: Path) -> None:
-    """Re-derive `std.ticket.id` from the branch, every Stop (#77).
+def _refresh_branch(st, cwd: Path) -> None:
+    """Re-derive `std.branch.hash` from the working tree, every Stop.
 
-    It used to be computed once in `session_start` and reused for the life of the
-    session. `std.ticket.id` is the join key for all delivery data (ADR-002), so a
-    stale one does not fail — it joins cleanly to the *wrong* pull request, and
-    `scorecard.sql` then attributes one ticket's cost and policy outcome to
-    another. A confident wrong answer, which ADR-005 treats as worse than a gap,
-    and unrecoverable afterwards because the branch at the moment of the span is
-    gone.
+    #81's rule, carried over from the ticket it replaced (ADR-013): a join key
+    computed once at session start does not fail when the branch moves, it joins
+    cleanly to the *wrong* change request, which ADR-005 treats as worse than a
+    gap. A loop skill checks out a new branch every iteration, which is exactly
+    the workload this repository measures.
 
-    Per Stop is the granularity, not per span: every span in one Stop shares the
-    branch as it is now. That is the turn, which is the unit a developer changes
-    branches between, and it is what ADR-010 scopes containment to anyway.
-
-    An unreadable branch leaves the previous value untouched. Overwriting a good
-    ticket with `unattributed` because git happened not to answer would turn a
-    transient failure into permanent data loss.
+    An unreadable branch leaves the previous value untouched: git not answering
+    once is not evidence the branch changed.
     """
-    from stdtel.enrich import current_branch, ticket_from_branch
+    from stdtel.enrich import branch_hash, current_branch, remote_url, repo_id
 
     branch = current_branch(cwd)
     if branch:
-        st.resource["std.ticket.id"] = ticket_from_branch(branch)
+        st.branch = branch
+        st.resource["std.branch.hash"] = branch_hash(repo_id(remote_url(cwd)), branch)
+        st.resource.pop("std.ticket.id", None)       # a pre-ADR-013 state file
+
+
+def _commit_evidence(st, cwd: Path, activations: list) -> None:
+    """ADR-013: attach the patch-ids of commits made since the last Stop to the
+    turn that just ended. A Stop that emits no turn keeps them pending rather
+    than dropping them, so evidence waits for the next turn instead of vanishing.
+    """
+    from stdtel.enrich import new_commit_patch_ids
+
+    ids, st.last_head = new_commit_patch_ids(cwd, st.last_head)
+    st.pending_patch_ids.extend(i for i in ids if i not in st.pending_patch_ids)
+    turns = [a for a in activations if a.get("kind") == "turn"]
+    if turns and st.pending_patch_ids:
+        turns[-1]["attributes"]["std.artefact.commit_patch_ids"] = list(st.pending_patch_ids)
+        st.pending_patch_ids = []
 
 
 def stop(p: dict, exporter=None) -> int:
@@ -543,7 +560,7 @@ def stop(p: dict, exporter=None) -> int:
 
     sid = p.get("session_id", "unknown")
     st = SessionState.load(sid)
-    _refresh_ticket(st, Path(p.get("cwd", ".")))
+    _refresh_branch(st, Path(p.get("cwd", ".")))
     transcript = Path(p.get("transcript_path", ""))
     sl = read_slice(transcript, st.transcript_offset)
     st.transcript_offset = sl.new_offset
@@ -610,6 +627,7 @@ def stop(p: dict, exporter=None) -> int:
             attrs, name=resolved, error=w.error))
     now = time.time()
     invocations.extend(_turn_activations(st, sl, str(p.get("permission_mode") or ""), now))
+    _commit_evidence(st, Path(p.get("cwd", ".")), invocations)
     invocations.extend(_subagent_activations(st, sl, transcript, _agent_catalogue()))
     invocations.extend(_compaction_activations(st, sl))
     # The session's whole cost, emitted whether or not a skill was ever loaded.

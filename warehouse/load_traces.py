@@ -168,7 +168,7 @@ def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
         "cache_creation_tokens": int(g("gen_ai.usage.cache_creation_input_tokens", 0)),
         "llm_requests": int(g("std.skill.llm_requests", 0)),
         "is_error": span.get("status", {}).get("code") == "STATUS_CODE_ERROR",
-        "ticket_id": g("std.ticket.id", "unattributed"), "repo": g("std.repo"), "team": g("std.team"),
+        "branch_hash": g("std.branch.hash"), "repo": g("std.repo"), "team": g("std.team"),
         "user_hash": g("std.user.hash"),
     }
 
@@ -269,12 +269,12 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         "compaction_turns_since_previous": _int(g("std.compaction.turns_since_previous")),
         "hook_ms": _int(g("std.turn.hook_ms")),
         "hook_ms_by_hook": hook_breakdown(attrs),
-        "ticket_id": g("std.ticket.id", "unattributed"),
+        "branch_hash": g("std.branch.hash"),
         "repo": g("std.repo"), "team": g("std.team"), "user_hash": g("std.user.hash"),
     }
 
 
-SESSION_COLS = ["session_id", "harness", "model", "ticket_id", "team", "input_tokens",
+SESSION_COLS = ["session_id", "harness", "model", "branch_hash", "team", "input_tokens",
                 "output_tokens", "cache_read_tokens", "cache_creation_tokens",
                 "cost_usd", "api_ms", "tool_ms", "duration_ms", "active_seconds", "started_at"]
 
@@ -289,7 +289,7 @@ def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
         "session_id": g("session.id", ""),
         "harness": g("std.harness", "unknown"),
         "model": g("gen_ai.request.model"),
-        "ticket_id": g("std.ticket.id", "unattributed"),
+        "branch_hash": g("std.branch.hash"),
         "team": g("std.team"),
         "input_tokens": int(g("gen_ai.usage.input_tokens", 0)),
         "output_tokens": int(g("gen_ai.usage.output_tokens", 0)),
@@ -313,7 +313,7 @@ def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
 COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","harness_mode","skill_name",
         "invoked_as","plugin","skill_version","content_hash",
         "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
-        "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","ticket_id","repo","team","user_hash"]
+        "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","branch_hash","repo","team","user_hash"]
 
 ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "scope_name", "scope_key", "scope_id", "scope_source",
@@ -329,7 +329,7 @@ ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "subagent_type", "subagent_id", "subagent_depth",
                    "compaction_reason", "compaction_tokens_before", "compaction_tokens_after",
                    "compaction_turns_since_previous", "hook_ms", "hook_ms_by_hook",
-                   "ticket_id", "repo", "team", "user_hash"]
+                   "branch_hash", "repo", "team", "user_hash"]
 
 LOADER_RUN_COLS = ["run_id", "started_at", "finished_at", "loader", "rows_loaded",
                    "source_max_ts", "ok", "error", "unknown_attrs", "unknown_attr_keys"]
@@ -353,6 +353,16 @@ def _str_list(v) -> list[str]:
 
 
 MCP_CALL_COLS = ["tool_use_id", "session_id", "prompt_id", "activation_span_id"]
+EVIDENCE_COLS = ["patch_id", "activation_span_id", "session_id", "prompt_id", "branch_hash",
+                 "observed_at"]
+
+
+def evidence_rows(act: dict, attrs: dict) -> list[dict]:
+    """ADR-013: one row per commit patch-id a turn carried."""
+    return [{"patch_id": pid, "activation_span_id": act["span_id"], "session_id": act["session_id"],
+             "prompt_id": act.get("prompt_id"), "branch_hash": act.get("branch_hash"),
+             "observed_at": act["ended_at"]}
+            for pid in _str_list(attrs.get("std.artefact.commit_patch_ids"))]
 
 
 def mcp_call_rows(act: dict, attrs: dict) -> list[dict]:
@@ -370,7 +380,8 @@ def mcp_call_rows(act: dict, attrs: dict) -> list[dict]:
             for tid in _str_list(attrs.get("std.artefact.mcp_tool_use_ids"))]
 
 
-def collect(traces: dict, fetch, unknown=None, mcp_calls=None) -> tuple[list[dict], list[dict], list[dict]]:
+def collect(traces: dict, fetch, unknown=None, mcp_calls=None,
+            evidence=None) -> tuple[list[dict], list[dict], list[dict]]:
     """(activations, skill_invocations, session_costs) from a set of trace ids.
 
     `fetch(trace_id) -> OTLP JSON`, so the parsing is testable without Tempo.
@@ -396,6 +407,8 @@ def collect(traces: dict, fetch, unknown=None, mcp_calls=None) -> tuple[list[dic
                         activations.append(act)
                         if mcp_calls is not None:
                             mcp_calls.extend(mcp_call_rows(act, attrs))
+                        if evidence is not None:
+                            evidence.extend(evidence_rows(act, attrs))
                         if unknown is not None and act["kind"] == KIND_EXTERNAL:
                             unknown.update(k for k in attrs if k not in LOADED_EXTERNAL_ATTRIBUTES
                                            and not k.startswith(COLLECTOR_ADDED_PREFIXES))
@@ -465,6 +478,7 @@ def main(argv=None) -> int:
     import collections
     unknown = collections.Counter()
     mcp_calls: list[dict] = []
+    evidence: list[dict] = []
 
     def search(query):
         # Tempo returns nothing at all without start/end — it looks like a dead pipeline
@@ -479,7 +493,7 @@ def main(argv=None) -> int:
             traces.update({t["traceID"]: t for t in search(f'{{ name = "{span_name}" }}')})
         activations, rows, session_rows = collect(
             traces, lambda tid: requests.get(f"{a.tempo}/api/traces/{tid}").json(), unknown=unknown,
-            mcp_calls=mcp_calls)
+            mcp_calls=mcp_calls, evidence=evidence)
         run["unknown_attrs"] = sum(unknown.values())
         run["unknown_attr_keys"] = sorted(unknown) or None
         run["source_max_ts"] = max((r["started_at"] for r in activations + session_rows),
@@ -489,6 +503,7 @@ def main(argv=None) -> int:
             ("skill_invocation", COLS, rows, "span_id"),
             ("session_cost", SESSION_COLS, session_rows, "session_id"),
             ("mcp_tool_call", MCP_CALL_COLS, mcp_calls, "tool_use_id"),
+            ("commit_evidence", EVIDENCE_COLS, evidence, "patch_id, activation_span_id"),
         ])
         run["ok"] = True
     except Exception as e:                      # noqa: BLE001 - every run writes a row

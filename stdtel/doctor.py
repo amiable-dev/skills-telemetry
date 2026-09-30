@@ -97,21 +97,26 @@ def hooks_registered() -> Check:
                  "run `stdtel-install settings`, or install the plugin")
 
 
-def ticket_key() -> Check:
-    """Does this branch yield a ticket key?
+def branch_identity() -> Check:
+    """Can this work be joined to a change request? (ADR-013)
 
-    Only fixable now: a branch renamed tomorrow does not retroactively attribute
-    today's work, and unattributed sessions are excluded from outcome analysis.
+    Any branch name joins, so this fails only where the join is impossible: no
+    branch readable, or no remote to identify the repository. Both are only
+    fixable now — nothing done later attributes work already recorded.
     """
-    from stdtel.enrich import ticket_from_branch
+    from stdtel.enrich import branch_hash, remote_url, repo_id
     branch = os.environ.get("STDTEL_BRANCH") or _git_branch()
-    key = ticket_from_branch(branch or "")
-    if key == "unattributed":
-        return Check("ticket key", False,
-                     f"branch {branch or '(unknown)'!r} yields 'unattributed'",
-                     "rename the branch to carry a ticket key, e.g. feature/PLAT-42-thing — "
-                     "this work is excluded from outcome analysis until it does")
-    return Check("ticket key", True, f"{branch} -> {key}")
+    repo = repo_id(remote_url())
+    if not branch or branch == "HEAD":
+        return Check("branch identity", False, "no branch readable (not a git repository, or detached)",
+                     "run Claude Code inside the repository's working tree, on a branch")
+    if not repo:
+        return Check("branch identity", False, f"branch {branch!r} but no remote",
+                     "add a remote (`git remote add origin <url>`): the repository identity comes "
+                     "from it, and without one no work here can join a change request")
+    note = (" — work committed straight to it has no change request to join"
+            if branch in ("main", "master") else "")
+    return Check("branch identity", bool(branch_hash(repo, branch)), f"{branch} in {repo}{note}")
 
 
 def catalogue_ok() -> Check:
@@ -168,7 +173,7 @@ def scope_adoption() -> Check:
         return Check("scope declarations", True,
                      f"0 of {len(cat)} skill(s) declare a scope — every "
                      f"activation is attributed to its turn",
-                     "if a skill drives work across many turns, add `telemetry.scope: ticket` "
+                     "if a skill drives work across many turns, add `telemetry.scope: branch` "
                      "so its cost can be rolled up; see skills/stdtel-onboard")
     assumed = sum(1 for m in scoped if m.overlay_path is not None)
     detail = f"{len(scoped)} of {len(cat)} skill(s) declare a scope"
@@ -325,7 +330,7 @@ def artefacts_observed() -> Check:
                  "transcript and are flagged std.artefact.source=transcript")
 
 
-CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, ticket_key, catalogue_ok,
+CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, branch_identity, catalogue_ok,
           scope_adoption, collector_ok, recent_state, artefacts_observed)
 
 

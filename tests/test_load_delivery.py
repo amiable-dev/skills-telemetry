@@ -1,4 +1,4 @@
-"""Delivery-side loader: GitHub -> ticket / pull_request / policy_result / defect.
+"""Delivery-side loader: the GitHub adapter -> change_request / ticket / policy_result / defect.
 
 This is the half that turns "what a skill cost" into "what happened to the work
 it was used on". Fixtures are synthetic gh JSON so nothing here touches network.
@@ -9,8 +9,14 @@ from pathlib import Path
 
 import pytest
 
+from warehouse.change_requests import ticket_rows
 from warehouse.load_delivery import (TABLES, assisted_by, defect_rows, first_approval_at,
-                                     parse_pr, policy_rows, review_rounds, ticket_rows)
+                                     policy_rows, review_rounds, to_change_request)
+
+
+def one_ticket(crs, ticket="T-1"):
+    """ADR-013: tickets link to change requests; the branch no longer names one."""
+    return [{"cr_id": c["cr_id"], "ticket_id": ticket, "source": "forge"} for c in crs]
 
 
 def pr(**over):
@@ -25,20 +31,7 @@ def pr(**over):
     return base
 
 
-# --- the join key ---
-
-def test_ticket_id_comes_from_the_branch():
-    assert parse_pr(pr(), "o/r")["ticket_id"] == "PLAT-42"
-
-
-def test_branch_without_a_ticket_is_unattributed_not_dropped():
-    assert parse_pr(pr(headRefName="fix-typo"), "o/r")["ticket_id"] == "unattributed"
-
-
-def test_unattributed_prs_produce_no_ticket_row():
-    """Kept for cost analysis, excluded from outcome analysis — the design rule."""
-    rows = ticket_rows([parse_pr(pr(headRefName="fix-typo"), "o/r")], "payments")
-    assert rows == []
+# --- the join key moved to tests/test_change_requests.py (ADR-013) ---
 
 
 # --- review rounds and approval latency ---
@@ -52,11 +45,11 @@ def test_hours_to_first_approval_uses_the_earliest_approval():
     reviews = [{"state": "APPROVED", "submittedAt": "2026-09-02T09:00:00Z"},
                {"state": "APPROVED", "submittedAt": "2026-09-01T10:00:00Z"}]
     assert first_approval_at(reviews).hour == 10
-    assert parse_pr(pr(reviews=reviews), "o/r")["hours_to_first_approval"] == 1.0
+    assert to_change_request(pr(reviews=reviews), "o/r")["hours_to_first_approval"] == 1.0
 
 
 def test_never_approved_pr_has_no_approval_latency():
-    assert parse_pr(pr(reviews=[]), "o/r")["hours_to_first_approval"] is None
+    assert to_change_request(pr(reviews=[]), "o/r")["hours_to_first_approval"] is None
 
 
 # --- crossover arm assignment ---
@@ -78,23 +71,24 @@ def test_unlabelled_is_unknown_never_silently_a_control():
 
 
 def test_ticket_with_conflicting_arms_is_marked_mixed():
-    prs = [parse_pr(pr(number=1), "o/r"),
-           parse_pr(pr(number=2, labels=[{"name": "copilot"}]), "o/r")]
-    assert ticket_rows(prs, "t")[0]["harness_arm"] == "mixed"
+    prs = [to_change_request(pr(number=1), "o/r"),
+           to_change_request(pr(number=2, labels=[{"name": "copilot"}]), "o/r")]
+    assert ticket_rows(prs, one_ticket(prs), "t")[0]["harness_arm"] == "mixed"
 
 
 # --- cycle time ---
 
 def test_cycle_time_spans_first_open_to_last_merge():
-    prs = [parse_pr(pr(number=1, createdAt="2026-09-01T00:00:00Z",
+    prs = [to_change_request(pr(number=1, createdAt="2026-09-01T00:00:00Z",
                        mergedAt="2026-09-01T12:00:00Z"), "o/r"),
-           parse_pr(pr(number=2, createdAt="2026-09-01T06:00:00Z",
+           to_change_request(pr(number=2, createdAt="2026-09-01T06:00:00Z",
                        mergedAt="2026-09-02T00:00:00Z"), "o/r")]
-    assert ticket_rows(prs, "t")[0]["cycle_time_hours"] == 24.0
+    assert ticket_rows(prs, one_ticket(prs), "t")[0]["cycle_time_hours"] == 24.0
 
 
 def test_unmerged_work_has_no_cycle_time():
-    rows = ticket_rows([parse_pr(pr(mergedAt=None), "o/r")], "t")
+    crs = [to_change_request(pr(mergedAt=None, closedAt=None), "o/r")]
+    rows = ticket_rows(crs, one_ticket(crs), "t")
     assert rows[0]["cycle_time_hours"] is None and rows[0]["done_at"] is None
 
 
@@ -108,6 +102,7 @@ def test_policy_rows_preserve_run_seq(tmp_path):
                                "passed": True, "evaluated_at": "2026-09-01T10:00:00Z"}) + "\n")
     rows = policy_rows(f)
     assert [r["run_seq"] for r in rows] == [1, 2]
+    assert rows[0]["cr_id"] == "github:github.com/o/r!7", "CI's pr_id is mapped onto the change request"
     assert rows[0]["passed"] is False, "first-time pass is what the scorecard measures"
     assert isinstance(rows[0]["evaluated_at"], dt.datetime)
 
@@ -136,5 +131,5 @@ def test_loader_columns_exist_in_the_schema():
         assert not missing, f"{table}: {sorted(missing)}"
 
 
-def test_parse_pr_emits_exactly_the_pull_request_columns():
-    assert set(parse_pr(pr(), "o/r")) == set(TABLES["pull_request"])
+def test_a_pr_becomes_exactly_the_change_request_columns():
+    assert set(to_change_request(pr(), "o/r")) == set(TABLES["change_request"])

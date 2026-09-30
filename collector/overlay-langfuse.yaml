@@ -20,7 +20,7 @@ processors:
           - set(attributes["langfuse.trace.metadata.standard_id"], attributes["std.standard_id"]) where attributes["std.standard_id"] != nil
           - set(attributes["langfuse.trace.metadata.trigger"], attributes["std.skill.trigger"]) where attributes["std.skill.trigger"] != nil
           # resource-level join keys, lifted onto the span so Langfuse can filter on them
-          - set(attributes["langfuse.trace.metadata.ticket_id"], resource.attributes["std.ticket.id"]) where resource.attributes["std.ticket.id"] != nil
+          - set(attributes["langfuse.trace.metadata.branch_hash"], resource.attributes["std.branch.hash"]) where resource.attributes["std.branch.hash"] != nil
           - set(attributes["langfuse.trace.metadata.team"], resource.attributes["std.team"]) where resource.attributes["std.team"] != nil
           - set(attributes["langfuse.trace.metadata.harness"], resource.attributes["std.harness"]) where resource.attributes["std.harness"] != nil
           - set(attributes["langfuse.trace.metadata.repo"], resource.attributes["std.repo"]) where resource.attributes["std.repo"] != nil
