@@ -51,16 +51,38 @@ CREATE TABLE IF NOT EXISTS ticket (                  -- from Linear
   harness_arm TEXT                                   -- crossover assignment: claude-code | copilot | control
 );
 
-CREATE TABLE IF NOT EXISTS pull_request (            -- from GitHub
-  pr_id TEXT PRIMARY KEY, repo TEXT, ticket_id TEXT, opened_at TIMESTAMPTZ, merged_at TIMESTAMPTZ,
+-- ADR-013: a pull request on GitHub, a merge request on GitLab. Filled by a
+-- per-forge adapter; every query reads only this shape.
+CREATE TABLE IF NOT EXISTS change_request (
+  cr_id TEXT PRIMARY KEY,                            -- forge:host/owner/name!number
+  forge TEXT NOT NULL, repo_id TEXT NOT NULL, number INT NOT NULL,
+  source_branch TEXT,                                -- readable here; spans carry only the hash
+  branch_hash TEXT,                                  -- the join key, as the capture side computes it
+  opened_at TIMESTAMPTZ, merged_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
+  state TEXT NOT NULL,                               -- merged | closed | open
   review_rounds INT, hours_to_first_approval NUMERIC, ci_failures INT,
-  assisted_by TEXT                                   -- claude-code | copilot | none (from harness labels)
+  assisted_by TEXT                                   -- claude-code | copilot | none | unknown
+);
+CREATE INDEX IF NOT EXISTS ix_cr_branch ON change_request (branch_hash, closed_at);
+
+-- Commit patch-ids per change request: the evidence side of the join.
+CREATE TABLE IF NOT EXISTS change_request_commit (
+  cr_id TEXT NOT NULL, patch_id TEXT NOT NULL, sha TEXT,
+  PRIMARY KEY (cr_id, patch_id)
+);
+CREATE INDEX IF NOT EXISTS ix_crc_patch ON change_request_commit (patch_id);
+
+-- The ticket as enrichment: the forge's issue links first, then a key found in
+-- title, body or branch. `source` says which, so a query can trust the forge.
+CREATE TABLE IF NOT EXISTS change_request_ticket (
+  cr_id TEXT NOT NULL, ticket_id TEXT NOT NULL, source TEXT NOT NULL,   -- forge | title | body | branch
+  PRIMARY KEY (cr_id, ticket_id)
 );
 
-CREATE TABLE IF NOT EXISTS policy_result (           -- OPA/Rego outcome per PR per policy (CI artefact)
-  pr_id TEXT, policy_id TEXT, run_seq INT,           -- run_seq 1 = first CI run on the PR
+CREATE TABLE IF NOT EXISTS policy_result (           -- OPA/Rego outcome per change request per policy (CI artefact)
+  cr_id TEXT, policy_id TEXT, run_seq INT,           -- run_seq 1 = first CI run on the change request
   passed BOOLEAN, evaluated_at TIMESTAMPTZ,
-  PRIMARY KEY (pr_id, policy_id, run_seq)
+  PRIMARY KEY (cr_id, policy_id, run_seq)
 );
 
 CREATE TABLE IF NOT EXISTS defect (                  -- linked defects/incidents within window
@@ -253,3 +275,17 @@ CREATE TABLE IF NOT EXISTS commit_evidence (
   PRIMARY KEY (patch_id, activation_span_id)
 );
 CREATE INDEX IF NOT EXISTS ix_evidence_patch ON commit_evidence (patch_id);
+
+-- ADR-013 cutover for a warehouse created before it: pull_request is replaced by
+-- change_request, and policy_result is keyed on cr_id. Prior delivery data is
+-- dropped rather than migrated (single user, confirmed); a policy_result still
+-- keyed on pr_id is recreated empty.
+DROP TABLE IF EXISTS pull_request;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'policy_result' AND column_name = 'pr_id') THEN
+    DROP TABLE policy_result;
+    CREATE TABLE policy_result (cr_id TEXT, policy_id TEXT, run_seq INT, passed BOOLEAN,
+                                evaluated_at TIMESTAMPTZ, PRIMARY KEY (cr_id, policy_id, run_seq));
+  END IF;
+END $$;
