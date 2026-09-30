@@ -1,9 +1,10 @@
 """The statusline: data-quality faults, while they are still fixable.
 
-An unattributed branch renamed tomorrow does not retroactively attribute today's
-PRs. Loading this repository's first ten merged PRs produced zero ticket rows for
-exactly that reason. The statusline is how that reaches the one person who can
-fix it, at the only time they can.
+Since ADR-013 any branch name joins, so the fault worth showing is the one that
+still cannot: no branch identity at all (not a git repository, or no remote).
+Work done then reaches no change request, and nothing done later repairs it.
+The statusline is how that reaches the one person who can fix it, at the only
+time they can.
 
 It must be fast and local: Claude Code debounces at 300ms and cancels an
 in-flight script when a new update arrives.
@@ -31,7 +32,8 @@ def state(tmp_path, monkeypatch):
     def write(resource=None, **extra):
         from stdtel.state import SessionState
         st = SessionState.load("sl-test")
-        st.resource = resource if resource is not None else {"std.ticket.id": "PLAT-42"}
+        st.resource = resource if resource is not None else {"std.branch.hash": "abc123"}
+        st.branch = extra.pop("branch", "fix/media-hardening-233")
         for k, v in extra.items():
             setattr(st, k, v)
         st.save()
@@ -41,17 +43,22 @@ def state(tmp_path, monkeypatch):
 
 # --- the fault it exists to surface ---
 
-def test_flags_a_branch_with_no_ticket_key(state):
-    state({"std.ticket.id": "unattributed"})
-    out = render(SESSION)
-    assert "no ticket" in out.lower()
+def test_flags_work_that_has_no_branch_identity(state):
+    state({"std.branch.hash": ""})
+    assert "no branch" in render(SESSION).lower()
 
 
-def test_silent_about_attribution_when_the_branch_is_fine(state):
-    state({"std.ticket.id": "PLAT-42"})
+def test_any_branch_name_is_fine_and_is_shown(state):
+    """The trailing-number convention that was `unattributed` under the ticket
+    regex is now simply a branch, shown by its local name."""
+    state({"std.branch.hash": "abc123"}, branch="fix/media-hardening-233")
     out = render(SESSION)
-    assert "no ticket" not in out.lower()
-    assert "PLAT-42" in out
+    assert "⚠" not in out and "fix/media-hardening-233" in out
+
+
+def test_a_long_branch_name_is_shortened(state):
+    state({"std.branch.hash": "abc123"}, branch="feature/an-extremely-long-branch-name-that-goes-on")
+    assert len(render(SESSION)) < 40
 
 
 def test_reports_uncatalogued_skills(state, monkeypatch, tmp_path):
@@ -84,21 +91,21 @@ def test_never_shows_per_developer_cost_or_tokens(state):
 # --- it must get out of the way ---
 
 def test_quiet_when_everything_is_fine(state):
-    state({"std.ticket.id": "PLAT-42"})
+    state({"std.branch.hash": "abc123"})
     out = render(SESSION)
     assert len(out) < 40, f"noise in a statusline gets the whole thing removed: {out!r}"
     assert "⚠" not in out
 
 
 def test_disabled_renders_nothing(state, monkeypatch):
-    state({"std.ticket.id": "unattributed"})
+    state({"std.branch.hash": ""})
     monkeypatch.setenv("STDTEL_DISABLED", "1")
     assert render(SESSION) == ""
 
 
 def test_statusline_can_be_turned_off_independently(state, monkeypatch):
     """Some people want telemetry without the indicator."""
-    state({"std.ticket.id": "unattributed"})
+    state({"std.branch.hash": ""})
     monkeypatch.setenv("STDTEL_STATUSLINE", "off")
     assert render(SESSION) == ""
 

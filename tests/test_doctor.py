@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from stdtel.doctor import Check, check_all, hook_resolvable, ticket_key, catalogue_ok, collector_ok
+from stdtel.doctor import Check, check_all, hook_resolvable, branch_identity, catalogue_ok, collector_ok
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -54,18 +54,37 @@ def test_hook_not_resolvable_is_reported_with_the_install_command(monkeypatch):
 
 # --- attribution faults, which are only fixable while the work happens ---
 
-def test_ticket_key_flags_a_branch_without_one(monkeypatch):
-    monkeypatch.setenv("STDTEL_BRANCH", "fix/some-thing")
-    check = ticket_key()
-    assert not check.ok
-    assert "unattributed" in check.detail
-    assert "branch" in check.remedy.lower()
+def test_any_branch_name_passes(monkeypatch):
+    """ADR-013: the naming convention is gone. This branch failed the old
+    ticket-key check and would have been excluded from every outcome."""
+    monkeypatch.setenv("STDTEL_BRANCH", "fix/media-hardening-233")
+    monkeypatch.setenv("STDTEL_REPO", "git@github.com:a/b.git")
+    check = branch_identity()
+    assert check.ok and "fix/media-hardening-233" in check.detail
 
 
-def test_ticket_key_passes_on_a_prefixed_branch(monkeypatch):
-    monkeypatch.setenv("STDTEL_BRANCH", "feature/STDTEL-15-doctor")
-    check = ticket_key()
-    assert check.ok and "STDTEL-15" in check.detail
+def test_no_remote_fails_because_nothing_can_join(monkeypatch, tmp_path):
+    monkeypatch.setenv("STDTEL_BRANCH", "fix/x")
+    monkeypatch.delenv("STDTEL_REPO", raising=False)
+    monkeypatch.chdir(tmp_path)                      # not a git repository: no remote
+    check = branch_identity()
+    assert not check.ok and "remote" in check.remedy
+
+
+def test_no_branch_fails(monkeypatch, tmp_path):
+    monkeypatch.delenv("STDTEL_BRANCH", raising=False)
+    monkeypatch.setenv("STDTEL_REPO", "git@github.com:a/b.git")
+    monkeypatch.chdir(tmp_path)
+    assert not branch_identity().ok
+
+
+def test_the_default_branch_passes_with_a_warning(monkeypatch):
+    """Work committed straight to the default branch has no change request to
+    join. It is still captured; the check says so rather than failing."""
+    monkeypatch.setenv("STDTEL_BRANCH", "main")
+    monkeypatch.setenv("STDTEL_REPO", "git@github.com:a/b.git")
+    check = branch_identity()
+    assert check.ok and "no change request" in check.detail
 
 
 # --- catalogue and collector ---
@@ -100,11 +119,11 @@ def test_collector_check_is_bounded(monkeypatch):
     assert time.monotonic() - t0 < 6, "the collector check must time out quickly"
 
 
-def test_ticket_key_falls_back_to_git_when_no_env_is_set(monkeypatch):
+def test_branch_identity_falls_back_to_git_when_no_env_is_set(monkeypatch):
     """The env-var path was the only one covered, so a missing `_git_branch`
     helper shipped and only showed when the tool was actually run."""
     monkeypatch.delenv("STDTEL_BRANCH", raising=False)
-    check = ticket_key()                          # must not raise
+    check = branch_identity()                     # must not raise
     assert isinstance(check.ok, bool) and check.detail
 
 

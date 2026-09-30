@@ -49,13 +49,13 @@ def test_declaring_turn_is_distinguishable_from_declaring_nothing():
     assert manifest().scope == ""
 
 
-def test_a_ticket_scoped_skill_is_read_as_such():
-    assert manifest(scope="ticket").effective_scope() == "ticket"
+def test_a_branch_scoped_skill_is_read_as_such():
+    assert manifest(scope="branch").effective_scope() == "branch"
 
 
 def test_scope_is_case_and_space_insensitive():
     """Hand-written YAML. Rejecting ` Ticket` would teach nothing useful."""
-    assert manifest(scope=" Ticket ").scope == "ticket"
+    assert manifest(scope=" Branch ").scope == "branch"
 
 
 def test_session_is_rejected_with_the_reason_rather_than_a_bare_enum():
@@ -69,14 +69,14 @@ def test_session_is_rejected_with_the_reason_rather_than_a_bare_enum():
 
 
 def test_an_unknown_scope_fails_rather_than_being_silently_defaulted():
-    """Defaulting a typo to `turn` would hide a ticket-scoped skill from every
+    """Defaulting a typo to `turn` would hide a branch-scoped skill from every
     rollup it should appear in, with nothing to notice it by."""
     with pytest.raises(ManifestError):
         manifest(scope="epic")
 
 
 def test_session_is_not_in_the_enum_at_all():
-    assert "session" not in SCOPES and SCOPES == {"turn", "ticket"}
+    assert "session" not in SCOPES and SCOPES == {"turn", "branch"}   # `ticket` renamed, ADR-013
 
 
 def test_an_overlay_may_supply_a_scope_the_artefact_never_stated():
@@ -86,9 +86,9 @@ def test_an_overlay_may_supply_a_scope_the_artefact_never_stated():
     base = manifest(name="third-party")
     # a real overlay is loaded from a file, and `fill_gaps` records that file as
     # the provenance of anything it supplied
-    over = manifest(name="third-party", path=Path("/overlay/third-party/SKILL.md"), scope="ticket")
+    over = manifest(name="third-party", path=Path("/overlay/third-party/SKILL.md"), scope="branch")
     merged = fill_gaps(base, over)
-    assert merged.effective_scope() == "ticket"
+    assert merged.effective_scope() == "branch"
     assert merged.overlay_path is not None, "provenance: this was assumed, not observed"
 
 
@@ -96,5 +96,5 @@ def test_an_overlay_never_overrides_a_scope_the_artefact_declares():
     """If it did, the day upstream starts declaring its own scope our data would
     keep reporting the pinned one — stability that does not exist."""
     base = manifest(name="owned", scope="turn")
-    over = manifest(name="owned", scope="ticket")
+    over = manifest(name="owned", scope="branch")
     assert fill_gaps(base, over).scope == "turn"

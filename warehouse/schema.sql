@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
   cache_creation_tokens INT DEFAULT 0,
   llm_requests       INT DEFAULT 0,
   is_error           BOOLEAN DEFAULT FALSE,
-  ticket_id          TEXT NOT NULL DEFAULT 'unattributed',
+  branch_hash        TEXT,                   -- ADR-013 join key; NULL = no repo or branch readable
   repo               TEXT,
   team               TEXT,
   user_hash          TEXT
@@ -36,11 +36,10 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
 -- INSERT after an upgrade, which is the worst possible moment to find out.
 ALTER TABLE skill_invocation ADD COLUMN IF NOT EXISTS content_hash TEXT;
 
-CREATE INDEX IF NOT EXISTS ix_inv_ticket ON skill_invocation (ticket_id);
 CREATE INDEX IF NOT EXISTS ix_inv_skill  ON skill_invocation (skill_name, skill_version, harness);
 
 CREATE TABLE IF NOT EXISTS session_cost (           -- harness-native token metrics rolled up per session
-  session_id TEXT PRIMARY KEY, harness TEXT, model TEXT, ticket_id TEXT, team TEXT,
+  session_id TEXT PRIMARY KEY, harness TEXT, model TEXT, branch_hash TEXT, team TEXT,
   input_tokens BIGINT, output_tokens BIGINT, cache_read_tokens BIGINT, cache_creation_tokens BIGINT,
   cost_usd NUMERIC(12,4), active_seconds INT, started_at TIMESTAMPTZ,
   api_ms BIGINT, tool_ms BIGINT, duration_ms BIGINT   -- harness wall time, cumulative per session
@@ -140,10 +139,10 @@ CREATE TABLE IF NOT EXISTS artefact_activation (
   hook_ms            BIGINT,                 -- kind = turn: every hook that fired, summed
   hook_ms_by_hook    JSONB,                  -- {hook basename: ms}; basenames only, never paths
   scope_name         TEXT,                   -- ADR-010: the scoping artefact, stable for a run
-  scope_key          TEXT,                   -- the unit instance (the ticket), rolls each iteration
+  scope_key          TEXT,                   -- the unit instance (a branch hash), rolls each iteration
   scope_id           TEXT,                   -- unique per container instance; never a metrics label
   scope_source       TEXT,                   -- artefact | overlay: declared, or assumed for it
-  ticket_id          TEXT NOT NULL DEFAULT 'unattributed',
+  branch_hash        TEXT,                   -- ADR-013 join key; NULL = no repo or branch readable
   repo               TEXT,
   team               TEXT,
   user_hash          TEXT
@@ -202,7 +201,6 @@ CREATE INDEX IF NOT EXISTS artefact_activation_parent_idx
 
 CREATE INDEX IF NOT EXISTS ix_act_session ON artefact_activation (session_id, started_at);
 CREATE INDEX IF NOT EXISTS ix_act_kind    ON artefact_activation (kind, started_at);
-CREATE INDEX IF NOT EXISTS ix_act_ticket  ON artefact_activation (ticket_id);
 CREATE INDEX IF NOT EXISTS ix_act_prompt  ON artefact_activation (session_id, prompt_id);
 
 -- Real money and real wall time, from the harness's own cost-state entry. These
@@ -228,3 +226,30 @@ CREATE TABLE IF NOT EXISTS loader_run (
   unknown_attr_keys TEXT[]                   -- does not read. Kept by Tempo, lost here
 );
 CREATE INDEX IF NOT EXISTS ix_loader_run_recent ON loader_run (loader, started_at DESC);
+
+-- ADR-013: the ticket leaves the capture tables. The join to delivery data is a
+-- branch identity plus a time window, confirmed by commit evidence. Prior data
+-- was dropped at the cutover (single user, 2026-09-30), so the old column goes
+-- rather than being migrated; DROP COLUMN takes its index with it.
+ALTER TABLE skill_invocation    ADD COLUMN IF NOT EXISTS branch_hash TEXT;
+ALTER TABLE artefact_activation ADD COLUMN IF NOT EXISTS branch_hash TEXT;
+ALTER TABLE session_cost        ADD COLUMN IF NOT EXISTS branch_hash TEXT;
+ALTER TABLE skill_invocation    DROP COLUMN IF EXISTS ticket_id;
+ALTER TABLE artefact_activation DROP COLUMN IF EXISTS ticket_id;
+ALTER TABLE session_cost        DROP COLUMN IF EXISTS ticket_id;
+CREATE INDEX IF NOT EXISTS ix_inv_branch ON skill_invocation (branch_hash, started_at);
+CREATE INDEX IF NOT EXISTS ix_act_branch ON artefact_activation (branch_hash, started_at);
+
+-- ADR-013: patch-ids of commits a session made, per turn. The evidence that
+-- confirms a branch join and repairs a rename or a cherry-pick. Patch-ids, not
+-- SHAs: a rebase keeps the diff and loses the SHA.
+CREATE TABLE IF NOT EXISTS commit_evidence (
+  patch_id           TEXT NOT NULL,
+  activation_span_id TEXT NOT NULL,
+  session_id         TEXT NOT NULL,
+  prompt_id          TEXT,
+  branch_hash        TEXT,
+  observed_at        TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (patch_id, activation_span_id)
+);
+CREATE INDEX IF NOT EXISTS ix_evidence_patch ON commit_evidence (patch_id);

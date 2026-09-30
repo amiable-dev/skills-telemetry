@@ -65,10 +65,13 @@ def render(payload: dict) -> str:
     except Exception:                             # noqa: BLE001
         return ""
 
-    ticket = (getattr(state, "resource", None) or {}).get("std.ticket.id")
+    # ADR-013: any branch joins, so the fault is having no branch identity at
+    # all — no git repository or no remote — which no later rename can repair
+    resource = getattr(state, "resource", None) or {}
+    has_identity = bool(resource.get("std.branch.hash"))
     faults = []
-    if ticket == "unattributed":
-        faults.append("no ticket")
+    if "std.branch.hash" in resource and not has_identity:
+        faults.append("no branch identity")
     n = _uncatalogued(state)
     if n:
         faults.append(f"{n} unversioned")
@@ -77,8 +80,10 @@ def render(payload: dict) -> str:
 
     if faults:
         return f"{PREFIX} ⚠ " + " · ".join(faults)
-    if ticket and ticket != "unattributed":
-        return f"{PREFIX} {ticket}"
+    branch = str(getattr(state, "branch", "") or "")
+    if has_identity and branch:
+        # the local name, which never leaves this machine; the wire carries a hash
+        return f"{PREFIX} {branch if len(branch) <= 28 else branch[:27] + '…'}"
     return ""
 
 

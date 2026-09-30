@@ -103,7 +103,7 @@ class SessionState:
     session_id: str
     transcript_offset: int = 0
     started_at: float = 0.0        # wall clock at SessionStart; see stop()
-    resource: dict = field(default_factory=dict)   # std.ticket.id, std.repo, std.team, std.harness
+    resource: dict = field(default_factory=dict)   # std.branch.hash, std.repo, std.team, std.harness
     windows: list[SkillWindow] = field(default_factory=list)
     # {tool_name: [calls, failures]} — counts only, never inputs or results.
     # Aggregated per session rather than one span per tool call: at ~30 calls per
@@ -140,6 +140,13 @@ class SessionState:
     scope_key: str = ""
     scope_id: str = ""
     scope_source: str = ""
+    # ADR-013. The branch as the working tree names it, for the statusline only:
+    # it never leaves this machine, the wire carries std.branch.hash. `last_head`
+    # is where commit evidence resumes, and `pending_patch_ids` holds evidence
+    # from a Stop that emitted no turn, until one does.
+    branch: str = ""
+    last_head: str = ""
+    pending_patch_ids: list = field(default_factory=list)
     # Which ADR-009 hook events this machine has actually seen fire. The doctor
     # reports "not yet observed" rather than implying capture works because the
     # settings file mentions it.
@@ -186,8 +193,10 @@ class SessionState:
         st.turn_count = raw.get("turn_count", 0)
         st.turns_at_last_compaction = raw.get("turns_at_last_compaction", 0)
         st.observed_events = list(raw.get("observed_events") or [])
-        for f in ("scope_name", "scope_unit", "scope_key", "scope_id", "scope_source"):
+        for f in ("scope_name", "scope_unit", "scope_key", "scope_id", "scope_source",
+                  "branch", "last_head"):
             setattr(st, f, raw.get(f, ""))
+        st.pending_patch_ids = list(raw.get("pending_patch_ids") or [])
         return st
 
     # --- ADR-010: the open container ----------------------------------------
@@ -283,6 +292,9 @@ class SessionState:
             "scope_key": self.scope_key,
             "scope_id": self.scope_id,
             "scope_source": self.scope_source,
+            "branch": self.branch,
+            "last_head": self.last_head,
+            "pending_patch_ids": self.pending_patch_ids,
             "observed_events": self.observed_events,
         }, indent=1)
         if lock:
