@@ -23,6 +23,24 @@ processors:
       # not write.
       - { key: last_assistant_message, action: delete }
       - { pattern: ^std\.subagent\.(transcript|path|message).*, action: delete }
+      # ADR-014 decision 3: both harnesses' native content keys. The rule since
+      # decision 14 is that nothing past this collector ever holds content, and a
+      # harness can send it here — Claude Code with OTEL_LOG_TOOL_DETAILS=1, and
+      # Copilot despite captureContent:false (microsoft/vscode#326254). `prompt`
+      # and `response` arrive as "<REDACTED>" by default (verified live
+      # 2026-09-30); a placeholder today is a value if a flag is flipped.
+      - { key: tool_input,      action: delete }
+      - { key: tool_parameters, action: delete }
+      - { key: full_command,    action: delete }
+      - { key: bash_command,    action: delete }
+      - { key: error,           action: delete }
+      - { key: prompt,          action: delete }
+      - { key: response,        action: delete }
+      - { key: file_path,       action: delete }
+      - { pattern: ^github\.copilot\.tool\.parameters\.(command|file_path)$, action: delete }
+      - { key: gen_ai.system_instructions, action: delete }
+      - { key: gen_ai.tool.definitions,    action: delete }
+      - { pattern: ^gen_ai\.tool\.call\.(arguments|result)$, action: delete }
 
   # 2. Normalise semconv drift across SDKs/harnesses (rename map; extend as spec moves).
   transform/normalise:
@@ -50,6 +68,51 @@ processors:
           - set(attributes["std.skill.version"], "2.3.0")   where attributes["std.skill.name"] == "structured-logging" and attributes["std.skill.version"] == nil
 
   # 4. Pseudonymise developer identity; report team-level by default.
+  # ADR-014 decision 3. Identity sits on every metric data point, every event and
+  # every span attribute set — verified live against Claude Code 2.1.284 — so a
+  # resource-level rule never sees it. The email becomes the same pseudonym the
+  # resource rule below computes; the account and organisation ids go.
+  transform/identity:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements: &identity
+          - set(attributes["std.user.hash"], SHA256(attributes["user.email"])) where attributes["user.email"] != nil
+          - delete_key(attributes, "user.email")
+          - delete_key(attributes, "user.account_uuid")
+          - delete_key(attributes, "user.account_id")
+          - delete_key(attributes, "user.id")
+          - delete_key(attributes, "organization.id")
+    log_statements:
+      - context: log
+        statements: *identity
+    metric_statements:
+      - context: datapoint
+        statements: *identity
+
+  # ADR-014 decision 3, ADR-013 for Copilot: `github.copilot.git.repository` and
+  # `.branch` become `std.branch.hash`, computed exactly as stdtel.enrich does —
+  # sha256("stdtel-branch:" + repo_id + "\n" + branch)[:16], where repo_id is the
+  # remote as host/owner/name, lower-cased, without scheme, user, port or .git —
+  # and then the plain values are deleted. A remote can carry a token
+  # (https://x-access-token:...@), and a branch name can carry a customer's
+  # name. tests/test_collector_privacy.py holds this equal to the Python.
+  transform/copilot_git:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(cache["repo"], attributes["github.copilot.git.repository"]) where attributes["github.copilot.git.repository"] != nil
+          - replace_pattern(cache["repo"], "/+$", "")
+          - replace_pattern(cache["repo"], "\\.git$", "")
+          - replace_pattern(cache["repo"], "/+$", "")
+          - replace_pattern(cache["repo"], "^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?([^/:]+)(?::[0-9]+)?/(.+)$", "$${1}/$${2}")
+          - replace_pattern(cache["repo"], "^(?:[^@/:]+@)?([^:/]+):(.+)$", "$${1}/$${2}")
+          - set(cache["repo"], ConvertCase(cache["repo"], "lower")) where cache["repo"] != nil
+          - set(attributes["std.branch.hash"], Substring(SHA256(Concat(["stdtel-branch:", cache["repo"], "\n", attributes["github.copilot.git.branch"]], "")), 0, 16)) where cache["repo"] != nil and attributes["github.copilot.git.branch"] != nil
+          - delete_key(attributes, "github.copilot.git.repository")
+          - delete_key(attributes, "github.copilot.git.branch")
+
   transform/pseudonymise:
     error_mode: ignore
     trace_statements:
@@ -131,13 +194,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/drop_content, transform/normalise, transform/copilot_skills, transform/pseudonymise, batch]
+      processors: [memory_limiter, attributes/drop_content, transform/identity, transform/copilot_git, transform/normalise, transform/copilot_skills, transform/pseudonymise, batch]
       exporters: [otlp/tempo, spanmetrics]
     metrics:
       receivers: [otlp, spanmetrics]
-      processors: [memory_limiter, resource/collapse_instance, batch]
+      processors: [memory_limiter, attributes/drop_content, transform/identity, resource/collapse_instance, batch]
       exporters: [prometheusremotewrite]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/drop_content, batch]
+      processors: [memory_limiter, attributes/drop_content, transform/identity, batch]
       exporters: [debug]

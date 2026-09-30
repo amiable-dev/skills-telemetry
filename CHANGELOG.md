@@ -4,6 +4,24 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Changed
+- **The collector enforces privacy on every pipeline, for both harnesses (ADR-014 decision 3, #109).**
+  It had to be done before any native telemetry is switched on.
+  - **Identity** is removed from spans, events and metric data points. The email becomes
+    `std.user.hash`; account and organisation ids are deleted. Verified live, Claude Code puts these
+    on every record rather than on the resource, so the old resource-level rule would not have seen
+    them.
+  - **Content** is deleted for both harnesses' native keys: Claude Code's `tool_input`,
+    `tool_parameters`, `full_command`, `prompt`, `response` and similar; Copilot's
+    `github.copilot.tool.parameters.command` and `.file_path`, and its GenAI message and tool-call
+    keys.
+  - **Copilot's git remote and branch** become `std.branch.hash`, computed exactly as the capture
+    side computes it, and the plain values are deleted. A remote URL can carry a token.
+  - All of this is tested against the pinned collector image, under both the default and the
+    Langfuse configuration. Before this change, 22 of those 24 checks failed.
+
 ## 0.7.0 — 2026-09-30
 
 ### Changed — breaking, on the wire and in the warehouse
