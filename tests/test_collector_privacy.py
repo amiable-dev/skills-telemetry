@@ -34,6 +34,8 @@ COPILOT_CONTENT = ("github.copilot.tool.parameters.command", "github.copilot.too
                    "gen_ai.system_instructions", "gen_ai.tool.definitions",
                    "gen_ai.tool.call.arguments", "gen_ai.tool.call.result")
 MARKER = "CONTENT-MARKER-" + uuid.uuid4().hex[:8]
+VCS_TOKEN = "VCSTOKEN" + uuid.uuid4().hex[:8]
+VCS_URL = f"https://x-access-token:{VCS_TOKEN}@github.com/amiable-dev/skills-telemetry.git"
 
 #: (remote as Copilot reports it, branch). Every spelling must hash as the
 #: capture side does, or a Copilot request never joins its change request.
@@ -94,7 +96,27 @@ def collector_output(request):
                                                                 "dataPoints": [{"asInt": "5", "timeUnixNano": ns,
                                                                                 "attributes": _kv({**_identity(),
                                                                                                    "type": "input"})}]}}]}]}]})
-        yield c.wait_for("stdtel.privacy.probe", "prompt.id", *(["stdtel.test.remote"] * 1))
+        # #128: Claude Code's repository URL, on the resource and on the record,
+        # for every signal. Loki flattens both alike, so which one Claude Code
+        # uses cannot be read back from storage.
+        vcs = {"vcs.repository.url.full": VCS_URL}
+        c.post("/v1/logs", {"resourceLogs": [{"resource": {"attributes": _kv({"service.name": "claude-code", **vcs})},
+                                              "scopeLogs": [{"logRecords": [{
+                                                  "timeUnixNano": ns,
+                                                  "attributes": _kv({**vcs, "event.name": "vcs_probe"})}]}]}]})
+        c.post("/v1/traces", {"resourceSpans": [{"resource": {"attributes": _kv({"service.name": "claude-code", **vcs})},
+                                                 "scopeSpans": [{"spans": [{
+                                                     "traceId": "f" * 32, "spanId": "f" * 16, "name": "vcs_probe_span",
+                                                     "startTimeUnixNano": ns, "endTimeUnixNano": ns,
+                                                     "attributes": _kv(vcs)}]}]}]})
+        c.post("/v1/metrics", {"resourceMetrics": [{"resource": {"attributes": _kv({"service.name": "claude-code", **vcs})},
+                                                    "scopeMetrics": [{"metrics": [{
+                                                        "name": "stdtel.vcs.probe",
+                                                        "sum": {"aggregationTemporality": 2, "isMonotonic": True,
+                                                                "dataPoints": [{"asInt": "1", "timeUnixNano": ns,
+                                                                                "attributes": _kv(vcs)}]}}]}]}]})
+        yield c.wait_for("stdtel.privacy.probe", "prompt.id", "stdtel.test.remote", "vcs_probe",
+                         "vcs_probe_span", "stdtel.vcs.probe")
 
 
 def _keys(out: str) -> set[str]:
@@ -159,3 +181,16 @@ def test_the_plain_branch_and_remote_are_gone(collector_output):
 def test_the_commit_sha_is_kept(collector_output):
     """Opaque, and ADR-014 decision 8's evidence for Copilot."""
     assert "github.copilot.git.commit_sha" in _keys(collector_output)
+
+
+def test_a_credential_in_claude_codes_repository_url_never_passes(collector_output):
+    """#128: Claude Code sends `vcs.repository.url.full` on every event with
+    OTEL_METRICS_INCLUDE_REPOSITORY, and a remote URL can carry a token."""
+    assert "vcs_probe" in collector_output and "stdtel.vcs.probe" in collector_output
+    assert VCS_TOKEN not in collector_output
+
+
+def test_the_repository_url_is_kept_without_the_credential(collector_output):
+    kept = re.findall(r"-> vcs\.repository\.url\.full: Str\(([^)]*)\)", collector_output)
+    assert len(kept) >= 6, "resource and record, on three signals"
+    assert set(kept) == {"https://github.com/amiable-dev/skills-telemetry.git"}

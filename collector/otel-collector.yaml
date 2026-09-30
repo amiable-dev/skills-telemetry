@@ -83,12 +83,23 @@ processors:
           - delete_key(attributes, "user.account_id")
           - delete_key(attributes, "user.id")
           - delete_key(attributes, "organization.id")
+          # #128: Claude Code's repository URL (OTEL_METRICS_INCLUDE_REPOSITORY)
+          # can carry a credential, https://x-access-token:...@host/. The
+          # userinfo goes; the URL stays, since owner and name are not secret.
+          - replace_pattern(attributes["vcs.repository.url.full"], "^([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/]+@", "$${1}")
+      - context: resource
+        statements: &resource_identity
+          - replace_pattern(attributes["vcs.repository.url.full"], "^([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/]+@", "$${1}")
     log_statements:
       - context: log
         statements: *identity
+      - context: resource
+        statements: *resource_identity
     metric_statements:
       - context: datapoint
         statements: *identity
+      - context: resource
+        statements: *resource_identity
 
   # ADR-014 decision 3, ADR-013 for Copilot: `github.copilot.git.repository` and
   # `.branch` become `std.branch.hash`, computed exactly as stdtel.enrich does —
