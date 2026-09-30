@@ -612,3 +612,36 @@ def test_a_genuine_zero_cost_survives_the_load():
     row = activation_span({"std.artefact.kind": "external", "std.external.system": "x",
                            "std.external.cost_usd": 0})
     assert row["external_cost_usd"] == 0.0
+
+
+def test_the_compose_loader_invocation_of_load_traces_parses(monkeypatch):
+    """#121: the compose loader ran `python -m warehouse.load_traces` with no
+    arguments while main() required --tempo and --dsn, so the containerised
+    traces load failed with a usage error on every cycle — before main() could
+    write the loader_run row that would have shown it. The service sets
+    STDTEL_TEMPO and STDTEL_DSN; that has to be enough."""
+    import os
+    import re
+    import shlex
+
+    import yaml
+
+    import warehouse.load_traces as lt
+
+    svc = yaml.safe_load((ROOT / "deploy" / "docker-compose.yml").read_text())["services"]["loader"]
+    command = " ".join(str(x) for x in svc["command"])
+    call = re.search(r"python -m warehouse\.load_traces([^\n|]*)", command)
+    assert call
+    for k, v in svc["environment"].items():
+        monkeypatch.setenv(k, str(v))
+    a = lt.parse_args([os.path.expandvars(w) for w in shlex.split(call.group(1).replace("$$", "$"))])
+    assert (a.tempo, a.dsn) == (svc["environment"]["STDTEL_TEMPO"], svc["environment"]["STDTEL_DSN"])
+
+
+def test_load_traces_still_says_what_is_missing(monkeypatch, capsys):
+    import warehouse.load_traces as lt
+    monkeypatch.delenv("STDTEL_TEMPO", raising=False)
+    monkeypatch.delenv("STDTEL_DSN", raising=False)
+    with pytest.raises(SystemExit):
+        lt.parse_args([])
+    assert "STDTEL_TEMPO" in capsys.readouterr().err
