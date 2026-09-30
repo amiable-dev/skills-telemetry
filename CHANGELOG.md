@@ -55,6 +55,13 @@ version until this number changes — so bump it for anything a user would recei
   has it as a datasource. Native *metrics* are dropped at the collector: each carries `session.id`
   as a label, so it opens a series per session.
 
+### Fixed
+- **The compose `loader` service's traces load had never run (#121).** It called
+  `python -m warehouse.load_traces` with no arguments while `--tempo` and `--dsn` were required, so
+  every cycle ended in a usage error. That happened before a `loader_run` row could be written, and
+  `|| echo "traces failed"` was the only sign. Both flags now fall back to `STDTEL_TEMPO` and
+  `STDTEL_DSN`, which the service sets, and a test parses the service's own invocation.
+
 ## 0.7.0 — 2026-09-30
 
 ### Changed — breaking, on the wire and in the warehouse

@@ -463,9 +463,24 @@ def record_run(dsn: str, row: dict) -> bool:
         return False
 
 
+def parse_args(argv=None) -> argparse.Namespace:
+    """--tempo and --dsn fall back to STDTEL_TEMPO and STDTEL_DSN, which is all
+    the compose loader sets. Both were required flags it never passed, so the
+    container's traces load failed with a usage error on every cycle (#121)."""
+    import os
+    ap = argparse.ArgumentParser(prog="load_traces")
+    ap.add_argument("--tempo", default=os.environ.get("STDTEL_TEMPO") or None)
+    ap.add_argument("--dsn", default=os.environ.get("STDTEL_DSN") or None)
+    ap.add_argument("--since", default="24h")
+    a = ap.parse_args(argv)
+    for flag, env in (("tempo", "STDTEL_TEMPO"), ("dsn", "STDTEL_DSN")):
+        if not getattr(a, flag):
+            ap.error(f"--{flag} is required (or set {env})")
+    return a
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(); ap.add_argument("--tempo", required=True); ap.add_argument("--dsn", required=True)
-    ap.add_argument("--since", default="24h"); a = ap.parse_args(argv)
+    a = parse_args(argv)
     import requests
     hours = int(a.since.rstrip("h")); end = int(dt.datetime.now().timestamp()); start = end - hours * 3600
     if hours < MIN_SAFE_WINDOW_HOURS:
