@@ -135,6 +135,54 @@ def merge_settings(target: Path, block: dict) -> dict:
     return current
 
 
+def _collector_base() -> str:
+    """The collector stdtel's own spans go to, as a base URL."""
+    from stdtel.exporter import _endpoint
+    return _endpoint().removesuffix("/v1/traces")
+
+
+def claude_native_env() -> dict:
+    """ADR-014 decision 2: Claude Code's own events, and nothing else.
+
+    Absent on purpose: OTEL_METRICS_EXPORTER, because native metrics carry
+    session.id as a label (decision 4); and every content flag, above all
+    OTEL_LOG_TOOL_DETAILS, which only stdtel-setup offers, with consent, once
+    `stdtel-doctor --content-check` has passed on this machine (decisions 12, 13).
+    These are Claude Code's own variables, read by Claude Code, so ADR-003's
+    scrubbing of OTEL_* from hook processes does not apply.
+    """
+    return {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": _collector_base(),
+        "OTEL_METRICS_INCLUDE_REPOSITORY": "true",
+        "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
+    }
+
+
+def copilot_vscode_settings() -> dict:
+    """VS Code's Copilot OTel settings (documented 2026-09-16, read 2026-09-30).
+    captureContent is written as false rather than left to its default, so the
+    intent is visible in the file."""
+    return {
+        "github.copilot.chat.otel.enabled": True,
+        "github.copilot.chat.otel.exporterType": "otlp-http",
+        "github.copilot.chat.otel.otlpEndpoint": _collector_base(),
+        "github.copilot.chat.otel.captureContent": False,
+    }
+
+
+def copilot_cli_env() -> dict:
+    """The Copilot CLI's equivalents. COPILOT_OTEL_ENDPOINT takes precedence over
+    OTEL_EXPORTER_OTLP_ENDPOINT, so it cannot be overridden by a stray OTel one."""
+    return {
+        "COPILOT_OTEL_ENABLED": "true",
+        "COPILOT_OTEL_ENDPOINT": _collector_base(),
+        "COPILOT_OTEL_CAPTURE_CONTENT": "false",
+    }
+
+
 def _dump(obj: dict) -> str:
     return json.dumps(obj, indent=2)
 
@@ -162,8 +210,18 @@ def main(argv: list[str] | None = None) -> int:
     p_set.add_argument("--exec-form", action="store_true")
     p_set.add_argument("--dry-run", action="store_true")
 
+    p_set.add_argument("--no-native", action="store_true",
+                       help="hooks only: do not switch on Claude Code's own telemetry (ADR-014)")
+
     p_where = sub.add_parser("where", help="print the resolved absolute hook path")
+
+    p_cop = sub.add_parser("copilot", help="print (or merge) Copilot's native OTel settings")
+    p_cop.add_argument("--vscode-settings", type=Path,
+                       help="merge into this VS Code settings.json (refused if it has comments)")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+    if args.cmd == "copilot":
+        return _copilot(args.vscode_settings)
 
     try:
         binary = hook_binary()
@@ -179,12 +237,46 @@ def main(argv: list[str] | None = None) -> int:
         print(_dump(block))
     elif args.cmd == "settings":
         block = claude_hooks(binary, args.exec_form)
+        if not args.no_native:
+            block["env"] = claude_native_env()
         if args.dry_run:
             print(_dump(block))
         else:
-            merge_settings(args.path, block)
+            merged = merge_settings(args.path, block)
             print(f"wrote {len(block['hooks'])} hook events to {args.path} -> {binary}")
+            if "env" in block:
+                print(f"switched on Claude Code's own telemetry -> {block['env']['OTEL_EXPORTER_OTLP_ENDPOINT']}")
+                if merged.get("env", {}).get("OTEL_METRICS_EXPORTER"):
+                    print("note: OTEL_METRICS_EXPORTER is set in this file. stdtel leaves it alone; the "
+                          "collector drops native metrics anyway (ADR-014 decision 4)")
             print(RESTART_NOTICE)
+    return 0
+
+
+def _copilot(vscode_settings: "Path | None") -> int:
+    block = copilot_vscode_settings()
+    if vscode_settings is not None:
+        text = vscode_settings.read_text() if vscode_settings.is_file() else ""
+        try:
+            json.loads(text or "{}")
+        except json.JSONDecodeError:
+            print(f"stdtel-install: {vscode_settings} is not plain JSON (VS Code allows comments, and "
+                  "rewriting it would drop them). Add these settings by hand:\n" + _dump(block),
+                  file=sys.stderr)
+            return 1
+        current = json.loads(text or "{}")
+        current.update(block)
+        vscode_settings.parent.mkdir(parents=True, exist_ok=True)
+        vscode_settings.write_text(json.dumps(current, indent=2) + "\n")
+        print(f"wrote Copilot's OTel settings to {vscode_settings}; reload VS Code")
+    else:
+        print("VS Code settings.json:")
+        print(_dump(block))
+    print("\nCopilot CLI (shell profile):")
+    for k, v in copilot_cli_env().items():
+        print(f"export {k}={shlex.quote(v)}")
+    print("\nOrganisations: the enterprise-managed `telemetry` policy is the preferred route; "
+          "see docs/reference.md.")
     return 0
 
 

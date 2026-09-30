@@ -23,6 +23,17 @@ version until this number changes — so bump it for anything a user would recei
     Langfuse configuration. Before this change, 22 of those 24 checks failed.
 
 ### Added
+- **`stdtel-install` switches on both harnesses' own telemetry (ADR-014 decision 2, #113).**
+  - `settings` now writes Claude Code's `env` block alongside the hooks: events on, exported to the
+    collector stdtel already uses, with repository attributes on and account uuid off.
+  - It never writes `OTEL_LOG_TOOL_DETAILS` or a metrics exporter. A detailed view the user already
+    chose survives a reinstall. `--no-native` writes the hooks only.
+  - New `stdtel-install copilot` prints, or merges with `--vscode-settings`, the VS Code
+    `github.copilot.chat.otel.*` settings with `captureContent: false`, and the Copilot CLI's
+    `COPILOT_OTEL_*` variables. The keys come from the VS Code documentation; they have not yet been
+    seen in a live trace (#115).
+  - `docs/for-developers.md` now says what Claude Code sends and how to stop it: `STDTEL_DISABLED`
+    does not. It also drops two stale ticket references left over from ADR-013.
 - **One table of model requests, loaded from the harness's own records (ADR-014 decisions 5 and 7,
   #112).** `warehouse/load_requests.py` reads Claude Code's `api_request` events from Loki into
   `llm_request`: tokens, exact cost, model, and the skill, agent, plugin and MCP server each request

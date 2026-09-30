@@ -32,7 +32,6 @@ Every kind carries only these fields:
 | model | `claude-opus-5` | your transcript |
 | tool call counts | `Bash: 2 calls, 1 failure` | counts only, per tool name |
 | session id, prompt id | opaque uuids | the harness |
-| ticket id | `PLAT-42` | **parsed from your git branch name** |
 | repo, team, harness | `payments-api`, `payments`, `claude-code` | git remote and configuration |
 | a pseudonymous id for you | `3f9a1c7e0b2d4a86` | SHA-256 of your uid and hostname, hashed **before** it leaves the process. It answers "how many people used this skill", which the reporting floor needs; it is not reversible to your name, and the same person on two machines counts as two |
 | duration | `3ms` | the harness |
@@ -41,11 +40,47 @@ Every kind carries only these fields:
 | compaction reason and size | `auto`, `before=967334 after=13177` | the harness's own estimates, recorded as received |
 | hook latency, by hook | `cc-status: 40ms` | the **basename** of each hook the harness timed; the path is dropped |
 | sub-agent version and owner | `2.1.0`, `platform-observability` | the agent's own definition file, when it carries one |
-| the container a piece of work ran under | `epic-loop`, `PLAT-42` | the name of a skill that declares a unit of work, and the ticket that was active. Recorded only while such a skill is running; most work has none |
+| the container a piece of work ran under | `epic-loop` | the name of a skill that declares a unit of work, and the branch hash that was active. Recorded only while such a skill is running; most work has none |
 | session cost | `$3.20` | the harness's own running total for the session |
 | a fingerprint of the skill | `a1b2c3d4e5f60718` | SHA-256 of the skill's own instructions, truncated — the file the skill ships, never anything you wrote. It exists so a skill edited without a version bump is visible rather than silently mixed into the previous version's numbers |
 
 That is the whole list. You can print it yourself — see [verify it](#verify-it-yourself).
+
+## Claude Code's own telemetry
+
+`stdtel-install settings` also switches on **Claude Code's own** telemetry
+([ADR-014](adrs/014-harness-native-telemetry.md)), because Claude Code measures cost and tokens per
+model request exactly, where stdtel could only estimate them. It writes these into the `env` block of
+`~/.claude/settings.json`:
+
+```json
+"CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+"OTEL_LOGS_EXPORTER": "otlp",
+"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
+"OTEL_METRICS_INCLUDE_REPOSITORY": "true",
+"OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false"
+```
+
+Claude Code then sends one event per model request, plus a few lifecycle events (hooks, plugins, MCP
+connections). Each carries:
+- tokens, cost, the model and the duration;
+- the skill, sub-agent, plugin or MCP server the request served;
+- session and prompt ids;
+- the repository's URL, owner and name.
+
+It also carries **your email address and account ids**. The collector deletes those on arrival and
+keeps only a hash of the email, and a test proves this against the real collector image. Prompts are
+not sent: Claude Code replaces them with their length. Native *metrics* are not switched on, and the
+collector drops them if they arrive.
+
+What it does **not** switch on is `OTEL_LOG_TOOL_DETAILS`, which would make Claude Code send tool
+inputs and commands. That is offered only by the `stdtel-setup` skill, with your consent, and only
+after `stdtel-doctor --content-check` has shown that your collector drops content.
+
+To install the hooks without any of this, run `stdtel-install settings --no-native`. To switch it off
+later, delete those keys from the `env` block. **`STDTEL_DISABLED=1` does not stop it**, because
+Claude Code sends it, not stdtel.
 
 ## What never leaves your machine
 
@@ -85,7 +120,7 @@ surfaces anywhere in a span.
 is marked as having happened inside its container — including work you did that had nothing to do with
 it. That is deliberate. Nothing can observe whether a skill caused a later tool call, so the number
 says *what happened while it was running*, not *what it caused*. The same opt-out switches cover it;
-nothing extra is collected, the existing records simply gain the container's name and ticket.
+nothing extra is collected, the existing records simply gain the container's name and branch hash.
 
 ## Turning it off
 
@@ -94,7 +129,8 @@ export STDTEL_DISABLED=1          # this shell
 ```
 
 Put it in your shell profile to make it permanent. The hook returns immediately, before reading the
-payload or touching your transcript. There is no partial mode and no "anonymous" mode that still
+payload or touching your transcript. It stops stdtel, not Claude Code: to stop Claude Code's own
+telemetry as well, remove the keys listed in [Claude Code's own telemetry](#claude-codes-own-telemetry). There is no partial mode and no "anonymous" mode that still
 sends: set it and nothing is emitted.
 
 **Per skill**, an author can opt a skill out of individual attribution in its `SKILL.md`:
@@ -122,7 +158,7 @@ uv tool uninstall stdtel          # or: pipx uninstall stdtel
 
 If `stdtel-install where` finds nothing, the package was never installed — the plugin's hooks exit silently in that state, which is why you would have seen no data and no errors.
 
-Then remove the `hooks` block from `~/.claude/settings.json` (and any project `.claude/settings.json`).
+Then remove the `hooks` block, and the telemetry keys `stdtel-install` added to `env`, from `~/.claude/settings.json` (and any project `.claude/settings.json`).
 If you installed it as a plugin, `/plugin uninstall stdtel@amiable-standards`.
 
 If `STDTEL_SPOOL=1` is set, spans are queued in `~/.stdtel/spool/` until `stdtel-export` sends them —
