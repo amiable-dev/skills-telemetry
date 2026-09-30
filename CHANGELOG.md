@@ -4,7 +4,13 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
-## Unreleased
+## 0.8.0 — 2026-09-30
+
+Harness-native telemetry, ADR-014. Claude Code's own per-request records become the source of cost
+and tokens, loaded into `llm_request`. **`stdtel-install settings` now switches Claude Code's own
+telemetry on as well as registering the hooks.** Use `--no-native` for hooks only.
+[docs/for-developers.md](docs/for-developers.md) says what that sends and how to stop it. Nothing on
+the wire or in the warehouse breaks: every schema change is additive.
 
 ### Changed
 - **The collector enforces privacy on every pipeline, for both harnesses (ADR-014 decision 3, #109).**
