@@ -409,3 +409,55 @@ UPDATE artefact_activation SET branch_hash = NULL WHERE branch_hash = '';
 UPDATE skill_invocation    SET branch_hash = NULL WHERE branch_hash = '';
 UPDATE session_cost        SET branch_hash = NULL WHERE branch_hash = '';
 UPDATE commit_evidence     SET branch_hash = NULL WHERE branch_hash = '';
+
+-- ADR-014 decision 10 (#117): with the detailed view off, Claude Code sends a
+-- third-party plugin's skill as "third-party". stdtel saw it run, by name, on the
+-- same prompt. A request is named from the one skill that ran in its prompt and
+-- that the harness did not name itself, and labelled 'derived'. With none, or
+-- more than one, it stays "third-party": never guessed. Read-time, so the order
+-- the two loaders run in cannot matter. Every column of llm_request, so a panel
+-- can read this instead without losing any.
+CREATE OR REPLACE VIEW llm_request_attributed AS
+WITH ran AS (
+  SELECT DISTINCT session_id, prompt_id, name
+  FROM artefact_activation
+  WHERE kind = 'skill' AND name IS NOT NULL AND prompt_id IS NOT NULL
+),
+named AS (
+  SELECT DISTINCT session_id, prompt_id, skill_name
+  FROM llm_request
+  WHERE skill_name IS NOT NULL AND skill_name <> 'third-party'
+),
+candidate AS (
+  SELECT r.session_id, r.prompt_id, min(r.name) AS name, count(*) AS n
+  FROM ran r
+  WHERE NOT EXISTS (SELECT 1 FROM named n WHERE n.session_id = r.session_id
+                    AND n.prompt_id = r.prompt_id AND n.skill_name = r.name)
+  GROUP BY r.session_id, r.prompt_id
+)
+SELECT r.harness,
+       r.request_id,
+       r.session_id,
+       r.prompt_id,
+       r.conversation_id,
+       r.trace_id,
+       r.ended_at,
+       r.duration_ms,
+       r.model,
+       r.input_tokens,
+       r.output_tokens,
+       r.cache_read_tokens,
+       r.cache_creation_tokens,
+       r.cost_usd,
+       CASE WHEN r.skill_name = 'third-party' AND c.n = 1 THEN c.name ELSE r.skill_name END AS skill_name,
+       r.agent_name,
+       r.plugin_name,
+       r.mcp_server,
+       r.mcp_tool,
+       r.query_source,
+       r.branch_hash,
+       r.user_hash,
+       CASE WHEN r.skill_name = 'third-party' AND c.n = 1 THEN 'derived'
+            ELSE r.attribution_source END AS attribution_source
+FROM llm_request r
+LEFT JOIN candidate c ON c.session_id = r.session_id AND c.prompt_id = r.prompt_id;

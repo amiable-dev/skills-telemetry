@@ -23,6 +23,12 @@ version until this number changes — so bump it for anything a user would recei
     Langfuse configuration. Before this change, 22 of those 24 checks failed.
 
 ### Added
+- **Third-party skills are named from stdtel's own record (ADR-014 decision 10, #117).** Without the
+  detailed view, Claude Code names a third-party plugin's skill `"third-party"`. The new view
+  `llm_request_attributed` names such a request from the one skill that stdtel saw run on the same
+  prompt and that the harness did not name itself, labelled `derived`. With more than one candidate
+  it stays `"third-party"`. It is read-time, so loader order cannot matter. Removing the tail rule and
+  chars/4 `load_tokens` remains scheduled for one release after native records are verified live.
 - **`skills/stdtel-setup`: interactive setup for both harnesses (ADR-014 decision 12, #114).** An
   agent runs it with the user.
   - It installs the hooks and switches on Claude Code's and Copilot's own telemetry without content.
