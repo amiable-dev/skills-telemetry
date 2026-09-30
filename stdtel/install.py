@@ -183,6 +183,51 @@ def copilot_cli_env() -> dict:
     }
 
 
+DETAILED_VIEW = "OTEL_LOG_TOOL_DETAILS"
+
+
+def _collector_is_local(base: str) -> bool:
+    from urllib.parse import urlsplit
+    return (urlsplit(base).hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+
+def detailed_view(state: str, target: Path, collector_confirmed: bool = False) -> int:
+    """Switch Claude Code's detailed view on or off (ADR-014 decisions 12, 13).
+
+    On only through the gate, enforced here rather than left to prose: the
+    collector is local or the user vouches for it, and `stdtel-doctor
+    --content-check` passes now, on this machine. The user's consent is the
+    caller's to ask for — the stdtel-setup skill asks, then runs this.
+    """
+    current = json.loads(target.read_text() or "{}") if target.is_file() else {}
+    env = current.setdefault("env", {})
+    if state == "off":
+        env.pop(DETAILED_VIEW, None)
+        target.write_text(json.dumps(current, indent=2) + "\n")
+        print(f"detailed view off in {target}. Restart Claude Code.")
+        return 0
+
+    from stdtel.doctor import claude_code_endpoint, probe_content
+    base = claude_code_endpoint(target)       # where Claude Code will send content, not stdtel
+    if not _collector_is_local(base) and not collector_confirmed:
+        print(f"stdtel-install: the collector at {base} is not on this machine. The content check can "
+              "only see Tempo and Loki here, not wherever that collector forwards. Re-run with "
+              "--collector-confirmed only if you know it applies this repository's privacy rules.",
+              file=sys.stderr)
+        return 1
+    check = probe_content(endpoint=base)
+    if not check.ok:
+        print(f"stdtel-install: not switching the detailed view on: {check.detail}. {check.remedy}",
+              file=sys.stderr)
+        return 1
+    env[DETAILED_VIEW] = "1"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(current, indent=2) + "\n")
+    print(f"detailed view on in {target} ({check.detail}). Restart Claude Code, then run "
+          "`stdtel-doctor`, which re-checks this whenever the flag is on.")
+    return 0
+
+
 def _dump(obj: dict) -> str:
     return json.dumps(obj, indent=2)
 
@@ -218,10 +263,22 @@ def main(argv: list[str] | None = None) -> int:
     p_cop = sub.add_parser("copilot", help="print (or merge) Copilot's native OTel settings")
     p_cop.add_argument("--vscode-settings", type=Path,
                        help="merge into this VS Code settings.json (refused if it has comments)")
+    p_dv = sub.add_parser("detailed-view",
+                          help="switch Claude Code's OTEL_LOG_TOOL_DETAILS on (gated) or off")
+    p_dv.add_argument("state", choices=["on", "off"])
+    p_dv.add_argument("--path", type=Path, default=Path.home() / ".claude" / "settings.json")
+    p_dv.add_argument("--collector-confirmed", action="store_true",
+                      help="the collector is not local, and you know it applies this repo's privacy rules")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     if args.cmd == "copilot":
         return _copilot(args.vscode_settings)
+    if args.cmd == "detailed-view":
+        try:
+            return detailed_view(args.state, args.path, args.collector_confirmed)
+        except json.JSONDecodeError as e:
+            print(f"stdtel-install: {args.path} is not valid JSON: {e}", file=sys.stderr)
+            return 1
 
     try:
         binary = hook_binary()

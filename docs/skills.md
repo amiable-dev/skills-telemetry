@@ -70,6 +70,23 @@ whose effect cannot be checked should say so.
 
 **Refuses to** invent a `standard_id` or `policy_ids` that do not reflect what the skill body says.
 
+## `skills/stdtel-setup`
+
+**What** — interactive setup, run by an agent with you, for Claude Code and Copilot. It installs the
+hooks and switches on each harness's own telemetry without content. Then it offers Claude Code's
+detailed view (`OTEL_LOG_TOOL_DETAILS`) and explains what that costs.
+
+**Use it when** installing stdtel, enabling Copilot's telemetry, or when third-party skills show up as
+`"third-party"` in cost data.
+
+**Do not use it** to decorate a skill (`stdtel-onboard`) or to diagnose a broken install. For that, run
+`stdtel-doctor`, which the setup skill runs at the end anyway.
+
+**Refuses to** switch the detailed view on without your explicit yes. It does so through
+`stdtel-install detailed-view on`, which itself refuses unless the collector is local (or you vouch
+for it) and `stdtel-doctor --content-check` passes on the spot. It never enables Copilot's
+`captureContent`.
+
 ## `skills/stdtel-query`
 
 **What** — answers cost and outcome questions against Postgres, Tempo and Prometheus, with the SQL for
@@ -191,6 +208,7 @@ for yourself entirely, see [for-developers.md](for-developers.md).
 | "why is this skill `unversioned`?" | `stdtel-onboard` |
 | "how do I measure an agent, or a skill I do not own?" | `stdtel-onboard` |
 | "why is this tool's spend missing from telemetry?" | `stdtel-instrument` |
+| "set me up" / "turn on Copilot telemetry" | `stdtel-setup` |
 | "how do I install the hooks?" | [reference.md](reference.md) |
 | "how do I reach Grafana / Tempo / Postgres?" | [local-stack.md](local-stack.md) |
 | "can I trust this number yet?" | [evaluation-power.md](evaluation-power.md) |

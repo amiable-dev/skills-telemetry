@@ -23,6 +23,20 @@ version until this number changes — so bump it for anything a user would recei
     Langfuse configuration. Before this change, 22 of those 24 checks failed.
 
 ### Added
+- **`skills/stdtel-setup`: interactive setup for both harnesses (ADR-014 decision 12, #114).** An
+  agent runs it with the user.
+  - It installs the hooks and switches on Claude Code's and Copilot's own telemetry without content.
+  - It offers Claude Code's detailed view and says plainly what it costs: shell commands, file paths
+    and written file contents travel to the collector and are deleted there.
+  - It enables the view only on an explicit yes, through the new
+    **`stdtel-install detailed-view on`**. That command enforces the rest in code: the collector must
+    be local or vouched for, and the content probe must pass on the spot. Otherwise it writes nothing.
+    `off` removes the flag.
+  - The gate and `stdtel-doctor`'s content check now probe **the endpoint Claude Code will send
+    to**, read from its settings files in its own precedence order (project local, then project,
+    then user). Until now they probed stdtel's own endpoint. That is usually the same collector, but
+    not after a hand edit, a reinstall with another endpoint, or a project override, and then the
+    check proved something about a collector Claude Code would never use.
 - **`stdtel-install` switches on both harnesses' own telemetry (ADR-014 decision 2, #113).**
   - `settings` now writes Claude Code's `env` block alongside the hooks: events on, exported to the
     collector stdtel already uses, with repository attributes on and account uuid off.
