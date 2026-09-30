@@ -23,6 +23,25 @@ version until this number changes — so bump it for anything a user would recei
     Langfuse configuration. Before this change, 22 of those 24 checks failed.
 
 ### Added
+- **One table of model requests, loaded from the harness's own records (ADR-014 decisions 5 and 7,
+  #112).** `warehouse/load_requests.py` reads Claude Code's `api_request` events from Loki into
+  `llm_request`: tokens, exact cost, model, and the skill, agent, plugin and MCP server each request
+  served. A live capture on Claude Code 2.1.285 confirmed that `api_request` carries the real skill
+  name (`probe-echo`) even where `skill_activated` redacts it. That capture, scrubbed, is the
+  replayed fixture.
+  - `llm_request_change_request` joins each request to its change request through the stdtel turn
+    with the same `prompt_id`, reusing `activation_change_request` rather than restating ADR-013's
+    rule. Only turns bridge: a sub-agent in its own worktree shares the prompt id but not the
+    branch.
+  - `session_cost_reconciliation` compares the harness's session total with the sum of its
+    requests. The two are never added together.
+  - Cost is stored as unbounded `NUMERIC`. The harness sends seven decimals and more, which
+    `NUMERIC(12,4)` would have rounded.
+  - Loki's `query_range` stops at its limit silently, so the loader pages until a short page comes
+    back. A request with no id fails the run and is counted, not dropped.
+  - `make load` and the compose `loader` service now run it after the traces load. `make load` is
+    an `&&` chain, so a Loki outage stops the delivery half there, exactly as a Tempo outage
+    already did.
 - **`stdtel-doctor` proves the collector drops content (ADR-014 decision 13, #111).** A new
   `content dropped` check sends a probe span and event holding a marker in content-shaped keys and a
   control id, then reads Tempo and Loki back. It passes only when the control arrived and the

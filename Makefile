@@ -24,7 +24,8 @@ smoke:        ; ./deploy/smoke.sh
 # local stack. LOAD_ARGS was referenced here and defined nowhere, so this target
 # exited with a usage error from #68 on — and load-watch's `|| true` hid it.
 LOAD_ARGS ?= --tempo $${STDTEL_TEMPO:-http://localhost:3200} --dsn $${STDTEL_DSN:-postgresql://postgres:stdtel@localhost:5432/stdtel} --since 24h
-load:         ; python -m warehouse.load_traces $(LOAD_ARGS) && $(MAKE) load-delivery
+REQUEST_ARGS ?= --loki $${STDTEL_LOKI:-http://localhost:11010} --dsn $${STDTEL_DSN:-postgresql://postgres:stdtel@localhost:5432/stdtel} --since 24h
+load:         ; python -m warehouse.load_traces $(LOAD_ARGS) && python -m warehouse.load_requests $(REQUEST_ARGS) && $(MAKE) load-delivery
 load-delivery:
 	@if [ -z "$$STDTEL_LOAD_REPO" ]; then \
 	  echo "load: set STDTEL_LOAD_REPO=owner/name to load delivery data and policy results"; \

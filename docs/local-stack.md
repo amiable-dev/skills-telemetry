@@ -31,8 +31,10 @@ mise run load-watch                                   # loop in a terminal, STDT
 docker compose -f deploy/docker-compose.yml --profile loader up -d   # the same loop in a container
 ```
 
-Three things load, not two. Traces come from Tempo; pull requests, tickets and defects come from
-GitHub; and **the `policy-results` artefact** — the only input the primary metric has — is downloaded
+Four things load. Traces come from Tempo. **Model requests come from Loki**: Claude Code's own
+`api_request` events, one row each in `llm_request`, with exact cost and the skill, agent, plugin
+and MCP server each request served (ADR-014). Pull requests, tickets and defects come from GitHub;
+and **the `policy-results` artefact** — the only input the primary metric has — is downloaded
 from each CI run and passed to the delivery loader. That last step did not exist until #21: the
 artefact had been produced on every pull-request run since the job was written and collected by
 nothing, so first-time pass rate had no input at all while every CI run went green.
@@ -104,7 +106,16 @@ curl -s --get http://localhost:3200/api/search \
 # 5. load traces into the warehouse, then query it
 python warehouse/load_traces.py --tempo http://localhost:3200 --dsn "$STDTEL_DSN" --since 24h
 psql "$STDTEL_DSN" -c 'SELECT skill_name, skill_version, branch_hash, tail_tokens FROM skill_invocation;'
+
+# 6. with Claude Code's native events switched on (ADR-014), load its model requests too
+python -m warehouse.load_requests --loki http://localhost:11010 --dsn "$STDTEL_DSN" --since 24h
+psql "$STDTEL_DSN" -c 'SELECT skill_name, sum(cost_usd) FROM llm_request GROUP BY 1;'
 ```
+
+`llm_request` is the per-request truth. `session_cost` is the harness's cumulative total and is kept
+only to check against it: `session_cost_reconciliation` puts the two side by side. **Never add them
+together.** `llm_request_change_request` says which change request each request's work became,
+through the stdtel turn with the same `prompt_id`.
 
 Then open Grafana at :3000 — the scorecard dashboard is provisioned.
 

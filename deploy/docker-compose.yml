@@ -72,6 +72,7 @@ services:
     environment:
       STDTEL_DSN: postgresql://postgres:stdtel@postgres:5432/stdtel
       STDTEL_TEMPO: http://tempo:3200
+      STDTEL_LOKI: http://loki:3100
       STDTEL_LOAD_INTERVAL: "${STDTEL_LOAD_INTERVAL:-900}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
       GH_TOKEN: "${GITHUB_TOKEN:-}"          # what the gh CLI itself reads
@@ -95,6 +96,7 @@ services:
         fi
         while true; do
           python -m warehouse.load_traces || echo "loader: traces failed" >&2
+          python -m warehouse.load_requests || echo "loader: requests failed" >&2
           if [ -n "$$STDTEL_LOAD_REPO" ] && [ -n "$$GITHUB_TOKEN" ]; then
             # The policy artefact is the primary metric's only input, and it was
             # produced on every CI run and collected by nothing (#21).
@@ -106,7 +108,7 @@ services:
           fi
           sleep "$$STDTEL_LOAD_INTERVAL"
         done
-    depends_on: [postgres, tempo]
+    depends_on: [postgres, tempo, loki]
 
   # --- Langfuse (opt-in): docker compose --profile langfuse up -d ---
   # Ports are remapped: upstream defaults collide with Grafana (3000),
