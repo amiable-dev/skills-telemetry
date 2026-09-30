@@ -81,6 +81,11 @@ version until this number changes — so bump it for anything a user would recei
   as a label, so it opens a series per session.
 
 ### Fixed
+- **A credential in Claude Code's repository URL no longer reaches Loki (#128).** With
+  `OTEL_METRICS_INCLUDE_REPOSITORY` on, every native event carries `vcs.repository.url.full`, and a
+  remote such as `https://x-access-token:...@github.com/...` would have been stored verbatim. The
+  collector now strips the userinfo, on the resource and on the record, for every signal. It is
+  tested against the real image under both overlays.
 - **A session with no repository now has `branch_hash` NULL, not `''` (#122).** The capture side
   sends an empty hash on purpose; the loader stored it verbatim, so `branch_hash IS NULL`
   undercounted sessions that cannot join a change request (ADR-005). `schema.sql` converts existing
