@@ -75,6 +75,18 @@ def key_in(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+#: A body is prose, and prose mentions keys it is not about — this repository's
+#: PR descriptions cite `ADR-012` constantly. A body key counts only after a
+#: linking word, which is how Jira and Linear link a change to an issue.
+_LINKED = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|part\s+of)\b[\s:]*"
+                     r"([A-Z][A-Z0-9]{1,9}-\d{1,6})(?!\d)", re.I)
+
+
+def key_linked_in(body: str) -> str | None:
+    m = _LINKED.search(body or "")
+    return m.group(1).upper() if m else None
+
+
 def key_in_branch(branch: str) -> str | None:
     if (branch or "").lower().startswith(_BOT_BRANCHES):
         return None
@@ -87,12 +99,12 @@ def ticket_links(forge: str, repo: str, closes: list, title: str, body: str,
 
     The forge's own links are authoritative and are the only source when they
     exist. Otherwise one key, from the first place that has one: title, then
-    body, then branch. The source is recorded so a query can trust the forge and
+    body — only after a linking word — then branch. The source is recorded so a query can trust the forge and
     discount the rest.
     """
     if closes:
         return [(f"{forge}:{repo}#{n}", "forge") for n in closes]
-    for source, found in (("title", key_in(title)), ("body", key_in(body)),
+    for source, found in (("title", key_in(title)), ("body", key_linked_in(body)),
                           ("branch", key_in_branch(branch))):
         if found:
             return [(found, source)]

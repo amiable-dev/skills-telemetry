@@ -215,3 +215,16 @@ def test_every_delivery_column_exists_in_the_schema():
     for table, cols in gh.TABLES.items():
         missing = set(cols) - set(schema_columns(table))
         assert not missing, f"{table} lacks {missing}"
+
+
+def test_a_key_mentioned_in_passing_in_a_body_is_not_a_ticket():
+    """Found by the first real run of the adapter against this repository: PRs
+    #92, #97 and #98 got ADR-010 / ADR-012 as their ticket, because their
+    descriptions discuss those ADRs. A body key counts only after a linking
+    word, the way Jira and Linear link a change to an issue."""
+    rid = "github.com/o/r"
+    body = "Implements ADR-012 decision 5. See ADR-010 for the scope rule."
+    assert cr.ticket_links("github", rid, closes=[], title="fix: naming", body=body, branch="x") == []
+    for linked in ("Fixes PLAT-9", "closes PLAT-9.", "Resolves: PLAT-9", "Part of PLAT-9", "refs PLAT-9"):
+        assert cr.ticket_links("github", rid, closes=[], title="x", body=linked, branch="x") == \
+            [("PLAT-9", "body")], linked
