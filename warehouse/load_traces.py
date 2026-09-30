@@ -170,7 +170,8 @@ def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
         "cache_creation_tokens": int(g("gen_ai.usage.cache_creation_input_tokens", 0)),
         "llm_requests": int(g("std.skill.llm_requests", 0)),
         "is_error": span.get("status", {}).get("code") == "STATUS_CODE_ERROR",
-        "branch_hash": g("std.branch.hash"), "repo": g("std.repo"), "team": g("std.team"),
+        "branch_hash": g("std.branch.hash") or None,   # "" = no repository: NULL (#122)
+        "repo": g("std.repo"), "team": g("std.team"),
         "user_hash": g("std.user.hash"),
     }
 
@@ -271,7 +272,7 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
         "compaction_turns_since_previous": _int(g("std.compaction.turns_since_previous")),
         "hook_ms": _int(g("std.turn.hook_ms")),
         "hook_ms_by_hook": hook_breakdown(attrs),
-        "branch_hash": g("std.branch.hash"),
+        "branch_hash": g("std.branch.hash") or None,   # "" = no repository: NULL (#122)
         "repo": g("std.repo"), "team": g("std.team"), "user_hash": g("std.user.hash"),
     }
 
@@ -291,7 +292,7 @@ def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
         "session_id": g("session.id", ""),
         "harness": g("std.harness", "unknown"),
         "model": g("gen_ai.request.model"),
-        "branch_hash": g("std.branch.hash"),
+        "branch_hash": g("std.branch.hash") or None,   # "" = no repository: NULL (#122)
         "team": g("std.team"),
         "input_tokens": int(g("gen_ai.usage.input_tokens", 0)),
         "output_tokens": int(g("gen_ai.usage.output_tokens", 0)),

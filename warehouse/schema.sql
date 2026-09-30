@@ -401,3 +401,11 @@ SELECT s.session_id, s.harness,
 FROM session_cost s
 LEFT JOIN llm_request r ON r.session_id = s.session_id AND r.harness = s.harness
 GROUP BY s.session_id, s.harness, s.cost_usd;
+
+-- #122: the capture side sends std.branch.hash = "" when a session has no
+-- repository, and the loader stored it as ''. Missing is NULL (ADR-005). Touches
+-- only rows holding the empty string; idempotent.
+UPDATE artefact_activation SET branch_hash = NULL WHERE branch_hash = '';
+UPDATE skill_invocation    SET branch_hash = NULL WHERE branch_hash = '';
+UPDATE session_cost        SET branch_hash = NULL WHERE branch_hash = '';
+UPDATE commit_evidence     SET branch_hash = NULL WHERE branch_hash = '';

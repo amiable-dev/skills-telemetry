@@ -56,6 +56,10 @@ version until this number changes — so bump it for anything a user would recei
   as a label, so it opens a series per session.
 
 ### Fixed
+- **A session with no repository now has `branch_hash` NULL, not `''` (#122).** The capture side
+  sends an empty hash on purpose; the loader stored it verbatim, so `branch_hash IS NULL`
+  undercounted sessions that cannot join a change request (ADR-005). `schema.sql` converts existing
+  `''` rows, touching nothing else.
 - **The compose `loader` service's traces load had never run (#121).** It called
   `python -m warehouse.load_traces` with no arguments while `--tempo` and `--dsn` were required, so
   every cycle ended in a usage error. That happened before a `loader_run` row could be written, and
