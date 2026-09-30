@@ -109,10 +109,14 @@ values:
   Loki. It is lighter, but the loader would own rotation, partial lines and offsets: the problems
   the transcript reader already has, repeated. Loki gives indexed reads by time range, which the
   loader needs, and Grafana reads it directly.
-- **Turn on `OTEL_LOG_TOOL_DETAILS=1` by default, so third-party skills are named.** Not the default
-  — **this is the one decision this ADR leaves to the user.** The flag is the first time this
-  project would have a harness emit content: `tool_input` for `Write` and `Edit` is file contents,
-  and it travels as far as the collector before being deleted. Two ways to name skills without it:
+- **Turn on `OTEL_LOG_TOOL_DETAILS=1` silently, by default, so third-party skills are named.**
+  Rejected. The flag is the first time this project would have a harness emit content:
+  `tool_input` for `Write` and `Edit` is file contents, and it travels as far as the collector
+  before being deleted. A setting like that is the user's decision, made where they can see what it
+  costs, not a default they never saw. Decision 12 makes it a recommended, consented opt-in.
+- **Leave it off everywhere, and name skills another way.** Kept as the fallback for anyone who
+  declines, but not recommended: it loses the detailed view, and it cannot name a third-party skill
+  that shares a prompt with another. The two other ways to name skills are:
   - install this project's skills as user-defined, by linking them into `~/.claude/skills` as the
     README already recommends; user-defined skills are named verbatim;
   - resolve `"third-party"` from stdtel's own skill activation on the same `prompt.id`, when exactly
@@ -138,9 +142,10 @@ values:
      - `OTEL_METRICS_INCLUDE_REPOSITORY=true`, which applies to events too
      - `OTEL_METRICS_INCLUDE_ACCOUNT_UUID=false`: identity withheld at the source, not only deleted
        downstream
-     - `OTEL_LOG_TOOL_DETAILS` **off by default**, and opt-in only as the user's decision recorded in
-       Options considered. Without it, third-party skills are named from stdtel's own activation on
-       the same `prompt.id` (decision 10).
+     - `OTEL_LOG_TOOL_DETAILS=1` is **recommended, and enabled only through decision 12**: after the
+       user consents and the collector has proven it drops content. The non-interactive
+       `stdtel-install` never sets it. For anyone who declines, third-party skills are named from
+       stdtel's own activation on the same `prompt.id` (decision 10).
 
      Prompts, responses and raw API bodies stay off. These are Claude Code's own variables, not a
      hook's, so ADR-003's `OTEL_*` scrubbing does not apply.
@@ -247,6 +252,47 @@ values:
     conflict, and the map stays. That closes CLAUDE.md's next step 3. `collector/copilot-skill-map.yaml`
     stays until then.
 
+12. **A setup skill configures both harnesses, and is where the detailed view is offered.**
+    `skills/stdtel-setup` is interactive setup for an agent to run with the user. It:
+    - configures **Claude Code** with the decision 2 variables, through `stdtel-install settings`;
+    - configures **Copilot** in whichever surfaces the user has: VS Code settings through
+      `stdtel-install copilot`, the CLI's environment, or, in an organisation, the
+      enterprise-managed `telemetry` block, which it explains rather than edits;
+    - **recommends `OTEL_LOG_TOOL_DETAILS=1`, and explains in plain terms what it costs:** tool
+      inputs, including file contents from Write and Edit, travel to the collector and are deleted
+      there;
+    - **checks before it enables the flag.** The collector must be local, or one the user confirms
+      applies the same rules, and the content check in decision 13 must pass. If either fails, it
+      does not enable the flag and says why;
+    - enables the flag **only on the user's explicit yes**, then runs `stdtel-doctor` and reports.
+
+    The setup skill decides nothing on the user's behalf. It makes the choice informed, and it makes
+    the choice checkable.
+
+13. **Content-dropping is tested on each machine, not assumed.** `stdtel-doctor` gains a
+    `content dropped` check, run whenever the flag is on, and by decision 12 before it is turned on.
+    - It sends one probe span and one probe event to the configured collector, each carrying a
+      content-shaped attribute whose value is a random marker, under `service.name =
+      stdtel-probe`.
+    - After the flush interval, it confirms the marker appears nowhere it can query: Tempo and Loki.
+    - The check fails loudly if the marker is found, and says the flag must be turned off (ADR-005:
+      a component that cannot do its job fails loudly).
+
+    The loaders ignore `service.name = stdtel-probe`, so a probe never becomes a row.
+
+14. **The project rule on content is reworded, because it is being narrowed deliberately.**
+    CLAUDE.md now says "never emit prompt/response/file content". With decision 12's opt-in, the
+    harness does emit content — as far as a collector that deletes it. On acceptance, the rule
+    becomes:
+
+    > **Nothing stored or forwarded past the collector ever holds content** (prompts, responses, file
+    > contents, command lines, tool inputs or results). Content reaches the collector only by the
+    > user's explicit, informed opt-in, made through `stdtel-setup`, and only once the collector has
+    > proven, on that machine, that it drops it.
+
+    stdtel's own hooks and exporter still never emit content at all. The narrowing covers only what
+    a harness sends to the collector when the user has chosen it.
+
 ## Consequences
 
 - Per-skill cost for Claude Code becomes a measurement, and per-skill tokens for Copilot become a
@@ -263,9 +309,13 @@ values:
 ### Known limitations
 
 - **If the user opts into `OTEL_LOG_TOOL_DETAILS=1`, content travels as far as the collector.** It
-  is deleted there, but a shared or remote collector must apply the same rules, or it keeps content.
-  Local-only remains the default, and the docs must say so plainly. With the flag off, a third-party
-  skill that shares a prompt with another cannot be named.
+  is deleted there. Decision 13 proves the deletion on the machine, but only for the stores it can
+  query. A shared or remote collector that forwards somewhere else must apply the same rules, and
+  the check cannot see past it. That is why decision 12 asks the user to confirm a non-local
+  collector, rather than trusting it.
+- **Content crosses the network hop to the collector before it is deleted.** For a local collector
+  that hop is loopback. Anywhere else, the transport and the collector's own logging are in scope.
+- **With the flag off, a third-party skill that shares a prompt with another cannot be named.**
 - **Copilot per-skill tokens are derived, not measured.** Copilot has no cost at all.
 - **The Copilot attributes are verified in documentation, not in a live trace.** The hooks were
   validated against captured payloads (2026-09-10), and each harness's native telemetry needs the

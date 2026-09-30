@@ -72,8 +72,10 @@ was rejected and what the decision costs, which is what you need before re-litig
   attribution derived and labelled), keep stdtel for the join, the standard, the outcome, external
   spend and containment. Native metrics stay out of Prometheus (`session.id` is a label on each; #92).
   Verified live: native `prompt.id` equals the transcript's `promptId`, and identity is on every
-  record. `OTEL_LOG_TOOL_DETAILS` (names third-party skills, but exports content) is off by default —
-  the user's decision. Blocks on the collector first: no record-level pseudonymising, events stored
+  record. `OTEL_LOG_TOOL_DETAILS` (names third-party skills, but exports content to the collector) is
+  recommended through a new `stdtel-setup` skill: explained, enabled only on the user's yes, and only
+  after a doctor check proves the collector drops a content marker. On acceptance, the "metadata only"
+  rule is reworded to "nothing past the collector ever holds content" (ADR-014 decision 14). Blocks on the collector first: no record-level pseudonymising, events stored
   nowhere. Survey and sources: `docs/landscape.md`. Issue #107.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
