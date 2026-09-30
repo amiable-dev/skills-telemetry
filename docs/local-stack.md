@@ -117,6 +117,12 @@ only to check against it: `session_cost_reconciliation` puts the two side by sid
 together.** `llm_request_change_request` says which change request each request's work became,
 through the stdtel turn with the same `prompt_id`.
 
+For per-skill figures, read **`llm_request_attributed`** rather than the table. Without the detailed
+view, Claude Code sends a third-party plugin's skill as `"third-party"`. The view names such a request
+from the one skill that stdtel saw run in the same prompt and that Claude Code did not name, and marks
+it `attribution_source = 'derived'`. With more than one candidate it stays `"third-party"`. Say which
+`attribution_source` a figure includes.
+
 Then open Grafana at :3000 — the scorecard dashboard is provisioned.
 
 ## The verification ladder
