@@ -24,7 +24,14 @@ services:
       # through from the shell; empty unless the langfuse overlay is selected.
       LANGFUSE_AUTH: "${LANGFUSE_AUTH:-}"
     ports: ["${STDTEL_BIND:-127.0.0.1}:4317:4317", "${STDTEL_BIND:-127.0.0.1}:4318:4318", "${STDTEL_BIND:-127.0.0.1}:8888:8888"]   # 8888 = the collector's own metrics
-    depends_on: [tempo, prometheus]
+    depends_on: [tempo, prometheus, loki]
+  # ADR-014 decision 4: the store for harness-native events. Host port 11010 is
+  # this project's berth extra `loki`; inside the stack it is loki:3100.
+  loki:
+    image: grafana/loki:3.5.5
+    command: ["-config.file=/etc/loki.yaml"]
+    volumes: ["./loki.yaml:/etc/loki.yaml:ro", "loki-data:/loki"]
+    ports: ["${STDTEL_BIND:-127.0.0.1}:11010:3100"]
   tempo:
     image: grafana/tempo:2.7.0
     command: ["-config.file=/etc/tempo.yaml"]
@@ -219,6 +226,7 @@ services:
 
 volumes:
   tempo-data: {}
+  loki-data: {}
   langfuse-postgres: {}
   langfuse-clickhouse: {}
   langfuse-minio: {}

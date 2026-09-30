@@ -22,6 +22,13 @@ version until this number changes — so bump it for anything a user would recei
   - All of this is tested against the pinned collector image, under both the default and the
     Langfuse configuration. Before this change, 22 of those 24 checks failed.
 
+### Added
+- **Loki stores harness-native events (ADR-014 decision 4, #110).** Claude Code's per-request cost,
+  tokens and skill attribution exist only as events, and the logs pipeline used to export them to
+  `debug` and nowhere else. Loki runs on host port 11010, this project's berth extra, and Grafana
+  has it as a datasource. Native *metrics* are dropped at the collector: each carries `session.id`
+  as a label, so it opens a series per session.
+
 ## 0.7.0 — 2026-09-30
 
 ### Changed — breaking, on the wire and in the warehouse
