@@ -327,7 +327,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_BRANCH` | *(git)* | enrich | overrides branch detection; `std.branch.hash` is computed from it (ADR-013) |
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
 | `STDTEL_TEMPO` | `http://localhost:3200` | doctor, `make load` | Tempo's query API, read by `stdtel-doctor --content-check` and the trace loader |
-| `STDTEL_LOKI` | `http://localhost:11010` | doctor | Loki's query API, read by `stdtel-doctor --content-check` |
+| `STDTEL_LOKI` | `http://localhost:11010` | doctor, `make load` | Loki's query API, read by `stdtel-doctor --content-check` and by `warehouse.load_requests`, which also takes `STDTEL_DSN` from the environment |
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |
 | `CLAUDE_CODE_SESSION_ID` | *(unset)* | `scope-close` | set by the harness and **exported to processes the agent spawns**, so a skill can run `stdtel-hook scope-close` without knowing which session it is in. A sub-agent's shell sees the *parent* session's id, alongside `CLAUDE_CODE_CHILD_SESSION` |

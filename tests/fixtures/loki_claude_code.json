@@ -1,0 +1,177 @@
+{
+ "_comment": "Recorded 2026-09-30 from Claude Code 2.1.285 through this repo's collector into Loki 3.5.5, queried with X-Loki-Response-Encoding-Flags: categorize-labels. Two headless sessions: a bare prompt, and /probe-echo (a project skill). Scrubbed: std_user_hash replaced, every id replaced by a wtest- value, times moved to 1999-01-01. Attribute names are as Loki stores them (dots flattened to underscores). Values otherwise verbatim.",
+ "status": "success",
+ "data": {
+  "resultType": "streams",
+  "encodingFlags": [
+   "categorize-labels"
+  ],
+  "result": [
+   {
+    "stream": {
+     "service_name": "claude-code"
+    },
+    "values": [
+     [
+      "915148800000000000",
+      "claude_code.user_prompt",
+      {
+       "structuredMetadata": {
+        "detected_level": "unknown",
+        "event_name": "user_prompt",
+        "event_sequence": "47",
+        "event_timestamp": "1999-01-01T00:00:00.000Z",
+        "host_arch": "arm64",
+        "message_uuid": "wtest-message-3",
+        "observed_timestamp": "915148800000000000",
+        "os_type": "darwin",
+        "os_version": "25.6.0",
+        "prompt_id": "wtest-prompt-2",
+        "prompt_length": "30",
+        "scope_name": "com.anthropic.claude_code.events",
+        "scope_version": "2.1.285",
+        "service_version": "2.1.285",
+        "session_id": "wtest-session-1",
+        "std_user_hash": "wtest-user-hash",
+        "terminal_type": "iTerm.app",
+        "vcs_owner_name": "amiable-dev",
+        "vcs_provider_name": "github",
+        "vcs_repository_name": "skills-telemetry",
+        "vcs_repository_url_full": "https://github.com/amiable-dev/skills-telemetry"
+       }
+      }
+     ],
+     [
+      "915148801475000000",
+      "claude_code.api_request",
+      {
+       "structuredMetadata": {
+        "cache_creation_tokens": "20437",
+        "cache_read_tokens": "14279",
+        "client_request_id": "wtest-client-request-5",
+        "cost_usd": "0.0425119",
+        "cost_usd_micros": "42512",
+        "detected_level": "unknown",
+        "duration_ms": "1045",
+        "event_name": "api_request",
+        "event_sequence": "50",
+        "event_timestamp": "1999-01-01T00:00:01.475Z",
+        "host_arch": "arm64",
+        "input_tokens": "10",
+        "model": "claude-haiku-4-5-20251001",
+        "observed_timestamp": "915148801475000000",
+        "os_type": "darwin",
+        "os_version": "25.6.0",
+        "output_tokens": "40",
+        "prompt_id": "wtest-prompt-2",
+        "query_source": "sdk",
+        "request_id": "wtest-request-4",
+        "scope_name": "com.anthropic.claude_code.events",
+        "scope_version": "2.1.285",
+        "service_version": "2.1.285",
+        "session_id": "wtest-session-1",
+        "speed": "normal",
+        "std_user_hash": "wtest-user-hash",
+        "terminal_type": "iTerm.app",
+        "ttft_ms": "698",
+        "vcs_owner_name": "amiable-dev",
+        "vcs_provider_name": "github",
+        "vcs_repository_name": "skills-telemetry",
+        "vcs_repository_url_full": "https://github.com/amiable-dev/skills-telemetry"
+       }
+      }
+     ],
+     [
+      "915149005526000000",
+      "claude_code.user_prompt",
+      {
+       "structuredMetadata": {
+        "command_name": "custom",
+        "command_source": "custom",
+        "detected_level": "unknown",
+        "event_name": "user_prompt",
+        "event_sequence": "47",
+        "event_timestamp": "1999-01-01T00:03:25.526Z",
+        "host_arch": "arm64",
+        "observed_timestamp": "915149005526000000",
+        "os_type": "darwin",
+        "os_version": "25.6.0",
+        "prompt_id": "wtest-prompt-7",
+        "prompt_length": "11",
+        "scope_name": "com.anthropic.claude_code.events",
+        "scope_version": "2.1.285",
+        "service_version": "2.1.285",
+        "session_id": "wtest-session-6",
+        "std_user_hash": "wtest-user-hash",
+        "terminal_type": "iTerm.app"
+       }
+      }
+     ],
+     [
+      "915149005527000000",
+      "claude_code.skill_activated",
+      {
+       "structuredMetadata": {
+        "detected_level": "unknown",
+        "event_name": "skill_activated",
+        "event_sequence": "48",
+        "event_timestamp": "1999-01-01T00:03:25.527Z",
+        "host_arch": "arm64",
+        "invocation_trigger": "user-slash",
+        "observed_timestamp": "915149005527000000",
+        "os_type": "darwin",
+        "os_version": "25.6.0",
+        "prompt_id": "wtest-prompt-7",
+        "scope_name": "com.anthropic.claude_code.events",
+        "scope_version": "2.1.285",
+        "service_version": "2.1.285",
+        "session_id": "wtest-session-6",
+        "skill_name": "custom_skill",
+        "skill_source": "projectSettings",
+        "std_user_hash": "wtest-user-hash",
+        "terminal_type": "iTerm.app"
+       }
+      }
+     ],
+     [
+      "915149008133000000",
+      "claude_code.api_request",
+      {
+       "structuredMetadata": {
+        "cache_creation_tokens": "13990",
+        "cache_read_tokens": "14279",
+        "client_request_id": "wtest-client-request-9",
+        "cost_usd": "0.030061900000000003",
+        "cost_usd_micros": "30062",
+        "detected_level": "unknown",
+        "duration_ms": "2352",
+        "event_name": "api_request",
+        "event_sequence": "51",
+        "event_timestamp": "1999-01-01T00:03:28.133Z",
+        "host_arch": "arm64",
+        "input_tokens": "9",
+        "model": "claude-haiku-4-5-20251001",
+        "observed_timestamp": "915149008133000000",
+        "os_type": "darwin",
+        "os_version": "25.6.0",
+        "output_tokens": "129",
+        "prompt_id": "wtest-prompt-7",
+        "query_source": "sdk",
+        "request_id": "wtest-request-8",
+        "scope_name": "com.anthropic.claude_code.events",
+        "scope_version": "2.1.285",
+        "service_version": "2.1.285",
+        "session_id": "wtest-session-6",
+        "skill_name": "probe-echo",
+        "speed": "normal",
+        "std_user_hash": "wtest-user-hash",
+        "terminal_type": "iTerm.app",
+        "ttft_ms": "998"
+       }
+      }
+     ]
+    ]
+   }
+  ]
+ }
+}

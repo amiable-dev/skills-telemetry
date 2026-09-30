@@ -337,3 +337,67 @@ SELECT b.span_id, b.cr_id,
 FROM by_branch b
 UNION ALL
 SELECT span_id, cr_id, 'commit' FROM by_commit;
+
+-- ADR-014 decision 5: one row per model request, from the harness's own record.
+-- Claude Code's come from its `api_request` events in Loki; Copilot's will come
+-- from its `chat` spans (#115). Authoritative per request: per-skill cost is a
+-- sum over this table. cost_usd is unbounded NUMERIC because the harness sends
+-- seven decimals and more, and NULL where no cost exists (Copilot) — never 0.
+CREATE TABLE IF NOT EXISTS llm_request (
+  harness            TEXT NOT NULL,          -- claude-code | copilot-*
+  request_id         TEXT NOT NULL,          -- the provider's id (Claude Code `request_id`)
+  session_id         TEXT,
+  prompt_id          TEXT,                   -- Claude Code: the bridge to the stdtel turn
+  conversation_id    TEXT,                   -- Copilot: gen_ai.conversation.id
+  trace_id           TEXT,                   -- Copilot: the invoke_agent trace
+  ended_at           TIMESTAMPTZ NOT NULL,   -- when the harness logged the completed request
+  duration_ms        BIGINT,
+  model              TEXT,
+  input_tokens          BIGINT,
+  output_tokens         BIGINT,
+  cache_read_tokens     BIGINT,
+  cache_creation_tokens BIGINT,
+  cost_usd           NUMERIC,
+  skill_name         TEXT,                   -- "third-party" when the harness redacts it (#117)
+  agent_name         TEXT,
+  plugin_name        TEXT,
+  mcp_server         TEXT,
+  mcp_tool           TEXT,
+  query_source       TEXT,                   -- main | subagent | auxiliary | sdk
+  branch_hash        TEXT,                   -- Copilot only; Claude Code joins through prompt_id
+  user_hash          TEXT,                   -- std.user.hash, set by the collector
+  attribution_source TEXT NOT NULL CHECK (attribution_source IN ('native', 'derived')),
+  PRIMARY KEY (harness, request_id)
+);
+CREATE INDEX IF NOT EXISTS ix_req_prompt ON llm_request (session_id, prompt_id);
+CREATE INDEX IF NOT EXISTS ix_req_time   ON llm_request (ended_at);
+
+-- ADR-014 decision 7: which change request each request's work became. A request
+-- carries its prompt id; the stdtel turn with that prompt id carries the branch,
+-- and activation_change_request — the only place ADR-013's rule is written —
+-- does the rest. Only turns: a sub-agent shares its parent's prompt id, and a
+-- prompt has several turn deltas (ADR-009), so without the restriction and the
+-- DISTINCT ON each request would be counted once per matching span (#23).
+CREATE OR REPLACE VIEW llm_request_change_request AS
+SELECT DISTINCT ON (r.harness, r.request_id)
+       r.harness, r.request_id, v.cr_id, v.method
+FROM llm_request r
+JOIN artefact_activation t ON t.kind = 'turn'
+                          AND t.session_id = r.session_id
+                          AND t.prompt_id = r.prompt_id
+JOIN activation_change_request v ON v.span_id = t.span_id
+ORDER BY r.harness, r.request_id,
+         CASE v.method WHEN 'branch+commit' THEN 0 WHEN 'commit' THEN 1 ELSE 2 END,
+         t.started_at;
+
+-- ADR-014 decision 5: session_cost is the harness's own cumulative total, kept
+-- only to check the sum of requests against. The two are never added together.
+CREATE OR REPLACE VIEW session_cost_reconciliation AS
+SELECT s.session_id, s.harness,
+       s.cost_usd                  AS session_total_usd,
+       sum(r.cost_usd)             AS requests_usd,
+       count(r.request_id)::int    AS requests,
+       s.cost_usd - sum(r.cost_usd) AS unexplained_usd
+FROM session_cost s
+LEFT JOIN llm_request r ON r.session_id = s.session_id AND r.harness = s.harness
+GROUP BY s.session_id, s.harness, s.cost_usd;
