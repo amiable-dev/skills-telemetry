@@ -16,14 +16,16 @@ the bare command name and is deliberately one step short of working, because it 
 ```
 stdtel-install where
 stdtel-install hooks    [--harness claude-code|copilot-vscode|copilot-cli] [--exec-form]
-stdtel-install settings [--path PATH] [--exec-form] [--dry-run]
+stdtel-install settings [--path PATH] [--exec-form] [--dry-run] [--no-native]
+stdtel-install copilot  [--vscode-settings PATH]
 ```
 
 | subcommand | does |
 |---|---|
 | `where` | prints the absolute `stdtel-hook` path it will write. Start here when hooks silently do nothing |
 | `hooks` | prints the hook JSON for a harness to stdout; pipe it wherever you keep config |
-| `settings` | merges the Claude Code hook block into a settings file, preserving everything already there |
+| `settings` | merges the Claude Code hook block **and Claude Code's own telemetry** (`env`, ADR-014 decision 2) into a settings file, preserving everything already there, including a detailed view you have already switched on. It never writes `OTEL_LOG_TOOL_DETAILS` or `OTEL_METRICS_EXPORTER`, and reports but leaves alone an `OTEL_METRICS_EXPORTER` it finds |
+| `copilot` | prints Copilot's native OTel settings for VS Code (`github.copilot.chat.otel.*`, `captureContent: false`) and the Copilot CLI (`COPILOT_OTEL_*`). With `--vscode-settings PATH` it merges into that file instead, and refuses a file with comments rather than rewriting them away. Needs no `stdtel-hook`. For an organisation, the enterprise-managed `telemetry` policy is the better route |
 
 | flag | default | meaning |
 |---|---|---|
@@ -31,6 +33,8 @@ stdtel-install settings [--path PATH] [--exec-form] [--dry-run]
 | `--exec-form` | off | emit `command` + `args` instead of a shell string. Saves ~3ms per call by skipping `sh -c`; verified working against Claude Code 2.1.267 |
 | `--path` | `~/.claude/settings.json` | settings file to merge into |
 | `--dry-run` | off | print the JSON instead of writing |
+| `--no-native` | off | hooks only: leave Claude Code's own telemetry off |
+| `--vscode-settings` | — | `copilot` only: the VS Code `settings.json` to merge into |
 
 Exit codes: `0` success · `1` `stdtel-hook` could not be found (install the package first).
 
