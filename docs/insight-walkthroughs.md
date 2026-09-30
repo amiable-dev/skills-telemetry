@@ -105,28 +105,49 @@ psql "$STDTEL_DSN" -v week_start="'2026-09-01'" -v week_end="'2026-09-08'" -f wa
 (0 rows)
 ```
 
-It joins `skill_invocation → ticket → pull_request → policy_result`. Three of those four are empty, so
-it returns its full column list and no rows. **An empty result from a join is not evidence of no effect** — it is evidence of
-no data, and the two look identical in a report. Always print the input counts alongside:
+It joins `skill_invocation → activation_change_request → change_request → policy_result`
+([ADR-013](adrs/013-join-work-to-change-requests.md)). When the delivery side is empty it returns
+its full column list and no rows. **An empty result from a join is not evidence of no effect** — it
+is evidence of no data, and the two look identical in a report. Always print the input counts
+alongside:
 
 ```sql
 SELECT (SELECT count(*) FROM skill_invocation) AS invocations,
-       (SELECT count(*) FROM pull_request)     AS prs,
+       (SELECT count(*) FROM change_request)   AS change_requests,
        (SELECT count(*) FROM policy_result)    AS policy_results;
 ```
 
+```
+ invocations | change_requests | policy_results
+-------------+-----------------+----------------
+          33 |               0 |              0
+```
+
+Captured 2026-09-30, at the ADR-013 cutover, before `load_delivery` had been run against it.
+
 ## 4. Tokens per merged PR
 
+Tokens reach a change request through the turns attributed to it. Before reading any per-PR figure,
+count how many turns were attributed at all, and how many could not be, because they carry no branch
+identity:
+
 ```sql
-SELECT count(*) AS session_rows, count(p.pr_id) AS matched_prs
-FROM session_cost sc LEFT JOIN pull_request p ON p.ticket_id = sc.ticket_id;
+SELECT count(*) AS turns, count(v.cr_id) AS attributed,
+       count(*) FILTER (WHERE a.branch_hash IS NULL) AS no_branch_identity
+FROM artefact_activation a
+LEFT JOIN activation_change_request v ON v.span_id = a.span_id
+WHERE a.kind = 'turn';
 ```
 
 ```
- session_rows | matched_prs
---------------+-------------
-            2 |           0
+ turns | attributed | no_branch_identity
+-------+------------+--------------------
+    34 |          0 |                 34
 ```
+
+Captured at the cutover: every turn predates the hooks that record a branch identity, so none can
+join. A per-PR token figure computed over this reads as zero spend, when it is zero *attributed*
+spend — the same empty-join trap as above, one table along.
 
 Two sessions of real spend, joined to zero PRs. Written as a ratio with a `LEFT JOIN`, this would
 divide by `NULL` and report nothing — indistinguishable at a glance from "the answer is zero".
@@ -166,7 +187,7 @@ currency — Copilot bills AI Credits, Claude Code bills USD. Compare tokens, or
 
 ```bash
 curl -s --get http://localhost:3200/api/search \
-  --data-urlencode 'q={ resource.std.ticket.id = "PLAT-99" }' \
+  --data-urlencode 'q={ span.session.id = "<session id>" }' \
   --data-urlencode "start=$(( $(date +%s) - 86400 ))" --data-urlencode "end=$(date +%s)"
 ```
 
@@ -274,12 +295,15 @@ support a comparison; see [evaluation-power.md](evaluation-power.md).
 
 ### The fault you will actually hit
 
-Loading this repository's first ten merged PRs produced **zero ticket rows** — none of those branches
-carried a ticket key, so every one is `unattributed` and excluded from outcome analysis. The eleventh,
-on `feature/STDTEL-15-doctor`, produced a ticket row immediately.
+Before ADR-013, loading this repository's first ten merged PRs produced **zero ticket rows**: none of
+those branches carried a ticket key, so every one was `unattributed` and excluded from outcome
+analysis. Measured later, only 2 of 9 of this repository's own branches in one week carried a key.
+That requirement is gone. Any branch name joins, through a hash of the repository and branch.
 
-This is not recoverable later: renaming a branch tomorrow does not retroactively attribute today's PRs.
-`stdtel-doctor` checks it, and the data-quality panel on the dashboard counts it.
+What still stops a join is **no branch identity**: work done outside a git repository, or in one with
+no remote. That is not recoverable later either — adding a remote tomorrow does not identify today's
+turns. `stdtel-doctor` checks it, the statusline warns about it, and the data-quality panel counts
+it.
 
 ## The recurring tells
 

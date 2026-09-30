@@ -2,13 +2,30 @@
 WITH inv AS (
   SELECT * FROM skill_invocation WHERE started_at >= :week_start AND started_at < :week_end
 ),
--- first-time policy pass for each PR/policy the skill is coupled with
+-- first-time policy pass for each change request/policy the skill is coupled with
 first_run AS (
-  SELECT pr_id, policy_id, passed FROM policy_result WHERE run_seq = 1
+  SELECT cr_id, policy_id, passed FROM policy_result WHERE run_seq = 1
 ),
-pr_skill AS (   -- PRs whose ticket had ≥1 invocation of the skill
-  SELECT DISTINCT p.pr_id, i.skill_name, i.skill_version, i.harness
-  FROM pull_request p JOIN inv i ON i.ticket_id = p.ticket_id
+-- ADR-013: the change request each skill activation's work became. The with-arm
+-- needs commit evidence (`branch+commit`, or `commit` alone); a skill linked to a
+-- change request by branch alone is in NEITHER arm (skill_uncertain), never
+-- recruited into the without-arm — ADR-002's "unknown, never none", applied to
+-- the weaker join.
+attributed AS (
+  SELECT v.cr_id, v.method, i.skill_name, i.skill_version, i.harness
+  FROM inv i
+  JOIN activation_change_request v ON v.span_id = i.span_id
+  JOIN change_request c ON c.cr_id = v.cr_id AND c.state = 'merged'
+),
+pr_skill AS (   -- merged change requests the skill demonstrably contributed to
+  SELECT DISTINCT cr_id AS pr_id, skill_name, skill_version, harness
+  FROM attributed WHERE method IN ('branch+commit', 'commit')
+),
+skill_uncertain AS (   -- linked by branch only: excluded from both arms
+  SELECT DISTINCT a.cr_id AS pr_id, a.skill_name
+  FROM attributed a
+  WHERE a.method = 'branch'
+    AND NOT EXISTS (SELECT 1 FROM pr_skill p WHERE p.pr_id = a.cr_id AND p.skill_name = a.skill_name)
 ),
 -- the policies each skill is accountable for, one row per (skill, version, policy)
 skill_policy AS (
@@ -26,7 +43,7 @@ pr_pass_with AS (
   JOIN skill_policy sp
     ON sp.skill_name = ps.skill_name AND sp.skill_version = ps.skill_version
   JOIN first_run fr
-    ON fr.pr_id = ps.pr_id AND fr.policy_id = sp.policy_id
+    ON fr.cr_id = ps.pr_id AND fr.policy_id = sp.policy_id
   GROUP BY 1,2,3,4
 ),
 pass_with AS (
@@ -35,15 +52,17 @@ pass_with AS (
          COUNT(*) AS n_with                      -- PRs, never invocations
   FROM pr_pass_with GROUP BY 1,2,3
 ),
--- the same measure over PRs in the window that did NOT use the skill
+-- the same measure over merged change requests in the window that did NOT use
+-- the skill — excluding those linked to it by branch alone, which are unknown
 pr_pass_without AS (
-  SELECT sp.skill_name, p.pr_id,
+  SELECT sp.skill_name, c.cr_id AS pr_id,
          MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed
   FROM skill_policy sp
   JOIN first_run fr ON fr.policy_id = sp.policy_id
-  JOIN pull_request p ON p.pr_id = fr.pr_id
-  WHERE p.opened_at >= :week_start AND p.opened_at < :week_end
-    AND NOT EXISTS (SELECT 1 FROM pr_skill ps WHERE ps.pr_id = p.pr_id AND ps.skill_name = sp.skill_name)
+  JOIN change_request c ON c.cr_id = fr.cr_id AND c.state = 'merged'
+  WHERE c.opened_at >= :week_start AND c.opened_at < :week_end
+    AND NOT EXISTS (SELECT 1 FROM pr_skill ps WHERE ps.pr_id = c.cr_id AND ps.skill_name = sp.skill_name)
+    AND NOT EXISTS (SELECT 1 FROM skill_uncertain su WHERE su.pr_id = c.cr_id AND su.skill_name = sp.skill_name)
   GROUP BY 1,2
 ),
 pass_without AS (

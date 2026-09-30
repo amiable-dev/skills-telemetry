@@ -15,8 +15,8 @@ was rejected and what the decision costs, which is what you need before re-litig
 - **[ADR-001](docs/adrs/001-distribution-and-capture-surface.md)** — distribution: one repo for three
   loaders, hooks vendor-specific, `uv tool install` + absolute path. Copilot instrumented by native
   OTel config, not our hooks.
-- **[ADR-002](docs/adrs/002-delivery-data-joins-and-proxies.md)** — delivery data: join on the branch
-  ticket key; unlabelled PR is `unknown` never `none`; `review_rounds` counts CHANGES_REQUESTED;
+- **[ADR-002](docs/adrs/002-delivery-data-joins-and-proxies.md)** — delivery data: ~~join on the branch
+  ticket key~~ (superseded by ADR-013); unlabelled PR is `unknown` never `none`; `review_rounds` counts CHANGES_REQUESTED;
   `policy_result` from a CI artefact because `run_seq` is unrecoverable; cycle time is a labelled proxy.
 - **[ADR-003](docs/adrs/003-hook-execution-constraints.md)** — the harness environment: `OTEL_*` is
   scrubbed so config is `STDTEL_*`; the flush timeout must sit on the exporter; hooks get a non-login
@@ -136,7 +136,8 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
    that the heuristic is weak: a real invocation recorded `load_tokens=7` against `tail_tokens=28199`.
 2. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
 3. Verify Copilot's `skill_name` attribute against a live trace before retiring `copilot-skill-map.yaml`.
-4. Onboard a real project with ticket-prefixed branches (mechanism proven; needs a real repo).
+4. Onboard a real project end to end (#21). Since ADR-013 any branch name joins; it needs a real repo
+   with a remote, PRs, and the CI policy artefact.
 5. Publish to PyPI (workflow ready; needs a Trusted Publisher + a tagged release).
 
 ## Done

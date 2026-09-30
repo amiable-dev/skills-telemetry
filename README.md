@@ -21,15 +21,16 @@ team size, and a small team may never leave the first one.
 
 | phase | you have | what it supports | what it does not |
 |---|---|---|---|
-| **Descriptive** | anything below the floor | cost, usage, and finding data-quality faults — `unversioned` skills, `unattributed` branches | any comparison between skills, harnesses, or arms |
+| **Descriptive** | anything below the floor | cost, usage, and finding data-quality faults — `unversioned` skills, work joined to no change request | any comparison between skills, harnesses, or arms |
 | **Directional** | 30+ merged PRs per arm, 5+ developers | spotting large effects (>40%) as a hypothesis, always with an interval | point estimates, or a keep/deprecate decision |
 | **Inferential** | 150-400+ PRs per arm, depending on effect size | keep / refine / merge / deprecate decisions | detecting effects under 20%, which needs 900+ |
 
 **The hard floor: below 30 merged PRs per arm, or fewer than 5 developers, report descriptively and make no comparative claim.**
 
 Early on, the most valuable thing this data does is find its own faults. A high share of `unversioned`
-skills or `unattributed` tickets bounds every later conclusion, and both are fixable now — see
-[`stdtel-onboard`](skills/stdtel-onboard/SKILL.md) and ticket-prefixed branches.
+skills or of work joined to no change request bounds every later conclusion, and both are fixable
+now — see [`stdtel-onboard`](skills/stdtel-onboard/SKILL.md), and `stdtel-doctor`'s branch-identity
+check. No branch-naming convention is needed ([ADR-013](docs/adrs/013-join-work-to-change-requests.md)).
 
 The failure mode this exists to prevent: reading a scorecard after two weeks, seeing a skill
 "underperform" across nine PRs, and deprecating it. Nine PRs cannot distinguish a bad skill from a
@@ -59,20 +60,20 @@ stdtel/hooks/cli.py         Claude Code hooks: session-start | pre-tool-use | po
 stdtel/transcript.py        incremental JSONL reader + token attribution (tail rule, first-only sensitivity)
 stdtel/artefact.py          the capture contract: kinds and their attribute allowlists
 stdtel/exporter.py          std.artefact.activation spans via OTLP/HTTP (content scrubbed)
-stdtel/enrich.py            join keys: std.ticket.id from branch, std.repo, std.team, std.harness
+stdtel/enrich.py            join keys: std.branch.hash, commit patch-ids, std.repo, std.team, std.harness
 stdtel/skillmap.py          generates collector/copilot-skill-map.yaml for Copilot tool-call mapping
 collector/otel-collector.yaml  drop content → normalise gen_ai.* → map Copilot skills → pseudonymise → spanmetrics
 deploy/docker-compose.yml   collector + Tempo + Prometheus + Grafana + Postgres; `langfuse` profile optional
 deploy/smoke.sh             eight-hop verification ladder (`mise run smoke`)
 collector/overlay-*.yaml    merged over the base config; `none` is the default no-op, `langfuse` adds an exporter
-warehouse/schema.sql        skill_invocation, session_cost, ticket, pull_request, policy_result, defect, skill_eval
+warehouse/schema.sql        capture tables, change_request (+ commits, tickets), activation_change_request view
 warehouse/scorecard.sql     weekly per-skill scorecard → keep / refine / review-merge / deprecate
 warehouse/load_traces.py    Tempo → Postgres loader
 eval/run_eval.py            offline with/without-skill eval, real OPA grading (`--dry-run` is a smoke test)
 eval/power.py               generates every table in docs/evaluation-power.md; CI checks it is current
 policies/                   Rego behind the primary metric: logging.*, telemetry.manifest_valid
 agents/                     skill-scorecard-analyst: keep / refine / merge / deprecate from the data
-warehouse/load_delivery.py  GitHub → ticket / pull_request / defect; policy_result from a CI artefact
+warehouse/load_delivery.py  the GitHub adapter → change_request / ticket / defect; policy_result from CI
 examples/settings.*.json    hook + OTel wiring: `global` installs once, `project` overrides per repo
 docs/adrs/                  six ADRs: distribution, delivery data, hook constraints, identity, integrity, Langfuse
 plugin.json                 Agent Plugins v1 manifest (portable `skills/` is the shared half)
@@ -166,7 +167,7 @@ and a second copy fires each hook twice.
 cd ~/projects/payments-api
 mkdir -p .claude && cp ~/projects/skills-telemetry/examples/settings.project.json .claude/settings.json
 $EDITOR .claude/settings.json      # STDTEL_TEAM is the one you must set
-git checkout -b feature/PLAT-123-add-audit-log   # ticket prefix -> std.ticket.id join key
+git checkout -b add-audit-log     # any name: work joins its PR by branch identity (ADR-013)
 ```
 
 | variable | where | meaning |
@@ -209,7 +210,7 @@ never loads a skill is still spend, and excluding it would silently understate c
 | `std.session.llm_requests`, `gen_ai.request.model` | transcript |
 | `std.session.tool_calls`, `std.session.tool_failures` | every tool call in the turn |
 | `std.session.tool.<name>.{calls,failures}` | per tool; `failures` omitted when zero |
-| `std.ticket.id`, `std.repo`, `std.team`, `std.harness` | resource (SessionStart) |
+| `std.branch.hash`, `std.repo`, `std.team`, `std.harness` | resource (refreshed every Stop) |
 
 ### `std.artefact.activation`
 
@@ -237,7 +238,7 @@ and an observation are not the same measurement and a query can tell them apart.
 | `std.skill.content_hash` | SHA-256 of the SKILL.md **body**, truncated. The version is asserted; this is observed — one version with two hashes is an edit that skipped the bump |
 | `std.skill.load_tokens`, `std.skill.tail_tokens`, `std.skill.tail_tokens_first_only`, `std.skill.llm_requests` | transcript attribution |
 | `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens`, `gen_ai.request.model` | transcript |
-| `std.ticket.id`, `std.repo`, `std.team`, `std.harness`, `std.harness.mode` | resource (SessionStart) |
+| `std.branch.hash`, `std.repo`, `std.team`, `std.harness`, `std.harness.mode` | resource (branch refreshed every Stop) |
 | `std.user.hash` | hook, already SHA-256 of uid + hostname (the collector also pseudonymises `user.email` if a harness supplies one) |
 
 ## Known limitations

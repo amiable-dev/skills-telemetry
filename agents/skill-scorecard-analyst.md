@@ -37,9 +37,13 @@ These are the traps specific to this dataset. Check each before you conclude any
 - **`std.skill.version = unversioned` means the skill is not in the catalogue**, not that it is
   unversioned upstream. Those rows carry no `standard_id` or `policy_ids` and must be excluded from
   outcome analysis — but kept for cost. Recommend `stdtel-onboard` rather than reporting a finding.
-- **`std.ticket.id = unattributed`** means the branch carried no ticket key. Same rule: keep for cost,
-  exclude from outcome. If a large share of rows are unattributed, say so — it bounds every other
-  conclusion you draw.
+- **Work that joined no change request is unattributed** (ADR-013). Any branch name joins, so this
+  means no branch identity (no git repository or no remote), work committed straight to the default
+  branch, or a change request not yet loaded. Same rule: keep for cost, exclude from outcome. If a
+  large share is unattributed, say so — it bounds every other conclusion you draw.
+- **A `branch`-only link is weaker evidence.** `activation_change_request.method` says how each
+  activation was joined. The scorecard counts only `branch+commit` and `commit` in the with-arm, and
+  keeps `branch`-only change requests out of both arms. Report how many were excluded that way.
 - **Tail attribution splits tokens by load order.** When several skills load in one turn, compare
   `std.skill.tail_tokens` against `std.skill.tail_tokens_first_only`. If they disagree materially, the
   per-skill cost split is an assumption, not a measurement — report both.
@@ -145,7 +149,7 @@ sample-size floor above. Never let a cost figure stand in for an effectiveness c
 
 ## The third question: what did a loop skill cost, including what it drove?
 
-Some artefacts declare that they work across many turns — `telemetry.scope: ticket`. Their own
+Some artefacts declare that they work across many turns — `telemetry.scope: branch`. Their own
 activation is seconds of tool call while the work they cause runs for hours, so a per-skill view makes
 them look free. `warehouse/efficiency/06_scope_self_vs_inclusive.sql` and the containment panel on the
 outcomes board answer this, one row per iteration.

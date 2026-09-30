@@ -67,7 +67,7 @@ Three properties decide how much of our stack it can absorb.
 - **Verified end to end.** With Langfuse reachable: `otelcol_exporter_sent_spans{otlphttp/langfuse} 4`
   with zero failures, six rows in `events_full` under project `stdtel` carrying our session ids, and
   the transform's keys promoted to top-level filterable metadata — `skill_name`, `skill_version`,
-  `standard_id`, `trigger`, `ticket_id`, `team`, `harness`, `repo` — while the raw `std.*` attributes
+  `standard_id`, `trigger`, `branch_hash` (was `ticket_id`, ADR-013), `team`, `harness`, `repo` — while the raw `std.*` attributes
   sit in the nested `attributes.*` blob. That contrast is the decision in this ADR, observed directly.
 - **Span identity changes on the way in.** Langfuse names an observation from `gen_ai.tool.name`, so
   `std.skill.invocation` appears as `Skill`. Anything correlating the two backends by span name must

@@ -52,12 +52,20 @@ def test_negative_prior_count_is_rejected():
 
 # --- the rows themselves ---
 
-def test_rows_match_the_policy_result_schema():
+def test_rows_reach_the_policy_result_schema_through_the_adapter(tmp_path):
+    """CI writes GitHub's `owner/repo#n` (ADR-013): the forge adapter maps it onto
+    the neutral change-request id. The path the data takes is what is checked —
+    CI rows, through the adapter, into the table."""
+    import json
     from tests.test_warehouse import schema_columns
+    from warehouse.load_delivery import policy_rows
     rows = build_rows(ROOT / "eval" / "fixtures" / "fastapi-min", BOTH, POLICIES, "o/r#1", 1)
     assert rows
-    for row in rows:
+    f = tmp_path / "p.jsonl"
+    f.write_text("".join(json.dumps(r, default=str) + "\n" for r in rows))
+    for row in policy_rows(f):
         assert set(row) == set(schema_columns("policy_result"))
+        assert row["cr_id"] == "github:github.com/o/r!1"
 
 
 def test_one_row_per_policy_even_when_they_disagree(tmp_path):

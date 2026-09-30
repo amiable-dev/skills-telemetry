@@ -289,3 +289,51 @@ DO $$ BEGIN
                                 evaluated_at TIMESTAMPTZ, PRIMARY KEY (cr_id, policy_id, run_seq));
   END IF;
 END $$;
+
+-- ADR-013 decision 4: which change request each activation's work became, and
+-- how that was established. Read-time, so arrival order never matters, and the
+-- only place attribution is defined — the scorecard and every panel read this.
+--
+--   branch         same branch hash; the change request with the earliest close
+--                  at or after the activation, else the one still open. Bounded
+--                  to 30 days before the change request opened, so a reused
+--                  branch name (`fix/typo`) cannot claim year-old activity.
+--   branch+commit  as above, confirmed: a patch-id recorded on that branch is in
+--                  that change request.
+--   commit         no branch match, but this session's own patch-ids landed in a
+--                  change request: a branch renamed before its PR opened, or a
+--                  cherry-pick onto another branch.
+CREATE OR REPLACE VIEW activation_change_request AS
+WITH by_branch AS (
+  SELECT DISTINCT ON (a.span_id) a.span_id, a.branch_hash, c.cr_id
+  FROM artefact_activation a
+  JOIN change_request c
+    ON c.branch_hash = a.branch_hash
+   AND (c.closed_at IS NULL OR c.closed_at >= a.started_at)
+   AND a.started_at >= c.opened_at - interval '30 days'
+  WHERE a.branch_hash IS NOT NULL
+  ORDER BY a.span_id, c.closed_at ASC NULLS LAST, c.opened_at ASC
+),
+confirmed AS (
+  SELECT DISTINCT e.branch_hash, cc.cr_id
+  FROM commit_evidence e
+  JOIN change_request_commit cc ON cc.patch_id = e.patch_id
+),
+by_commit AS (
+  SELECT DISTINCT ON (a.span_id) a.span_id, c.cr_id
+  FROM artefact_activation a
+  JOIN commit_evidence e ON e.session_id = a.session_id
+                        AND e.branch_hash IS NOT DISTINCT FROM a.branch_hash
+  JOIN change_request_commit cc ON cc.patch_id = e.patch_id
+  JOIN change_request c ON c.cr_id = cc.cr_id
+  WHERE (c.closed_at IS NULL OR c.closed_at >= a.started_at)
+    AND NOT EXISTS (SELECT 1 FROM by_branch b WHERE b.span_id = a.span_id)
+  ORDER BY a.span_id, c.closed_at ASC NULLS LAST
+)
+SELECT b.span_id, b.cr_id,
+       CASE WHEN EXISTS (SELECT 1 FROM confirmed f
+                         WHERE f.branch_hash = b.branch_hash AND f.cr_id = b.cr_id)
+            THEN 'branch+commit' ELSE 'branch' END AS method
+FROM by_branch b
+UNION ALL
+SELECT span_id, cr_id, 'commit' FROM by_commit;

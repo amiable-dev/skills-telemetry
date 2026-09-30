@@ -73,7 +73,9 @@ def test_every_datasource_a_panel_uses_is_provisioned():
 
 def test_panel_sql_references_real_tables():
     """Catches a dashboard written against a schema that has since changed."""
-    tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA))
+    # views count: ADR-013's activation_change_request is the one place
+    # attribution is defined, and every outcome panel reads it
+    tables = set(re.findall(r"CREATE (?:TABLE IF NOT EXISTS|OR REPLACE VIEW) (\w+)", SCHEMA))
     for dash in DASHBOARDS:
         for panel in panels(dash):
             for target in panel.get("targets", []):

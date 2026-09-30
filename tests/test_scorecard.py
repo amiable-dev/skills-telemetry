@@ -76,7 +76,7 @@ def test_n_with_cannot_exceed_the_merged_prs_in_the_window(seeded):
     n counts PRs, so it is bounded by the PRs that exist. Every sample-size rule
     in this project assumes n is truthful.
     """
-    merged = int(psql("SELECT count(*) FROM pull_request WHERE merged_at IS NOT NULL"))
+    merged = int(psql("SELECT count(*) FROM change_request WHERE state = 'merged'"))
     for row in scorecard_rows():
         for column in ("n_with", "n_without"):
             if row[column] is not None:
@@ -106,8 +106,8 @@ def test_a_pr_counts_once_however_often_the_skill_was_invoked(seeded):
     row = rows.get("structured-logging")
     assert row, "the demo data should exercise this skill"
     prs_using = int(psql(
-        "SELECT count(DISTINCT p.pr_id) FROM pull_request p "
-        "JOIN skill_invocation i ON i.ticket_id = p.ticket_id "
+        "SELECT count(DISTINCT v.cr_id) FROM activation_change_request v "
+        "JOIN skill_invocation i ON i.span_id = v.span_id "
         "WHERE i.skill_name = 'structured-logging'"))
     assert int(row["n_with"]) <= prs_using, f"n_with={row['n_with']} > {prs_using} PRs using it"
 
@@ -195,3 +195,36 @@ def test_turns_are_counted_distinctly_not_per_row(seeded):
                                            "WHERE kind='turn' AND span_id LIKE 'demoact-%' LIMIT 1"))
     turn_row = next(r for r in rows if r["kind"] == "turn")
     assert turn_row["n_turns"] <= turn_row["n_activations"]
+
+
+
+# --- ADR-013: the join, and who it keeps out of the comparison ------------------------
+
+def test_every_attribution_says_how_it_was_made(seeded):
+    methods = set((psql("SELECT string_agg(DISTINCT method, ' ') FROM activation_change_request") or "").split())
+    assert methods <= {"branch", "branch+commit", "commit"}, methods
+    assert "branch+commit" in methods, "the demo fleet confirms most links with commit evidence"
+    assert "branch" in methods, "and leaves some unconfirmed, which the arms must exclude"
+
+
+def test_a_branch_only_link_is_in_neither_arm(seeded):
+    """ADR-002's "unknown, never none", applied to the weaker join: a change
+    request linked to a skill by branch alone must not be counted as a change
+    request that did not use it."""
+    leaked = int(psql("""
+        SELECT count(*) FROM (
+          SELECT DISTINCT v.cr_id FROM activation_change_request v
+          JOIN skill_invocation i ON i.span_id = v.span_id AND i.skill_name = 'structured-logging'
+          WHERE v.method = 'branch'
+            AND v.cr_id NOT IN (SELECT v2.cr_id FROM activation_change_request v2
+                                JOIN skill_invocation i2 ON i2.span_id = v2.span_id
+                                 AND i2.skill_name = 'structured-logging'
+                                WHERE v2.method <> 'branch')) u"""))
+    assert leaked > 0, "the demo must exercise the uncertain case"
+    rows = {r["skill_name"]: r for r in scorecard_rows()}
+    total_merged_with_policy = int(psql(
+        "SELECT count(DISTINCT c.cr_id) FROM change_request c JOIN policy_result p ON p.cr_id = c.cr_id "
+        "WHERE c.state = 'merged' AND p.policy_id = ANY(ARRAY['logging.required_fields','logging.no_pii'])"))
+    r = rows["structured-logging"]
+    assert int(r["n_with"]) + int(r["n_without"]) <= total_merged_with_policy - leaked, \
+        "a branch-only change request was counted in an arm"

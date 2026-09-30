@@ -4,6 +4,34 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Changed — breaking, on the wire and in the warehouse
+- **Work joins change requests by branch identity, not a ticket parsed from the branch name
+  (ADR-013).** The regex requirement was never communicated. Measured, it missed 2 of 9 of this
+  repository's own branches and every branch of a repository that puts the issue number last, and
+  it invented tickets: `RELEASE-0` on both releases, `ANALYZE-4` and `INIT-4` on Dependabot branches.
+  - **On the wire:** spans carry `std.branch.hash`, a hash of the normalised repository and branch,
+    never the branch name. `std.ticket.id` is gone. `std.repo` is now `owner/name`.
+  - **Commit evidence:** the Stop hook records the `git patch-id` of each commit the session made, as
+    `std.artefact.commit_patch_ids`. Patch-ids survive a rebase; the SHAs of the rebased PR #87 did not.
+  - **The join:** `activation_change_request` (a view) assigns each activation to the change request
+    its branch became, and records how: `branch`, `branch+commit` or `commit`. The scorecard's
+    with-arm requires commit evidence, and a branch-only link is excluded from both arms.
+  - **Delivery data:** it loads into a forge-neutral `change_request` record, with commits and ticket
+    links, through a GitHub adapter. GitLab is #103. Closed-unmerged PRs are loaded.
+  - **Tickets:** they are now enrichment, taken from the forge's issue links first and a fixed regex
+    second.
+  - **Scope unit:** `ticket` is renamed `branch`.
+  - **Warehouse:** `pull_request` and the `ticket_id` columns are dropped at cutover. Prior data is
+    not migrated.
+
+### Fixed
+- **The demo fleet's skill invocations never shared a span id with their activations**, as the real
+  loader's always do, so any join from one to the other found nothing.
+- **`stdtel-query` gave a tool-failure query against `session_cost.tool_failures`**, a column that has
+  never existed.
+
 ## 0.6.0 — 2026-09-28
 
 ### Added

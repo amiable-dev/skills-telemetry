@@ -6,6 +6,10 @@ tags: [adr, delivery, evaluation, github]
 links: ["001-distribution-and-capture-surface.md", "005-data-integrity.md", "../evaluation-power.md", "../../warehouse/load_delivery.py"]
 ---
 
+> **Decision 1 is superseded by [ADR-013](013-join-work-to-change-requests.md) (2026-09-30).** Work now
+> joins change requests by branch identity and commit evidence, not a ticket key parsed from the
+> branch, and delivery data loads into a forge-neutral change-request record. Decisions 2 to 6 stand.
+
 ## Context
 
 `skill_invocation` says what a skill cost. On its own that supports no decision: cost without outcome

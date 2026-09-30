@@ -102,7 +102,7 @@ curl -s --get http://localhost:3200/api/search \
 
 # 5. load traces into the warehouse, then query it
 python warehouse/load_traces.py --tempo http://localhost:3200 --dsn "$STDTEL_DSN" --since 24h
-psql "$STDTEL_DSN" -c 'SELECT skill_name, skill_version, ticket_id, tail_tokens FROM skill_invocation;'
+psql "$STDTEL_DSN" -c 'SELECT skill_name, skill_version, branch_hash, tail_tokens FROM skill_invocation;'
 ```
 
 Then open Grafana at :3000 — the scorecard dashboard is provisioned.
@@ -221,7 +221,7 @@ both with `curl -s localhost:8888/metrics | grep otelcol_exporter`.
 | `std.session.cost` | `std.session.cost` (no tool name, so the span name survives) |
 
 Filter and group on the keys the overlay promotes — `skill_name`, `skill_version`, `skill_plugin`,
-`standard_id`, `trigger`, `ticket_id`, `team`, `harness`, `repo`. The raw `std.*` attributes are
+`standard_id`, `trigger`, `branch_hash`, `team`, `harness`, `repo`. The raw `std.*` attributes are
 present too, but nested under `attributes.*` where Langfuse cannot query them; that gap is the whole
 reason [ADR-006](adrs/006-langfuse-as-an-optional-trace-backend.md) exists.
 

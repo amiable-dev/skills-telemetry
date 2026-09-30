@@ -68,14 +68,20 @@ arrival. The second and third exist because the first could have a bug; a test p
 in every documented field, one undocumented field, and a sub-agent's message bodies, and fails if it
 surfaces anywhere in a span.
 
-**One thing to be aware of:** your branch name is parsed for a ticket key and sent. If you put
-something private in a branch name, it goes. Branches with no ticket key are sent as `unattributed`.
+**Two things to be aware of** ([ADR-013](adrs/013-join-work-to-change-requests.md)):
 
-It is re-read at the end of every turn, so switching branches mid-session moves later spans to the new
-ticket rather than leaving them on the one you started with. If the branch cannot be read at all — the
-directory is not a git checkout, say — the last known ticket is kept rather than replaced by a guess.
+- **Your branch is identified, not named.** A hash of the repository and branch name is sent, never
+  the name itself, so a private word in a branch name stays on your machine. The hash is what joins
+  your work to the pull request it became, and no naming convention is needed. It is re-read at the
+  end of every turn, so switching branches mid-session moves later spans to the new branch. If the
+  branch cannot be read — the directory is not a git checkout, say — the last known value is kept
+  rather than replaced by a guess.
+- **Your commits are fingerprinted.** For each commit you make during a session, its `git patch-id`
+  is sent: an opaque hash of the diff, from which the code cannot be recovered. It confirms which pull
+  request the work landed in, even after a rebase or a cherry-pick. Only commits authored under your
+  own git identity are fingerprinted, never a teammate's you pulled in.
 
-**And one more:** if a skill declares that it works ticket by ticket, everything recorded while it runs
+**And one more:** if a skill declares that it works branch by branch, everything recorded while it runs
 is marked as having happened inside its container — including work you did that had nothing to do with
 it. That is deliberate. Nothing can observe whether a skill caused a later tool call, so the number
 says *what happened while it was running*, not *what it caused*. The same opt-out switches cover it;
@@ -156,8 +162,8 @@ docker exec deploy-postgres-1 psql -U postgres -d stdtel -c 'SELECT * FROM skill
 { "statusLine": { "type": "command", "command": "stdtel-statusline" } }
 ```
 
-It shows only faults you can act on — `no ticket`, `N unversioned`, `spans dropping` — and stays quiet
-otherwise. **It shows no cost or token total**, by design: see the note in
+It shows only faults you can act on — `no branch identity`, `N unversioned`, `spans dropping` — and
+otherwise shows your branch name, which never leaves your machine. **It shows no cost or token total**, by design: see the note in
 [reference.md](reference.md#stdtel-statusline). `STDTEL_STATUSLINE=off` turns it off without turning
 telemetry off.
 
@@ -172,7 +178,7 @@ most editors do not show. A silent hook is therefore normal-looking. To check:
 | the plugin is installed but nothing is recorded | expected when the `stdtel` package is not installed — the plugin's launcher exits silently by design. `uv tool install stdtel`, then check `stdtel-install where` |
 | nothing recorded at all | `stdtel-install where` — if the hook is registered by bare name it may be unresolvable, since hooks do not get your login shell's PATH |
 | skills show as `unversioned` | the catalogue cannot find them: `stdtel-validate ~/.claude/skills` |
-| ticket shows `unattributed` | your branch has no ticket key, e.g. `PLAT-42-…` |
+| statusline says `no branch identity` | not a git checkout, or no remote (`git remote add origin <url>`): this work cannot join a pull request, and adding a remote later does not identify it |
 | spans stop at your machine | `curl -s localhost:8888/metrics \| grep otelcol_receiver_accepted_spans` — 0 means they never reached the collector, and the endpoint is set with `STDTEL_OTLP_ENDPOINT` (`OTEL_*` is stripped from hook subprocesses) |
 | you want to see the error | run the hook by hand: `echo '{...}' \| stdtel-hook stop` |
 

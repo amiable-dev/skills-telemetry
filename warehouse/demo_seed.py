@@ -26,8 +26,13 @@ import random
 import sys
 from pathlib import Path
 
+from warehouse.change_requests import branch_hash, cr_id
+
 DEMO_MARKER = "DEMO"
-TABLES = ("ticket", "pull_request", "policy_result", "skill_invocation", "session_cost",
+#: ADR-013. The demo repository as the capture side would identify it.
+DEMO_REPO_ID = "github.com/demo-org/demo-repo"
+TABLES = ("ticket", "change_request", "change_request_commit", "change_request_ticket",
+          "commit_evidence", "policy_result", "skill_invocation", "session_cost",
           "defect", "artefact_activation", "mcp_tool_call")
 
 #: Sub-agent types the demo fleet spawns, with how expensive each is per call.
@@ -61,7 +66,13 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
         team = TEAMS[n % len(TEAMS)]
         dev = n % DEVELOPERS
         ticket_id = f"{DEMO_MARKER}-{100 + n}"
-        pr_id = f"demo-org/demo-repo#{n}"
+        # ADR-013: the join is the branch, whatever its name. Most branches name
+        # the ticket; a fifth follow a trailing-number convention with no key,
+        # which the ticket regex left `unattributed` and which now joins anyway.
+        branch = (f"feature/{ticket_id}-demo-work" if rng.random() > 0.2
+                  else f"fix/demo-hardening-{n}")
+        bhash = branch_hash(DEMO_REPO_ID, branch)
+        pr_id = cr_id("github", DEMO_REPO_ID, n)
         opened = start + dt.timedelta(days=rng.uniform(0, WEEKS * 7), hours=rng.uniform(0, 8))
         cycle_hours = round(rng.lognormvariate(2.6, 0.7), 2)
         merged = opened + dt.timedelta(hours=cycle_hours)
@@ -76,14 +87,22 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
             "cycle_time_hours": cycle_hours, "lead_time_hours": cycle_hours,
             "harness_arm": arm,
         })
-        out["pull_request"].append({
-            "pr_id": pr_id, "repo": "demo-org/demo-repo", "ticket_id": ticket_id,
-            "opened_at": _iso(opened), "merged_at": _iso(merged),
+        # ~5% abandoned: closed unmerged, loaded and marked (ADR-013 decision 3)
+        abandoned = rng.random() < 0.05
+        out["change_request"].append({
+            "cr_id": pr_id, "forge": "github", "repo_id": DEMO_REPO_ID, "number": n,
+            "source_branch": branch, "branch_hash": bhash,
+            "opened_at": _iso(opened), "merged_at": None if abandoned else _iso(merged),
+            "closed_at": _iso(merged), "state": "closed" if abandoned else "merged",
             "review_rounds": rng.choices([0, 1, 2, 3], weights=[45, 35, 15, 5])[0],
             "hours_to_first_approval": round(cycle_hours * rng.uniform(0.2, 0.8), 2),
             "ci_failures": rng.choices([0, 1, 2], weights=[70, 25, 5])[0],
             "assisted_by": arm,
         })
+        # the ticket reached through the change request, as the forge link or the
+        # title key would give it
+        out["change_request_ticket"].append({
+            "cr_id": pr_id, "ticket_id": ticket_id, "source": rng.choice(["forge", "title"])})
 
         skill = SKILLS[0] if rng.random() < SKILLS[0]["weight"] else SKILLS[1]
         used_skill = arm == "claude-code" and rng.random() < 0.85
@@ -94,23 +113,24 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
         for policy_id in skill["policies"]:
             passed_first = rng.random() < p_pass
             out["policy_result"].append({
-                "pr_id": pr_id, "policy_id": policy_id, "run_seq": 1,
+                "cr_id": pr_id, "policy_id": policy_id, "run_seq": 1,
                 "passed": passed_first, "evaluated_at": _iso(merged - dt.timedelta(hours=1)),
             })
             if not passed_first:      # a fix, then a second CI run that passes
                 out["policy_result"].append({
-                    "pr_id": pr_id, "policy_id": policy_id, "run_seq": 2,
+                    "cr_id": pr_id, "policy_id": policy_id, "run_seq": 2,
                     "passed": True, "evaluated_at": _iso(merged - dt.timedelta(minutes=20)),
                 })
 
         session_id = f"demo-session-{n}"
         total_in = int(rng.lognormvariate(9.2, 0.6))
         total_out = int(total_in * rng.uniform(0.05, 0.2))
-        # ~8% of sessions have no ticket key: a real and common data-quality fault
-        sc_ticket = ticket_id if rng.random() > 0.08 else "unattributed"
+        # ~8% of sessions have no branch identity (no git repository, or no
+        # remote): the fault that, since ADR-013, still stops a join
+        sc_branch = bhash if rng.random() > 0.08 else None
         out["session_cost"].append({
             "session_id": session_id, "harness": "claude-code" if arm == "claude-code" else "none",
-            "model": "claude-opus-5", "ticket_id": sc_ticket, "team": team,
+            "model": "claude-opus-5", "branch_hash": sc_branch, "team": team,
             "input_tokens": total_in, "output_tokens": total_out,
             "cache_read_tokens": int(total_in * rng.uniform(0.4, 0.8)),
             "cache_creation_tokens": int(total_in * rng.uniform(0.05, 0.3)),
@@ -123,7 +143,10 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
             # ~5% of invocations are of a skill the catalogue does not know
             catalogued = rng.random() > 0.05
             out["skill_invocation"].append({
-                "span_id": f"demo{n:06d}", "trace_id": f"demotrace{n:06d}",
+                # the same span id as its activation below, as the real loader
+                # writes both; the scorecard joins one to the other through
+                # activation_change_request, and mismatched ids joined nothing
+                "span_id": f"demoact-{n:06d}-k0", "trace_id": f"demotrace{n:06d}",
                 "session_id": session_id, "started_at": _iso(opened),
                 "ended_at": _iso(opened + dt.timedelta(seconds=rng.uniform(1, 40))),
                 "harness": "claude-code", "harness_mode": "agent",
@@ -138,7 +161,7 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "output_tokens": total_out,
                 "cache_read_tokens": int(total_in * 0.5), "cache_creation_tokens": int(total_in * 0.1),
                 "llm_requests": rng.randint(1, 9), "is_error": rng.random() < 0.03,
-                "ticket_id": sc_ticket, "repo": "demo-org/demo-repo", "team": team,
+                "branch_hash": sc_branch, "repo": "demo-org/demo-repo", "team": team,
                 "user_hash": f"demo-user-{dev}",
             })
 
@@ -148,14 +171,14 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
         # like a broken install. Same DEMO markers, same mixed picture.
         # ADR-010: roughly a third of the fleet is driven by a loop skill, so the
         # containment query has a mixed picture to show rather than one shape.
-        # The scope key is the ticket, and the id changes with it, which is what
-        # makes a per-iteration comparison possible at all.
+        # The scope key is the branch (ADR-013), and the id changes with it,
+        # which is what makes a per-iteration comparison possible at all.
         scoped = rng.random() < 0.35
         act = dict(session_id=session_id, harness="claude-code", harness_mode="agent",
-                   repo="demo-org/demo-repo", team=team, ticket_id=sc_ticket,
+                   repo="demo-org/demo-repo", team=team, branch_hash=sc_branch,
                    user_hash=f"demo-user-{dev}",
                    scope_name="demo-epic-loop" if scoped else None,
-                   scope_key=sc_ticket if scoped else None,
+                   scope_key=sc_branch if scoped else None,
                    scope_id=f"demoscope-{n:06d}" if scoped else None,
                    scope_source=(rng.choice(["artefact", "overlay"]) if scoped else None))
         turns = rng.randint(2, 9)
@@ -207,6 +230,21 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "compaction_tokens_after": None, "compaction_turns_since_previous": None,
                 "hook_ms": None, "hook_ms_by_hook": None,
             })
+
+        # ADR-013 commit evidence. Most skill-using change requests carry it, so
+        # their skill link is `branch+commit` and they reach the with-arm; some
+        # do not, and their link is `branch` alone — excluded from both arms,
+        # which the scorecard has to show rather than hide. Patch-ids appear on
+        # the turn that made them and in the change request's own commit list.
+        if used_skill and sc_branch and rng.random() < 0.8:
+            for j in range(rng.randint(1, 3)):
+                patch = f"demo-patch-{n:06d}-{j}"
+                out["commit_evidence"].append({
+                    "patch_id": patch, "activation_span_id": f"demoact-{n:06d}-t0",
+                    "session_id": session_id, "prompt_id": f"demo-prompt-{n}-0",
+                    "branch_hash": sc_branch, "observed_at": _iso(opened + dt.timedelta(minutes=5))})
+                out["change_request_commit"].append({"cr_id": pr_id, "patch_id": patch,
+                                                     "sha": f"demosha{n:06d}{j}"})
 
         # roughly a third of sessions spawn sub-agents, and they are expensive
         for k in range(rng.choice([0, 0, 1, 2, 4])):
@@ -360,7 +398,8 @@ def load(dsn: str, data: dict[str, list[dict]]) -> dict[str, int]:
     import psycopg
     from warehouse.load_delivery import CONFLICT_KEYS, TABLES as DELIVERY_COLS
     conflict = dict(CONFLICT_KEYS, skill_invocation="span_id", session_cost="session_id",
-                    artefact_activation="span_id", mcp_tool_call="tool_use_id")
+                    artefact_activation="span_id", mcp_tool_call="tool_use_id",
+                    commit_evidence="patch_id, activation_span_id")
     counts = {}
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         for table, rows in data.items():
@@ -382,8 +421,13 @@ def clear(dsn: str) -> dict[str, int]:
     counts = {}
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         for table, column, pattern in (
-            ("defect", "defect_id", "demo-org/%"), ("policy_result", "pr_id", "demo-org/%"),
-            ("pull_request", "pr_id", "demo-org/%"), ("skill_invocation", "span_id", "demo%"),
+            ("defect", "defect_id", "demo-org/%"),
+            ("policy_result", "cr_id", f"github:{DEMO_REPO_ID}!%"),
+            ("change_request_commit", "cr_id", f"github:{DEMO_REPO_ID}!%"),
+            ("change_request_ticket", "cr_id", f"github:{DEMO_REPO_ID}!%"),
+            ("change_request", "cr_id", f"github:{DEMO_REPO_ID}!%"),
+            ("commit_evidence", "patch_id", "demo-patch-%"),
+            ("skill_invocation", "span_id", "demo%"),
             ("session_cost", "session_id", "demo-session-%"), ("ticket", "ticket_id", f"{DEMO_MARKER}-%"),
             ("artefact_activation", "span_id", "demoact-%"),
             ("mcp_tool_call", "tool_use_id", "demo-toolu-%"),
