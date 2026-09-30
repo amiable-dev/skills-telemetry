@@ -4,7 +4,7 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
-## Unreleased
+## 0.7.0 — 2026-09-30
 
 ### Changed — breaking, on the wire and in the warehouse
 - **Work joins change requests by branch identity, not a ticket parsed from the branch name
@@ -21,7 +21,8 @@ version until this number changes — so bump it for anything a user would recei
   - **Delivery data:** it loads into a forge-neutral `change_request` record, with commits and ticket
     links, through a GitHub adapter. GitLab is #103. Closed-unmerged PRs are loaded.
   - **Tickets:** they are now enrichment, taken from the forge's issue links first and a fixed regex
-    second.
+    second. In a PR description, a key counts only after a linking word ("Fixes PLAT-9"). The first
+    real run read ADR numbers cited in descriptions as tickets.
   - **Scope unit:** `ticket` is renamed `branch`.
   - **Warehouse:** `pull_request` and the `ticket_id` columns are dropped at cutover. Prior data is
     not migrated.
