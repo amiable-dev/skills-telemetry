@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS change_request (
   opened_at TIMESTAMPTZ, merged_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
   state TEXT NOT NULL,                               -- merged | closed | open
   review_rounds INT, hours_to_first_approval NUMERIC, ci_failures INT,
-  assisted_by TEXT                                   -- claude-code | copilot | none | unknown
+  assisted_by TEXT                                   -- claude-code | copilot | mixed | none | unknown
 );
 CREATE INDEX IF NOT EXISTS ix_cr_branch ON change_request (branch_hash, closed_at);
 

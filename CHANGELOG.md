@@ -81,6 +81,20 @@ version until this number changes — so bump it for anything a user would recei
   as a label, so it opens a series per session.
 
 ### Fixed
+- **Coding-agent PRs were being discarded as bots; they are now agent work for their harness
+  (ADR-014 decision 9, #116).** The fix was verified with the loader's own `gh pr list` call on real
+  public PRs:
+  - the Copilot coding agent is `app/copilot-swe-agent` and the Claude GitHub app is `app/claude`,
+    both `is_bot: true`, so the #62 filter dropped every one;
+  - both are now kept, including the `gh search` spellings `Copilot` and `claude[bot]`;
+  - dependency bots are still excluded.
+
+  `assisted_by` now combines every signal: the arm labels, Anthropic's `claude-code-assisted` label,
+  and an agent author.
+  - One harness evidenced is that harness, even under `no-ai`, because a control an agent touched is
+    not a control.
+  - Two harnesses is `mixed`.
+  - The absence of evidence is still `unknown`, never `none`.
 - **A credential in Claude Code's repository URL no longer reaches Loki (#128).** With
   `OTEL_METRICS_INCLUDE_REPOSITORY` on, every native event carries `vcs.repository.url.full`, and a
   remote such as `https://x-access-token:...@github.com/...` would have been stored verbatim. The
