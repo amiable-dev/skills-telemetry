@@ -15,37 +15,17 @@ the port, so this runs the same on Colima (which shares only $HOME) and in CI.
 """
 from __future__ import annotations
 
-import json
 import re
-import shutil
-import subprocess
 import time
-import urllib.request
 import uuid
 from pathlib import Path
 
 import pytest
 
 from stdtel.enrich import branch_hash, repo_id
+from tests.collector_harness import collector, docker_available
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = "otel/opentelemetry-collector-contrib:0.118.0"
-
-OVERLAY = """
-exporters:
-  debug/test: { verbosity: detailed }
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [debug/test]
-    metrics:
-      receivers: [otlp]
-      exporters: [debug/test]
-    logs:
-      receivers: [otlp]
-      exporters: [debug/test]
-"""
 
 IDENTITY = ("user.email", "user.account_uuid", "user.account_id", "user.id", "organization.id")
 CLAUDE_CONTENT = ("tool_input", "tool_parameters", "full_command", "bash_command", "error",
@@ -65,13 +45,7 @@ REMOTES = [
 ]
 
 
-def _docker() -> bool:
-    if not shutil.which("docker"):
-        return False
-    return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-
-
-pytestmark = pytest.mark.skipif(not _docker(), reason="docker unavailable")
+pytestmark = pytest.mark.skipif(not docker_available(), reason="docker unavailable")
 
 
 def _kv(attrs: dict) -> list:
@@ -94,37 +68,7 @@ OVERLAYS = ["overlay-none.yaml", "overlay-langfuse.yaml"]
 
 @pytest.fixture(scope="module", params=OVERLAYS)
 def collector_output(request):
-    name = f"stdtel-privacy-{uuid.uuid4().hex[:8]}"
-    cfg = ROOT / "collector" / "otel-collector.yaml"
-    mode = ROOT / "collector" / request.param
-    overlay = Path(__file__).parent / f".{name}.yaml"
-    overlay.write_text(OVERLAY)
-    try:
-        subprocess.run(["docker", "create", "--name", name, "-p", "127.0.0.1::4318", IMAGE,
-                        "--config=/etc/otelcol-contrib/base.yaml", "--config=/etc/otelcol-contrib/mode.yaml",
-                        "--config=/etc/otelcol-contrib/test.yaml"],
-                       check=True, capture_output=True)
-        subprocess.run(["docker", "cp", str(cfg), f"{name}:/etc/otelcol-contrib/base.yaml"], check=True,
-                       capture_output=True)
-        subprocess.run(["docker", "cp", str(mode), f"{name}:/etc/otelcol-contrib/mode.yaml"], check=True,
-                       capture_output=True)
-        subprocess.run(["docker", "cp", str(overlay), f"{name}:/etc/otelcol-contrib/test.yaml"], check=True,
-                       capture_output=True)
-        subprocess.run(["docker", "start", name], check=True, capture_output=True)
-        port = subprocess.run(["docker", "port", name, "4318/tcp"], check=True, capture_output=True,
-                              text=True).stdout.strip().split(":")[-1]
-        base = f"http://127.0.0.1:{port}"
-        for _ in range(40):
-            if "Everything is ready" in subprocess.run(["docker", "logs", name], capture_output=True,
-                                                       text=True).stderr:
-                break
-            time.sleep(0.25)
-
-        def post(path, body):
-            req = urllib.request.Request(base + path, data=json.dumps(body).encode(),
-                                         headers={"Content-Type": "application/json"})
-            urllib.request.urlopen(req, timeout=5).read()
-
+    with collector(request.param) as c:
         ns = str(time.time_ns())
         spans = []
         for i, (remote, branch) in enumerate(REMOTES):
@@ -135,31 +79,22 @@ def collector_output(request):
                                              "github.copilot.git.branch": branch,
                                              "github.copilot.git.commit_sha": "abc123",
                                              "stdtel.test.remote": remote})})
-        post("/v1/traces", {"resourceSpans": [{"resource": {"attributes": _kv({"service.name": "copilot-chat"})},
-                                               "scopeSpans": [{"spans": spans}]}]})
-        post("/v1/logs", {"resourceLogs": [{"resource": {"attributes": _kv({"service.name": "claude-code"})},
-                                            "scopeLogs": [{"logRecords": [{
-                                                "timeUnixNano": ns,
-                                                "attributes": _kv({**_identity(), **_content(),
-                                                                   "event.name": "api_request",
-                                                                   "prompt.id": "p-1"})}]}]}]})
-        post("/v1/metrics", {"resourceMetrics": [{"resource": {"attributes": _kv({"service.name": "claude-code"})},
-                                                  "scopeMetrics": [{"metrics": [{
-                                                      "name": "claude_code.token.usage",
-                                                      "sum": {"aggregationTemporality": 2, "isMonotonic": True,
-                                                              "dataPoints": [{"asInt": "5", "timeUnixNano": ns,
-                                                                              "attributes": _kv({**_identity(),
-                                                                                                 "type": "input"})}]}}]}]}]})
-        out = ""
-        for _ in range(40):
-            time.sleep(0.5)
-            out = subprocess.run(["docker", "logs", name], capture_output=True, text=True).stderr
-            if out.count("claude_code.token.usage") and out.count("prompt.id") and out.count("stdtel.test.remote") >= len(REMOTES):
-                break
-        yield out
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        overlay.unlink(missing_ok=True)
+        c.post("/v1/traces", {"resourceSpans": [{"resource": {"attributes": _kv({"service.name": "copilot-chat"})},
+                                                 "scopeSpans": [{"spans": spans}]}]})
+        c.post("/v1/logs", {"resourceLogs": [{"resource": {"attributes": _kv({"service.name": "claude-code"})},
+                                              "scopeLogs": [{"logRecords": [{
+                                                  "timeUnixNano": ns,
+                                                  "attributes": _kv({**_identity(), **_content(),
+                                                                     "event.name": "api_request",
+                                                                     "prompt.id": "p-1"})}]}]}]})
+        c.post("/v1/metrics", {"resourceMetrics": [{"resource": {"attributes": _kv({"service.name": "claude-code"})},
+                                                    "scopeMetrics": [{"metrics": [{
+                                                        "name": "stdtel.privacy.probe",
+                                                        "sum": {"aggregationTemporality": 2, "isMonotonic": True,
+                                                                "dataPoints": [{"asInt": "5", "timeUnixNano": ns,
+                                                                                "attributes": _kv({**_identity(),
+                                                                                                   "type": "input"})}]}}]}]}]})
+        yield c.wait_for("stdtel.privacy.probe", "prompt.id", *(["stdtel.test.remote"] * 1))
 
 
 def _keys(out: str) -> set[str]:
@@ -168,7 +103,7 @@ def _keys(out: str) -> set[str]:
 
 def test_the_collector_received_all_three_signals(collector_output):
     """Guards the rest against passing on an empty output."""
-    assert "claude_code.token.usage" in collector_output, collector_output[-2000:]
+    assert "stdtel.privacy.probe" in collector_output, collector_output[-2000:]
     assert "prompt.id" in collector_output
     assert collector_output.count("stdtel.test.remote") >= len(REMOTES)
 

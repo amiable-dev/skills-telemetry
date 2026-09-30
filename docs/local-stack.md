@@ -68,6 +68,7 @@ Reaching Grafana from a phone or another machine is the usual reason to want it.
 | Grafana | http://localhost:3000 | **none — anonymous admin** | Prometheus and Tempo are already provisioned as datasources; do not add them |
 | Tempo | http://localhost:3200 | none | `/ready`, `/api/search`, `/api/traces/{id}` |
 | Prometheus | http://localhost:9090 | none | span metrics arrive by remote write |
+| Loki | http://localhost:11010 | none | harness-native events (ADR-014), including Claude Code's per-request cost and skill attribution. Host port is this project's berth extra `loki`; inside the stack it is `loki:3100`. Native *metrics* are dropped at the collector on purpose |
 | Collector (OTLP) | http://localhost:4318 | none | gRPC on 4317; point `STDTEL_OTLP_ENDPOINT` here |
 | Collector (metrics) | http://localhost:8888/metrics | none | the collector's own counters — the fastest way to see whether it received anything |
 | Postgres | localhost:5432 | user `postgres`, password `stdtel`, db `stdtel` | `postgresql://postgres:stdtel@localhost:5432/stdtel` |

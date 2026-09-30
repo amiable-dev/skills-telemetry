@@ -132,6 +132,20 @@ processors:
     attributes:
       - { key: service.instance.id, action: delete }
 
+  # ADR-014 decision 4: native metrics stay out of Prometheus. Every Claude Code
+  # metric carries session.id as a label (verified live 2026-09-30), so each
+  # opens a series per session; deleting the label instead recreates #92. The
+  # per-request events carry everything the metrics do, so the warehouse — fed
+  # from events and traces — is the one analytic path for native records.
+  # Copilot's GenAI and copilot_chat metrics are dropped for the same reason.
+  filter/native_metrics:
+    error_mode: ignore
+    metrics:
+      metric:
+        - IsMatch(name, "^claude_code\\.")
+        - IsMatch(name, "^copilot_chat\\.")
+        - IsMatch(name, "^gen_ai\\.client\\.")
+
   batch: {}
 
 connectors:
@@ -172,6 +186,11 @@ connectors:
     resource_metrics_key_attributes: [service.name]
 
 exporters:
+  # ADR-014 decision 4: harness-native events — Claude Code's per-request cost,
+  # tokens and skill attribution exist only here. Loki 3 ingests OTLP natively,
+  # and attributes land as structured metadata, which the loader reads.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
   otlp/tempo:
     endpoint: tempo:4317
     tls: { insecure: true }
@@ -198,9 +217,9 @@ service:
       exporters: [otlp/tempo, spanmetrics]
     metrics:
       receivers: [otlp, spanmetrics]
-      processors: [memory_limiter, attributes/drop_content, transform/identity, resource/collapse_instance, batch]
+      processors: [memory_limiter, filter/native_metrics, attributes/drop_content, transform/identity, resource/collapse_instance, batch]
       exporters: [prometheusremotewrite]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, attributes/drop_content, transform/identity, batch]
-      exporters: [debug]
+      exporters: [otlphttp/loki]
