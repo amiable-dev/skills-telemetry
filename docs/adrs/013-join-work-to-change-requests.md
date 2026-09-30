@@ -1,6 +1,6 @@
 ---
 title: "ADR-013: Join work to change requests by branch and commits, not a ticket-key naming convention"
-status: proposed
+status: accepted
 date: 2026-09-30
 tags: [adr, joins, delivery, primary-metric, forge, data-integrity]
 links: ["002-delivery-data-joins-and-proxies.md", "005-data-integrity.md", "010-containment-and-scope.md", "012-external-contract-v3.md"]

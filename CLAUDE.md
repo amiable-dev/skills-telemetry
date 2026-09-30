@@ -58,7 +58,7 @@ was rejected and what the decision costs, which is what you need before re-litig
   transcript. Joined at read time, never overwriting what the emitter sent, so external spend gains a turn
   and a scope. Adds `requests_unpriced` so a partly priced run keeps its observed cost as a lower bound.
   Issue #94.
-- **[ADR-013](docs/adrs/013-join-work-to-change-requests.md)** (proposed) — would replace ADR-002
+- **[ADR-013](docs/adrs/013-join-work-to-change-requests.md)** — replaces ADR-002
   decision 1. Work joins to change requests on a hash of repo + branch plus a time window, confirmed by
   commit patch-ids, because the ticket-from-branch regex needed a naming convention nobody was told
   about and invented fake tickets (`RELEASE-0`, `ANALYZE-4`). Delivery data loads through a
