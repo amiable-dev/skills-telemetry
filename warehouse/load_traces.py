@@ -59,6 +59,8 @@ LOADER = "load_traces"
 #: The window must therefore comfortably exceed the flush delay, because a run
 #: that steps over a span never returns for it. Overlap is free: every row is
 #: keyed on span_id and re-inserting one is a no-op.
+#: ADR-014 decision 13 reserves it for stdtel-doctor's content probe.
+PROBE_SERVICE = "stdtel-probe"
 TEMPO_FLUSH_MINUTES = 30        # complete_block_timeout 15m, max_block_duration 30m
 MIN_SAFE_WINDOW_HOURS = 2
 
@@ -398,6 +400,8 @@ def collect(traces: dict, fetch, unknown=None, mcp_calls=None,
         tr = fetch(trace_id)
         for batch in tr.get("batches", []):
             resource = _attrs(batch.get("resource", {}).get("attributes", []))
+            if resource.get("service.name") == PROBE_SERVICE:
+                continue                    # stdtel-doctor's content probe, never a row
             for ss in batch.get("scopeSpans", []):
                 for sp in ss.get("spans", []):
                     attrs = _attrs(sp.get("attributes", []))

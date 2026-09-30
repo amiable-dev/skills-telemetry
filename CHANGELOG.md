@@ -23,6 +23,13 @@ version until this number changes — so bump it for anything a user would recei
     Langfuse configuration. Before this change, 22 of those 24 checks failed.
 
 ### Added
+- **`stdtel-doctor` proves the collector drops content (ADR-014 decision 13, #111).** A new
+  `content dropped` check sends a probe span and event holding a marker in content-shaped keys and a
+  control id, then reads Tempo and Loki back. It passes only when the control arrived and the
+  marker did not. "Not found" alone would also pass when nothing arrived, so a missing control
+  fails as inconclusive. It runs by default only when `OTEL_LOG_TOOL_DETAILS` is on;
+  `stdtel-doctor --content-check` runs it on demand and is what `stdtel-setup` will call before
+  offering the detailed view. The trace loader ignores `service.name=stdtel-probe`.
 - **Loki stores harness-native events (ADR-014 decision 4, #110).** Claude Code's per-request cost,
   tokens and skill attribution exist only as events, and the logs pipeline used to export them to
   `debug` and nowhere else. Loki runs on host port 11010, this project's berth extra, and Grafana
