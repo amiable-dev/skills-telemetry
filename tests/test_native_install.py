@@ -189,7 +189,7 @@ def test_a_remote_collector_needs_the_user_to_vouch_for_it(tmp_path, probe, monk
     target = tmp_path / "settings.json"
     assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
     assert "OTEL_LOG_TOOL_DETAILS" not in _env(target)
-    assert "otel.example.com" in capsys.readouterr().err
+    assert "the collector at https://otel.example.com is not on this machine" in capsys.readouterr().err
     assert install.main(["detailed-view", "on", "--path", str(target), "--collector-confirmed"]) == 0
     assert _env(target)["OTEL_LOG_TOOL_DETAILS"] == "1"
 
@@ -220,7 +220,7 @@ def test_the_gate_judges_the_endpoint_claude_code_will_use(tmp_path, probe, monk
     target = tmp_path / "settings.json"
     target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.example.com"}}))
     assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
-    assert "otel.example.com" in capsys.readouterr().err
+    assert "the collector at https://otel.example.com is not on this machine" in capsys.readouterr().err
     assert "OTEL_LOG_TOOL_DETAILS" not in _env(target)
 
 
@@ -243,7 +243,7 @@ def test_a_project_setting_overrides_the_user_file(tmp_path, probe, monkeypatch,
     target = tmp_path / "settings.json"
     target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318"}}))
     assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
-    assert "otel.example.com" in capsys.readouterr().err
+    assert "the collector at https://otel.example.com is not on this machine" in capsys.readouterr().err
 
 
 def test_the_doctors_recheck_probes_claude_codes_endpoint(tmp_path, monkeypatch):
