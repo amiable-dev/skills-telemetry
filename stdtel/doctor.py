@@ -330,8 +330,157 @@ def artefacts_observed() -> Check:
                  "transcript and are flagged std.artefact.source=transcript")
 
 
+# --- ADR-014 decision 13: is content dropped on this machine? ----------------------------
+
+#: Reserved by ADR-014 decision 13. The loaders skip it, so a probe never becomes a row.
+PROBE_SERVICE = "stdtel-probe"
+#: Content-shaped keys the probe carries the marker in: one Claude Code sends with
+#: OTEL_LOG_TOOL_DETAILS, one its commands arrive in, and the prompt.
+PROBE_CONTENT_KEYS = ("tool_input", "full_command", "prompt")
+_CONTENT_REMEDY = ("content is reaching storage. Turn OTEL_LOG_TOOL_DETAILS off now, then restart the "
+                   "collector with this repository's config (`make down && make up`) and run "
+                   "`stdtel-doctor --content-check` again")
+
+
+def judge_content_probe(tempo: tuple[bool, bool], loki: tuple[bool, bool]) -> Check:
+    """Each argument is (control found, marker found) for one store.
+
+    The control is what separates "dropped" from "never arrived": without it an
+    empty store would pass.
+    """
+    name = "content dropped"
+    leaked = [s for s, (_, marker) in (("Tempo", tempo), ("Loki", loki)) if marker]
+    if leaked:
+        return Check(name, False, f"the probe's content reached {' and '.join(leaked)}", _CONTENT_REMEDY)
+    missing = [s for s, (control, _) in (("Tempo", tempo), ("Loki", loki)) if not control]
+    if missing:
+        return Check(name, False,
+                     f"could not confirm: the probe never arrived in {' or '.join(missing)}, so an "
+                     "absent marker proves nothing",
+                     "start the stack with `make up` (Tempo on STDTEL_TEMPO, Loki on STDTEL_LOKI) and "
+                     "run `stdtel-doctor --content-check` again. Keep OTEL_LOG_TOOL_DETAILS off until it passes")
+    return Check(name, True, "the collector dropped the probe's content before Tempo and Loki")
+
+
+def _probe_bodies(probe_id: str, marker: str) -> dict[str, dict]:
+    import time
+    import uuid
+
+    def kv(d: dict) -> list:
+        return [{"key": k, "value": {"stringValue": v}} for k, v in d.items()]
+
+    ns = str(time.time_ns())
+    resource = {"attributes": kv({"service.name": PROBE_SERVICE})}
+    attrs = kv({"stdtel.probe.id": probe_id, **{k: marker for k in PROBE_CONTENT_KEYS}})
+    return {
+        "/v1/traces": {"resourceSpans": [{"resource": resource, "scopeSpans": [{"spans": [{
+            "traceId": uuid.uuid4().hex, "spanId": uuid.uuid4().hex[:16], "name": "stdtel.probe",
+            "kind": 1, "startTimeUnixNano": ns, "endTimeUnixNano": ns, "attributes": attrs}]}]}]},
+        "/v1/logs": {"resourceLogs": [{"resource": resource, "scopeLogs": [{"logRecords": [{
+            "timeUnixNano": ns, "body": {"stringValue": "stdtel content probe"},
+            "attributes": [*attrs, *kv({"event.name": "stdtel_probe"})]}]}]}]},
+    }
+
+
+def _http_json(url: str, body: dict | None = None) -> str:
+    import json
+    import urllib.request
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+        return r.read().decode()
+
+
+def _send_probe(path: str, body: dict) -> None:
+    from stdtel.exporter import _endpoint
+    _http_json(_endpoint().removesuffix("/v1/traces") + path, body)
+
+
+def _read_tempo(probe_id: str) -> str:
+    """Everything Tempo holds for the probe's trace, found by the control id."""
+    import json
+    import urllib.parse
+    base = os.environ.get("STDTEL_TEMPO", "http://localhost:3200").rstrip("/")
+    q = urllib.parse.urlencode({"q": f'{{ span.stdtel.probe.id = "{probe_id}" }}', "limit": 5})
+    found = json.loads(_http_json(f"{base}/api/search?{q}")).get("traces") or []
+    return "".join(_http_json(f"{base}/api/traces/{t['traceID']}") for t in found)
+
+
+def _read_loki(probe_id: str) -> str:
+    import time
+    import urllib.parse
+    base = os.environ.get("STDTEL_LOKI", "http://localhost:11010").rstrip("/")
+    now = time.time_ns()
+    q = urllib.parse.urlencode({"query": f'{{service_name="{PROBE_SERVICE}"}}', "limit": 100,
+                                "start": str(now - 600 * 10**9), "end": str(now + 10**9)})
+    return _http_json(f"{base}/loki/api/v1/query_range?{q}")
+
+
+def probe_content(send=None, read_tempo=None, read_loki=None, attempts: int = 30,
+                  wait: float = 1.0) -> Check:
+    """Send one span and one event holding a marker in content-shaped keys, then
+    read both stores back. The stores are injectable so the verdict is testable."""
+    import time
+    import uuid
+    send, read_tempo, read_loki = send or _send_probe, read_tempo or _read_tempo, read_loki or _read_loki
+    probe_id, marker = f"probe-{uuid.uuid4().hex}", f"CONTENT-{uuid.uuid4().hex}"
+    try:
+        for path, body in _probe_bodies(probe_id, marker).items():
+            send(path, body)
+    except Exception as e:                        # noqa: BLE001
+        return Check("content dropped", False, f"could not send the probe: {type(e).__name__}: {e}",
+                     "start the collector (`make up`) and keep OTEL_LOG_TOOL_DETAILS off until this passes")
+
+    seen = {"tempo": (False, False), "loki": (False, False)}
+    for i in range(attempts):
+        for store, read in (("tempo", read_tempo), ("loki", read_loki)):
+            if seen[store][0]:
+                continue
+            try:
+                text = read(probe_id)
+            except Exception:                     # noqa: BLE001 - not there yet, or down: retried
+                continue
+            seen[store] = (probe_id in text, marker in text)
+        if all(control for control, _ in seen.values()):
+            break
+        if i + 1 < attempts:
+            time.sleep(wait)
+    return judge_content_probe(**seen)
+
+
+def _tool_details_enabled() -> bool:
+    """Is OTEL_LOG_TOOL_DETAILS on, in the environment or Claude Code's settings?"""
+    import json
+
+    def on(v) -> bool:
+        return str(v or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+    if on(os.environ.get("OTEL_LOG_TOOL_DETAILS")):
+        return True
+    files = [Path.home() / ".claude" / "settings.json"]
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    files += [Path(project) / ".claude" / f for f in ("settings.json", "settings.local.json")]
+    for f in files:
+        try:
+            if on((json.loads(f.read_text()).get("env") or {}).get("OTEL_LOG_TOOL_DETAILS")):
+                return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
+
+
+def content_dropped() -> Check:
+    """Only worth proving when something could send content: the detailed view
+    is the one setting that makes Claude Code send it."""
+    if not _tool_details_enabled():
+        return Check("content dropped", True,
+                     "detailed view off (OTEL_LOG_TOOL_DETAILS unset), so nothing sends content; "
+                     "`--content-check` probes anyway")
+    return probe_content()
+
+
 CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, branch_identity, catalogue_ok,
-          scope_adoption, collector_ok, recent_state, artefacts_observed)
+          scope_adoption, collector_ok, content_dropped, recent_state, artefacts_observed)
 
 
 def check_all() -> list[Check]:
@@ -349,9 +498,12 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(prog="stdtel-doctor", description=__doc__.splitlines()[0])
     ap.add_argument("--quiet", "-q", action="store_true", help="only show problems")
+    ap.add_argument("--content-check", action="store_true",
+                    help="only prove the collector drops content: send a probe and read Tempo and "
+                         "Loki back (ADR-014 decision 13; run before enabling OTEL_LOG_TOOL_DETAILS)")
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
 
-    checks = check_all()
+    checks = [probe_content()] if a.content_check else check_all()
     failed = [c for c in checks if not c.ok]
     for c in checks:
         if c.ok and a.quiet:

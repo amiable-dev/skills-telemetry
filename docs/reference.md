@@ -144,7 +144,7 @@ quiet by design — hooks exit 0 so telemetry never blocks you — so a broken i
 a working one.
 
 ```
-stdtel-doctor [--quiet]
+stdtel-doctor [--quiet] [--content-check]
 ```
 
 | check | failing means |
@@ -155,13 +155,23 @@ stdtel-doctor [--quiet]
 | branch identity | no branch readable, or no remote: this work cannot join a change request (ADR-013). Any branch name joins; `main`/`master` passes with a note that work committed straight to it has no change request |
 | skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
 | collector reachable | spans are being dropped right now |
+| content dropped | the collector let content through to Tempo or Loki, **or** the check could not prove it didn't. Only probes when `OTEL_LOG_TOOL_DETAILS` is on (environment, `~/.claude/settings.json`, or the project's `.claude/settings.json` / `settings.local.json`); otherwise it passes with "detailed view off" |
 | hooks running | registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up |
 | artefact events | `SubagentStart`, `SubagentStop` or `PostCompact` has never fired on this machine, so sub-agent and compaction capture is unproven here. Failing is *expected* until a session runs with those hooks registered **and** spawns a sub-agent or compacts. Until then those kinds are read from the session directory instead and marked `std.artefact.source=transcript` |
+
+`--content-check` runs only the content probe, whatever the settings say. It is ADR-014 decision 13:
+before the detailed view is switched on, prove on *this* machine that the collector drops content.
+It sends one span and one event under `service.name=stdtel-probe`, each holding a random marker in
+`tool_input`, `full_command` and `prompt`, plus a control id (`stdtel.probe.id`) that must arrive.
+It then reads Tempo (`STDTEL_TEMPO`, default `http://localhost:3200`) and Loki (`STDTEL_LOKI`,
+default `http://localhost:11010`) for up to 30 seconds. It passes only when the control is found
+and the marker is not, in both stores. A missing control fails as inconclusive: an empty store
+proves nothing. The loaders skip `stdtel-probe`, so a probe never becomes a row.
 
 `--quiet` shows only problems. Exit `0` when everything passes, `1` otherwise, so it can gate
 onboarding.
 
-The ticket-key and catalogue checks matter most early: both are **only fixable while the work is
+The branch-identity and catalogue checks matter most early: both are **only fixable while the work is
 happening**. A branch renamed tomorrow does not retroactively attribute today's PRs.
 
 ---
@@ -316,12 +326,15 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_STATE_DIR` | `~/.stdtel/sessions` | state | per-session state between hook processes |
 | `STDTEL_BRANCH` | *(git)* | enrich | overrides branch detection; `std.branch.hash` is computed from it (ADR-013) |
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
+| `STDTEL_TEMPO` | `http://localhost:3200` | doctor, `make load` | Tempo's query API, read by `stdtel-doctor --content-check` and the trace loader |
+| `STDTEL_LOKI` | `http://localhost:11010` | doctor | Loki's query API, read by `stdtel-doctor --content-check` |
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
 | `CLAUDE_PROJECT_DIR` | *(cwd)* | hooks | set by the harness; the base for relative skills roots |
 | `CLAUDE_CODE_SESSION_ID` | *(unset)* | `scope-close` | set by the harness and **exported to processes the agent spawns**, so a skill can run `stdtel-hook scope-close` without knowing which session it is in. A sub-agent's shell sees the *parent* session's id, alongside `CLAUDE_CODE_CHILD_SESSION` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | exporter | fallback for direct CLI/CI use only, where nothing scrubs it |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | exporter | fallback, checked before the base URL; must be the full `/v1/traces` URL |
 | `OTEL_SERVICE_NAME` | `stdtel` | exporter | `service.name` on the resource |
+| `OTEL_LOG_TOOL_DETAILS` | unset | doctor | **Claude Code's** setting, not stdtel's: it makes Claude Code export tool inputs and commands. stdtel only reads it, from the environment and Claude Code's settings files, to decide whether `stdtel-doctor` must prove the collector drops content. Never set it before `stdtel-doctor --content-check` passes |
 
 `STDTEL_DSN` is not read by any code — it is a convention used in the docs for
 `postgresql://postgres:stdtel@localhost:5432/stdtel`.
