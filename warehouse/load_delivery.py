@@ -36,8 +36,31 @@ PR_FIELDS = ("number,title,body,state,headRefName,headRepository,headRepositoryO
              "reviews,reviewDecision,url,author")
 HARNESS_LABELS = {"claude-code": "claude-code", "copilot": "copilot", "no-ai": "none"}
 
+#: Coding agents, by every spelling gh has been seen to use (ADR-014 decision 9,
+#: verified 2026-09-30 on real PRs — tests/test_agent_prs.py names them). `gh pr
+#: list` gives `app/<slug>`; `gh search` gives the display login with type Bot.
+AGENT_LOGINS = {
+    "app/copilot-swe-agent": "copilot", "copilot-swe-agent[bot]": "copilot",
+    "app/claude": "claude-code", "claude[bot]": "claude-code",
+}
+#: Display logins that are an agent only when the forge says the author is a bot.
+AGENT_DISPLAY_LOGINS = {"copilot": "copilot"}
+ASSISTED_LABEL = "claude-code-assisted"        # Anthropic's contribution-metrics label
+
+
+def agent_harness(pr: dict) -> str | None:
+    """The harness whose coding agent opened this PR, or None."""
+    author = pr.get("author") or {}
+    login = str(author.get("login") or "")
+    if login.lower() in AGENT_LOGINS:
+        return AGENT_LOGINS[login.lower()]
+    if author.get("type") == "Bot" or author.get("is_bot"):
+        return AGENT_DISPLAY_LOGINS.get(login.lower())
+    return None
+
+
 def is_bot(pr: dict) -> bool:
-    """A PR opened by a bot.
+    """A PR opened by a bot that is not a coding agent.
 
     Dependabot and its kind are not developer work: counting them inflates the
     "without the skill" cohort with PRs no developer wrote, no skill could have
@@ -46,6 +69,8 @@ def is_bot(pr: dict) -> bool:
     GitHub Apps appear as `app/<name>`. All three are checked, because which one
     arrives depends on the gh version rather than on anything we control.
     """
+    if agent_harness(pr):
+        return False            # agent work for its harness (ADR-014 decision 9), not a bot
     author = pr.get("author") or {}
     login = str(author.get("login") or "")
     return bool(author.get("is_bot")) or login.endswith("[bot]") or login.startswith("app/")
@@ -71,18 +96,30 @@ def _hours(a: dt.datetime | None, b: dt.datetime | None) -> float | None:
     return round((b - a).total_seconds() / 3600, 3)
 
 
-def assisted_by(labels: list[dict]) -> str:
-    """Which harness produced this PR, from its labels.
+def assisted_by(labels: list[dict], author: dict | None = None) -> str:
+    """Which harness produced this PR.
 
-    The crossover design tags each ticket with its arm; the label is how that
-    reaches the warehouse. Unlabelled PRs are 'unknown', never silently 'none' —
-    an unlabelled PR is missing data, not a no-AI control.
+    Every signal naming a harness is evidence: the crossover design's arm label,
+    Anthropic's `claude-code-assisted` label, and a coding agent as author
+    (ADR-014 decision 9). One harness evidenced is that harness — even under a
+    `no-ai` label, because a control an agent touched is not a control. Two is
+    `mixed`, as the ticket rollup already spells it. `none` needs the `no-ai`
+    label and nothing against it. Otherwise 'unknown', never silently 'none':
+    an unlabelled PR is missing data, and the Anthropic label exists only on some
+    plans, so its absence says nothing.
     """
     names = {l.get("name", "").lower() for l in labels or []}
-    for label, arm in HARNESS_LABELS.items():
-        if label in names:
-            return arm
-    return "unknown"
+    evidence = {arm for label, arm in HARNESS_LABELS.items() if label in names and arm != "none"}
+    if ASSISTED_LABEL in names:
+        evidence.add("claude-code")
+    agent = agent_harness({"author": author})
+    if agent:
+        evidence.add(agent)
+    if len(evidence) == 1:
+        return evidence.pop()
+    if evidence:
+        return "mixed"
+    return "none" if "no-ai" in names else "unknown"
 
 
 def review_rounds(reviews: list[dict]) -> int:
@@ -129,7 +166,7 @@ def to_change_request(pr: dict, base: str) -> dict:
         "review_rounds": review_rounds(pr.get("reviews")),
         "hours_to_first_approval": _hours(opened, first_approval_at(pr.get("reviews"))),
         "ci_failures": None,          # populated from the CI artefact, not the API
-        "assisted_by": assisted_by(pr.get("labels")),
+        "assisted_by": assisted_by(pr.get("labels"), pr.get("author")),
     }
 
 
