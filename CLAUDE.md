@@ -64,6 +64,17 @@ was rejected and what the decision costs, which is what you need before re-litig
   about and invented fake tickets (`RELEASE-0`, `ANALYZE-4`). Delivery data loads through a
   forge-neutral change-request record, with a GitHub adapter now and GitLab in #103. The ticket becomes
   enrichment: forge issue links first, then a fixed regex. Issue #102.
+- **[ADR-014](docs/adrs/014-harness-native-telemetry.md)** (proposed) — both harnesses now measure
+  what stdtel estimated. Claude Code's `claude_code.api_request` events carry `skill.name`,
+  `agent.name`, `plugin.name`, `mcp_server.name`, `cost_usd` and `prompt.id` per request. Copilot's
+  native OTel has `github.copilot.tool.parameters.skill_name` and `github.copilot.git.*`, but no
+  per-skill tokens and no cost. Consume native records into one `llm_request` table (Copilot per-skill
+  attribution derived and labelled), keep stdtel for the join, the standard, the outcome, external
+  spend and containment. Native metrics stay out of Prometheus (`session.id` is a label on each; #92).
+  Verified live: native `prompt.id` equals the transcript's `promptId`, and identity is on every
+  record. `OTEL_LOG_TOOL_DETAILS` (names third-party skills, but exports content) is off by default —
+  the user's decision. Blocks on the collector first: no record-level pseudonymising, events stored
+  nowhere. Survey and sources: `docs/landscape.md`. Issue #107.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and
@@ -97,7 +108,7 @@ Still true and not yet an ADR:
 
 ## Docs
 `docs/for-developers.md` (what is collected + opt-out) · `docs/reference.md` (CLIs + the authoritative env-var table) · `docs/skills.md` (when to use each
-skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/local-stack.md` (endpoints + `mise run smoke`) · `docs/adrs/`.
+skill/agent) · `docs/evaluation-power.md` · `docs/insight-walkthroughs.md` · `docs/local-stack.md` (endpoints + `mise run smoke`) · `docs/landscape.md` (what else exists, with sources) · `docs/adrs/`.
 Adding a console script or a skill without documenting it fails `tests/test_docs_coverage.py`.
 
 ## Commands
@@ -126,16 +137,17 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
   `tail_tokens=28199`.
 - Langfuse v4 writes the `events_*` model while `GET /api/public/traces` reads the legacy tables, so
   that endpoint reads empty even when ingestion worked. Query `events_core` to confirm.
-- Unverified before acting on: Copilot's `skill_name` / `github.copilot.git.*` span attributes, and its
+- Documented but not yet seen in a live trace (ADR-014): Copilot's `github.copilot.tool.parameters.skill_name` / `github.copilot.git.*` span attributes, and its
   PascalCase compatibility mode. microsoft/vscode#326254 (spans carry content despite
   `captureContent:false`) means metadata-only must be enforced collector-side, not by config.
 
 ## Next steps (agreed)
-1. Decide the open ADR-001 question: consume native `claude_code.token.usage` instead of chars/4.
-   `std.prompt.id` is now captured, which is the join key that makes this implementable. Live evidence
-   that the heuristic is weak: a real invocation recorded `load_tokens=7` against `tail_tokens=28199`.
+1. Accept or amend ADR-014, which answers ADR-001's open question: consume native telemetry for cost
+   (Claude Code measures per-skill cost per request; Copilot does not) and narrow stdtel to what no
+   harness records. Collector privacy on metrics and logs comes first either way.
 2. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
-3. Verify Copilot's `skill_name` attribute against a live trace before retiring `copilot-skill-map.yaml`.
+3. Verify Copilot's `github.copilot.tool.parameters.skill_name` and `github.copilot.git.*` against a
+   live trace (documented 2026-09-16, not yet seen) before retiring `copilot-skill-map.yaml` (ADR-014 d11).
 4. Onboard a real project end to end (#21). Since ADR-013 any branch name joins; it needs a real repo
    with a remote, PRs, and the CI policy artefact.
 5. Publish to PyPI (workflow ready; needs a Trusted Publisher + a tagged release).

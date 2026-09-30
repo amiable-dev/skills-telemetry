@@ -7,6 +7,10 @@ links: ["../design-proposal.md", "../../README.md", "../../CLAUDE.md"]
 research: "2026-09-10, four parallel research threads (Claude Code channels, Copilot surface, Python CLI bootstrap, cross-agent standards); claims marked [V] were re-verified locally against docs, code or transcripts before acceptance"
 ---
 
+> **Its open question — consume Claude Code's native telemetry instead of estimating tokens — is
+> answered by [ADR-014](014-harness-native-telemetry.md) (proposed, 2026-09-30):** yes, for both
+> harnesses where they measure, with stdtel keeping the join, the standard and the outcome.
+
 ## Context
 
 `stdtel` must reach developer machines to be worth anything, and the question of *how* was
