@@ -255,8 +255,12 @@ def main(argv: list[str] | None = None) -> int:
     p_set.add_argument("--exec-form", action="store_true")
     p_set.add_argument("--dry-run", action="store_true")
 
-    p_set.add_argument("--no-native", action="store_true",
-                       help="hooks only: do not switch on Claude Code's own telemetry (ADR-014)")
+    native = p_set.add_mutually_exclusive_group()
+    native.add_argument("--no-native", action="store_true",
+                        help="hooks only: do not switch on Claude Code's own telemetry (ADR-014)")
+    native.add_argument("--native-only", action="store_true",
+                        help="Claude Code's own telemetry only, no hooks: for a plugin install, where the "
+                             "plugin registers the hooks and writing them here too would double-fire each")
 
     p_where = sub.add_parser("where", help="print the resolved absolute hook path")
 
@@ -273,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "copilot":
         return _copilot(args.vscode_settings)
+    if args.cmd == "settings" and args.native_only:
+        return _native_only(args.path, args.dry_run)
     if args.cmd == "detailed-view":
         try:
             return detailed_view(args.state, args.path, args.collector_confirmed)
@@ -307,6 +313,25 @@ def main(argv: list[str] | None = None) -> int:
                     print("note: OTEL_METRICS_EXPORTER is set in this file. stdtel leaves it alone; the "
                           "collector drops native metrics anyway (ADR-014 decision 4)")
             print(RESTART_NOTICE)
+    return 0
+
+
+def _native_only(target: Path, dry_run: bool) -> int:
+    block = {"env": claude_native_env()}
+    if dry_run:
+        print(_dump(block))
+        return 0
+    try:
+        merged = merge_settings(target, block)
+    except InstallError as e:
+        print(f"stdtel-install: {e}", file=sys.stderr)
+        return 1
+    print(f"switched on Claude Code's own telemetry in {target} -> "
+          f"{block['env']['OTEL_EXPORTER_OTLP_ENDPOINT']} (hooks left to the plugin)")
+    if merged.get("env", {}).get("OTEL_METRICS_EXPORTER"):
+        print("note: OTEL_METRICS_EXPORTER is set in this file. stdtel leaves it alone; the "
+              "collector drops native metrics anyway (ADR-014 decision 4)")
+    print("\nRestart Claude Code to pick this up.")
     return 0
 
 

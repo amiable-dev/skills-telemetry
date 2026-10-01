@@ -3,7 +3,7 @@ name: stdtel-setup
 description: Set up standards telemetry with the user, for Claude Code and GitHub Copilot — installs the hooks, switches on each harness's own telemetry without content, and offers Claude Code's detailed view (OTEL_LOG_TOOL_DETAILS) only with the user's informed consent and after the collector has proven it drops content. Use when installing or re-installing stdtel, when the user asks to enable Copilot telemetry, or when third-party skills show up as "third-party" in cost data.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -36,12 +36,19 @@ exists.
 
 ## 2. Claude Code
 
+First, find out who registers the hooks. If `stdtel-doctor` reports them as coming from the plugin, or
+`~/.claude/settings.json` lists `stdtel@...` under `enabledPlugins`, **the plugin already registers
+them**. Writing them into settings as well would make every hook fire twice. In that case use
+`--native-only`:
+
 ```bash
-stdtel-install settings --dry-run   # show them exactly what will be merged
-stdtel-install settings             # on their yes
+stdtel-install settings --native-only --dry-run   # plugin install: env only
+stdtel-install settings --dry-run                 # package-only install: hooks and env
 ```
 
-This registers the hooks and switches on Claude Code's own telemetry. That means one event per model
+Show them the dry run, then run the same command without `--dry-run` on their yes.
+
+Without `--native-only`, this registers the hooks and switches on Claude Code's own telemetry. That means one event per model
 request, with exact cost and the skill, agent, plugin and MCP server it served. Tell them in one
 sentence what it does **not** do: no prompts, no responses and no tool inputs are sent. Their email and
 account ids are sent, and the collector deletes them on arrival.
