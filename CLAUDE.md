@@ -137,11 +137,22 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
   show. It is what first ran `scorecard.sql` against rows, which found #23 — a cartesian join
   inflating `n_with` ~76x and a `keep` verdict for a skill with no outcome data. Both fixed; the
   scorecard now aggregates per PR and returns `insufficient-data` below the floor.
-- `load_tokens` is a chars/4 heuristic and likely obsolete: Claude Code emits native
-  `claude_code.token.usage` with a `skill.name` attribute and real counts. Open question (ADR-001):
-  consume native telemetry and emit only `std.*` correlation, keyed on `session.id` + `prompt.id`.
-  Live evidence the heuristic is weak: one real invocation recorded `load_tokens=7` against
-  `tail_tokens=28199`.
+- **Per-request cost is native now (ADR-014, 0.8.0).** `llm_request` is loaded from Claude Code's
+  `api_request` events in Loki by `warehouse/load_requests.py`. Read per-skill figures from
+  `llm_request_attributed`, which names `"third-party"` requests from stdtel's own activation
+  (`attribution_source = derived`). `session_cost` is reconciliation only, and the two are never
+  added together. `load_tokens` (chars/4) and the tail rule remain until the release after 0.8.0 (#117).
+- Live-verified on Claude Code 2.1.285, 2026-09-30:
+  - `api_request` carries the real `skill_name` (`probe-echo`), while `skill_activated` redacts it
+    to `custom_skill`;
+  - Loki flattens attribute dots to underscores (`skill.name` is stored as `skill_name`);
+  - only `service_name` is an index label; the rest is structured metadata. Query with
+    `X-Loki-Response-Encoding-Flags: categorize-labels`;
+  - native `prompt_id` bridges to the stdtel turn.
+- `stdtel-install settings` **enables Claude Code's own telemetry** (`--no-native` opts out).
+  `OTEL_LOG_TOOL_DETAILS` is only ever set by `stdtel-install detailed-view on`. That command
+  refuses unless the endpoint Claude Code will use is local (or `--collector-confirmed`) and the
+  content probe passes. It has not yet been run on this machine.
 - Langfuse v4 writes the `events_*` model while `GET /api/public/traces` reads the legacy tables, so
   that endpoint reads empty even when ingestion worked. Query `events_core` to confirm.
 - Documented but not yet seen in a live trace (ADR-014): Copilot's `github.copilot.tool.parameters.skill_name` / `github.copilot.git.*` span attributes, and its
@@ -149,16 +160,30 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
   `captureContent:false`) means metadata-only must be enforced collector-side, not by config.
 
 ## Next steps (agreed)
-1. Implement ADR-014 (accepted), collector privacy first: record-level identity and both harnesses'
-   content keys on every pipeline, and a store for events, before any native telemetry is switched on.
-2. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
-3. Verify Copilot's `github.copilot.tool.parameters.skill_name` and `github.copilot.git.*` against a
-   live trace (documented 2026-09-16, not yet seen) before retiring `copilot-skill-map.yaml` (ADR-014 d11).
+1. **#115 Copilot loader**: blocked on a live Copilot trace. It verifies `github.copilot.tool.parameters.skill_name`
+   and `github.copilot.git.*` (documented, not yet seen), then retires `copilot-skill-map.yaml`
+   (ADR-014 d11) and loads Copilot `chat` spans into `llm_request` as `derived`.
+2. **#117, second half, due in the release after 0.8.0**: remove the tail rule,
+   `tail_tokens_first_only` and chars/4 `load_tokens`. Point `stdtel-query` and the scorecard analyst
+   at `llm_request_attributed` (both need a version bump and a skill-map regen).
+3. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
 4. Onboard a real project end to end (#21). Since ADR-013 any branch name joins; it needs a real repo
    with a remote, PRs, and the CI policy artefact.
-5. Publish to PyPI (workflow ready; needs a Trusted Publisher + a tagged release).
 
 ## Done
+- **ADR-014 implemented, 0.8.0 (2026-09-30):**
+  - collector privacy on every pipeline, for both harnesses (#109), including repository-URL
+    credentials (#128);
+  - Loki for events, with native metrics dropped (#110);
+  - the `stdtel-doctor` content probe (#111);
+  - `llm_request` plus its views (#112);
+  - native settings and `stdtel-install copilot` (#113);
+  - the `stdtel-setup` skill and a gated detailed view (#114);
+  - coding-agent PRs kept, and `claude-code-assisted` read as evidence (#116);
+  - third-party naming (#117, first half).
+
+  Also fixed: the compose loader had never run `load_traces` (#121), and an empty branch hash was
+  stored as `''` (#122).
 - **Hooks validated against a live Claude Code session (2.1.267) on 2026-09-10.** Settled both open
   questions: the Skill input field is `skill`; **`caller` is absent from the hook payload**, so the
   transcript fallback is required, not defensive (a real run produced `std.skill.trigger=direct` via
