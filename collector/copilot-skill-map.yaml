@@ -15,7 +15,7 @@ stdtel-query:
 stdtel-setup:
   policy_ids: telemetry.manifest_valid
   standard_id: STD-TEL-001
-  version: 1.0.0
+  version: 1.1.0
 structured-logging:
   policy_ids: logging.required_fields,logging.no_pii
   standard_id: STD-LOG-001

@@ -272,7 +272,7 @@ def test_the_skill_names_the_gate_and_never_the_raw_flag():
     from pathlib import Path
     body = (Path(__file__).resolve().parent.parent / "skills" / "stdtel-setup" / "SKILL.md").read_text()
     for needed in ("stdtel-install detailed-view on", "--collector-confirmed", "--content-check",
-                   "stdtel-install settings", "stdtel-install copilot", "captureContent"):
+                   "stdtel-install settings", "--native-only", "stdtel-install copilot", "captureContent"):
         assert needed in body, needed
     assert '"OTEL_LOG_TOOL_DETAILS": "1"' not in body and "OTEL_LOG_TOOL_DETAILS=1 " not in body
 
@@ -286,3 +286,39 @@ def test_project_local_settings_beat_project_settings(tmp_path, monkeypatch):
         json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.example.com/"}}))
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
     assert doctor.claude_code_endpoint(tmp_path / "user.json") == "https://otel.example.com"
+
+
+# --- plugin installs: the plugin registers the hooks, so settings must not (#134) -----------------
+
+def test_native_only_writes_the_env_block_and_no_hooks(hook, tmp_path, monkeypatch):
+    """With the plugin installed, writing hooks to settings as well makes every
+    hook fire twice — which stdtel-doctor flags. A plugin user needs the env alone."""
+    monkeypatch.delenv("STDTEL_OTLP_ENDPOINT", raising=False)
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]},
+                                  "env": {"OTEL_LOG_TOOL_DETAILS": "1", "MY_VAR": "x"}}))
+    assert install.main(["settings", "--path", str(target), "--native-only"]) == 0
+    got = json.loads(target.read_text())
+    assert got["hooks"] == {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}, "hooks untouched"
+    assert got["env"] == {"OTEL_LOG_TOOL_DETAILS": "1", "MY_VAR": "x", **install.claude_native_env()}
+
+
+def test_native_only_needs_no_hook_binary(tmp_path, monkeypatch):
+    def missing():
+        raise install.InstallError("not installed")
+    monkeypatch.setattr(install, "hook_binary", missing)
+    target = tmp_path / "settings.json"
+    assert install.main(["settings", "--path", str(target), "--native-only"]) == 0
+    assert "hooks" not in json.loads(target.read_text())
+
+
+def test_native_only_dry_run_prints_only_env(tmp_path, capsys):
+    target = tmp_path / "settings.json"
+    install.main(["settings", "--path", str(target), "--native-only", "--dry-run"])
+    assert json.loads(capsys.readouterr().out) == {"env": install.claude_native_env()}
+    assert not target.exists()
+
+
+def test_native_only_and_no_native_contradict(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        install.main(["settings", "--path", str(tmp_path / "s.json"), "--native-only", "--no-native"])

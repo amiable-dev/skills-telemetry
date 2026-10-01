@@ -4,6 +4,15 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Added
+- **`stdtel-install settings --native-only` (#134).** It writes Claude Code's own telemetry settings
+  and no hooks. A plugin install needs exactly that: the plugin registers the hooks, and 0.8.0's
+  `settings` wrote them into the settings file as well, so each hook fired twice. The command needs no
+  `stdtel-hook`, and it cannot be combined with `--no-native`. The `stdtel-setup` skill (1.1.0) and
+  the README now send plugin users to it.
+
 ## 0.8.0 — 2026-09-30
 
 Harness-native telemetry, ADR-014. Claude Code's own per-request records become the source of cost

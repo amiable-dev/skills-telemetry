@@ -93,7 +93,9 @@ through as `unversioned`, with `std.team=unknown`.
 
 ```bash
 uv tool install stdtel        # or: pipx install stdtel
-stdtel-install settings       # merges hooks, and Claude Code's own telemetry, into ~/.claude/settings.json
+stdtel-install settings       # hooks and Claude Code's own telemetry, into ~/.claude/settings.json
+# with the plugin installed, it registers the hooks; add only the telemetry, or each hook fires twice:
+# stdtel-install settings --native-only
 ```
 
 > **Two halves, and neither updates the other.** The plugin ships hook registration, the launcher,
