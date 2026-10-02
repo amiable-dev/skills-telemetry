@@ -338,7 +338,8 @@ def test_an_existing_endpoint_is_kept_and_reported(hook, tmp_path, monkeypatch, 
     assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "grpc", "the protocol belongs to the endpoint it was set with"
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     out = capsys.readouterr().out
-    assert "kept" in out and "http://collector.team:4317" in out and "--replace-endpoint" in out
+    assert "kept the existing OTEL_EXPORTER_OTLP_ENDPOINT (http://collector.team:4317) and its protocol" in out
+    assert "--replace-endpoint" in out
 
 
 def test_replace_endpoint_overwrites_both(hook, tmp_path, monkeypatch):
