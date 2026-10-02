@@ -254,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     p_set.add_argument("--path", type=Path, default=Path.home() / ".claude" / "settings.json")
     p_set.add_argument("--exec-form", action="store_true")
     p_set.add_argument("--dry-run", action="store_true")
+    p_set.add_argument("--replace-endpoint", action="store_true",
+                       help="overwrite an OTEL_EXPORTER_OTLP_ENDPOINT already in the file (kept by default)")
 
     native = p_set.add_mutually_exclusive_group()
     native.add_argument("--no-native", action="store_true",
@@ -278,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "copilot":
         return _copilot(args.vscode_settings)
     if args.cmd == "settings" and args.native_only:
-        return _native_only(args.path, args.dry_run)
+        return _native_only(args.path, args.dry_run, args.replace_endpoint)
     if args.cmd == "detailed-view":
         try:
             return detailed_view(args.state, args.path, args.collector_confirmed)
@@ -300,15 +302,17 @@ def main(argv: list[str] | None = None) -> int:
         print(_dump(block))
     elif args.cmd == "settings":
         block = claude_hooks(binary, args.exec_form)
+        kept = None
         if not args.no_native:
-            block["env"] = claude_native_env()
+            block["env"], kept = _native_env_for(args.path, args.replace_endpoint)
         if args.dry_run:
             print(_dump(block))
         else:
             merged = merge_settings(args.path, block)
             print(f"wrote {len(block['hooks'])} hook events to {args.path} -> {binary}")
             if "env" in block:
-                print(f"switched on Claude Code's own telemetry -> {block['env']['OTEL_EXPORTER_OTLP_ENDPOINT']}")
+                print(f"switched on Claude Code's own telemetry -> {merged['env']['OTEL_EXPORTER_OTLP_ENDPOINT']}")
+                _report_kept(kept)
                 if merged.get("env", {}).get("OTEL_METRICS_EXPORTER"):
                     print("note: OTEL_METRICS_EXPORTER is set in this file. stdtel leaves it alone; the "
                           "collector drops native metrics anyway (ADR-014 decision 4)")
@@ -316,8 +320,37 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _native_only(target: Path, dry_run: bool) -> int:
-    block = {"env": claude_native_env()}
+def _native_env_for(target: Path, replace_endpoint: bool) -> tuple[dict, str | None]:
+    """The env block to merge, and the endpoint kept instead of replaced, if any.
+
+    A different endpoint already in the file is the user's, and replacing it
+    silently would redirect Claude Code's telemetry somewhere else — to localhost,
+    when this runs in a shell without STDTEL_OTLP_ENDPOINT (#133). The protocol is
+    kept with it: the two only work as a pair (4317 speaks gRPC).
+    """
+    env = claude_native_env()
+    try:
+        existing = (json.loads(target.read_text() or "{}").get("env") or {}) if target.is_file() else {}
+    except (json.JSONDecodeError, AttributeError):
+        return env, None                    # merge_settings reports the corrupt file
+    old = str(existing.get("OTEL_EXPORTER_OTLP_ENDPOINT") or "").rstrip("/")
+    if old and old != env["OTEL_EXPORTER_OTLP_ENDPOINT"].rstrip("/") and not replace_endpoint:
+        env.pop("OTEL_EXPORTER_OTLP_ENDPOINT")
+        env.pop("OTEL_EXPORTER_OTLP_PROTOCOL")
+        return env, old
+    return env, None
+
+
+def _report_kept(kept: str | None) -> None:
+    if kept:
+        print(f"kept the existing OTEL_EXPORTER_OTLP_ENDPOINT ({kept}) and its protocol. "
+              "Re-run with --replace-endpoint to point Claude Code at "
+              f"{_collector_base()} instead")
+
+
+def _native_only(target: Path, dry_run: bool, replace_endpoint: bool = False) -> int:
+    env, kept = _native_env_for(target, replace_endpoint)
+    block = {"env": env}
     if dry_run:
         print(_dump(block))
         return 0
@@ -327,7 +360,8 @@ def _native_only(target: Path, dry_run: bool) -> int:
         print(f"stdtel-install: {e}", file=sys.stderr)
         return 1
     print(f"switched on Claude Code's own telemetry in {target} -> "
-          f"{block['env']['OTEL_EXPORTER_OTLP_ENDPOINT']} (hooks left to the plugin)")
+          f"{merged['env']['OTEL_EXPORTER_OTLP_ENDPOINT']} (hooks left to the plugin)")
+    _report_kept(kept)
     if merged.get("env", {}).get("OTEL_METRICS_EXPORTER"):
         print("note: OTEL_METRICS_EXPORTER is set in this file. stdtel leaves it alone; the "
               "collector drops native metrics anyway (ADR-014 decision 4)")

@@ -53,6 +53,14 @@ version until this number changes — so bump it for anything a user would recei
   it ever did.
 
 ### Fixed
+- **`stdtel-install settings` no longer redirects Claude Code's telemetry without saying so (#133).**
+  It used to overwrite an `OTEL_EXPORTER_OTLP_ENDPOINT` already in the file. Run from a shell without
+  `STDTEL_OTLP_ENDPOINT`, that pointed Claude Code at localhost. A different endpoint is now kept,
+  with its protocol (the two only work as a pair), and reported. `--replace-endpoint` overwrites both.
+- **The content check and the detailed-view gate judge the collector Claude Code's events actually
+  go to (#133).** An `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` takes precedence, as the harness resolves it:
+  each variable comes from the highest-precedence settings file that sets it, then from the
+  environment.
 - A session open across an upgrade no longer loses its skill windows. Saved state is loaded with
   unknown keys skipped. Without that, the removed `load_tokens` field would have made every 0.8
   state file raise inside a hook that exits 0, so the loss would have been silent.
