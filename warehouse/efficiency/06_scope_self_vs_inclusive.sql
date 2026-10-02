@@ -45,7 +45,8 @@ spend AS (
   SELECT scope_key,
          -- a native name may carry a plugin prefix (`acme:loop`)
          sum(tokens) FILTER (WHERE skill_name = :scope_name
-                               OR split_part(skill_name, ':', 2) = :scope_name) AS self_tokens,
+                               OR right(skill_name, length(:scope_name) + 1) = ':' || :scope_name)
+                                                                         AS self_tokens,
          sum(tokens)                                                     AS request_tokens
   FROM req GROUP BY scope_key
 ),

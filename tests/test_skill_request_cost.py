@@ -244,3 +244,16 @@ def test_the_scorecard_charges_each_version_only_its_own_cost(db):
             q(db, sql, {"a": T0 - dt.timedelta(days=1), "b": T0 + dt.timedelta(days=1)})}
     assert rows[("acme-lint", "1.2.0")]["total_cost_usd"] == Decimal("0.0300003")   # p1 only; p6 is ambiguous
     assert rows[("acme-lint", "1.3.0")]["total_cost_usd"] is None
+
+
+def test_q1s_skill_row_is_the_harness_record_for_the_session(db):
+    """A skill activation carries no usage since #117; left alone, Q1 showed every
+    skill row as 100% without usage, which reads as a broken loader."""
+    out = {r["kind"]: r for r in efficiency(db, "01_tokens_by_artefact_kind.sql", {"session_id": S})}
+    skill = out["skill"]
+    direct = q(db, "SELECT sum(input_tokens) AS i, sum(output_tokens) AS o, sum(requests) AS n "
+                   "FROM skill_request_cost WHERE session_id = %s", (S,))[0]
+    assert (skill["input_tokens"], skill["output_tokens"], skill["llm_requests"]) == \
+        (direct["i"], direct["o"], direct["n"])
+    # activations in a prompt with no native record at all: p3 and p11
+    assert skill["n_without_usage"] == 2

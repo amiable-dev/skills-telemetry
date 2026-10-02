@@ -453,6 +453,8 @@ def test_tokens_by_artefact_kind_reports_every_kind_and_counts_turns_once(loaded
     assert out["subagent"]["n_without_usage"] == 1, "the usage-free sub-agent is declared"
     assert out["subagent"]["cache_read_tokens"] == 3200000 + 500000
     assert out["compaction"]["input_tokens"] is None, "a compaction reports no usage"
+    # #117: no native records in this module, so the skill row is unmeasured, not zero
+    assert out["skill"]["input_tokens"] is None and out["skill"]["n_without_usage"] == 1
 
 
 def test_tokens_by_kind_is_scoped_to_the_session_it_was_asked_about(loaded):

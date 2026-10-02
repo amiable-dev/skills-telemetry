@@ -33,7 +33,10 @@ version until this number changes — so bump it for anything a user would recei
   - Q6, which counts each request in a scoped prompt once, plus external spend, and reports
     `prompts_without_usage`;
   - the loop and token-by-kind dashboard panels;
-  - the demo fleet, which now seeds `llm_request`. Every value it seeded before is unchanged.
+  - Q1, whose skill row now reports the harness's requests named for a skill in the session, and
+    counts unmeasured runs, rather than showing every skill as usage-free;
+  - the demo fleet, which now seeds `llm_request`. Every value it seeded before is unchanged: a full
+    dump of `generate(42)` before and after, minus the retired fields, is byte-identical.
 - The scorecard panel is now held verbatim to `scorecard.sql` by a test, and every Warehouse panel
   is executed against the schema in tests. Before, a panel selecting a dropped column passed all of
   them.

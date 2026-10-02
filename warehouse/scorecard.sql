@@ -82,7 +82,9 @@ cost AS (
          SUM(requests_derived)                                AS requests_derived,
          AVG(CASE WHEN abandoned THEN 1 WHEN NOT abandoned THEN 0 END) AS abandonment_rate,
          COUNT(*) FILTER (WHERE abandoned IS NULL)            AS unmeasured_activations
-  FROM (SELECT *, input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens AS tokens
+  -- NULL only where nothing was measured; one missing component must not drop a row
+  FROM (SELECT *, CASE WHEN requests > 0 THEN coalesce(input_tokens, 0) + coalesce(output_tokens, 0)
+                       + coalesce(cache_read_tokens, 0) + coalesce(cache_creation_tokens, 0) END AS tokens
         FROM skill_activation_cost
         WHERE started_at >= :week_start AND started_at < :week_end) a
   GROUP BY 1,2,3
