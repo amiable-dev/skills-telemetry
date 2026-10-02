@@ -16,7 +16,7 @@ the bare command name and is deliberately one step short of working, because it 
 ```
 stdtel-install where
 stdtel-install hooks    [--harness claude-code|copilot-vscode|copilot-cli] [--exec-form]
-stdtel-install settings [--path PATH] [--exec-form] [--dry-run] [--no-native | --native-only]
+stdtel-install settings [--path PATH] [--exec-form] [--dry-run] [--no-native | --native-only] [--replace-endpoint]
 stdtel-install copilot  [--vscode-settings PATH]
 stdtel-install detailed-view on|off [--path PATH] [--collector-confirmed]
 ```
@@ -36,6 +36,7 @@ stdtel-install detailed-view on|off [--path PATH] [--collector-confirmed]
 | `--path` | `~/.claude/settings.json` | settings file to merge into |
 | `--dry-run` | off | print the JSON instead of writing |
 | `--no-native` | off | hooks only: leave Claude Code's own telemetry off |
+| `--replace-endpoint` | off | overwrite an `OTEL_EXPORTER_OTLP_ENDPOINT` already in the file. By default a different one is **kept**, with its protocol, and reported: replacing it silently would redirect Claude Code's telemetry |
 | `--native-only` | off | Claude Code's own telemetry only, no hooks. **Use this with the plugin installed**: the plugin registers the hooks, and writing them into settings too makes each one fire twice. Needs no `stdtel-hook` |
 | `--collector-confirmed` | off | `detailed-view on` only: the collector is remote and you know it applies this repository's privacy rules |
 | `--vscode-settings` | — | `copilot` only: the VS Code `settings.json` to merge into |

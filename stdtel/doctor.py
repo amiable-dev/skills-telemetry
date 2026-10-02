@@ -407,16 +407,26 @@ def _settings_env(f: Path) -> dict:
 
 
 def claude_code_endpoint(user: Path | None = None) -> str:
-    """Where Claude Code itself will send its telemetry — the collector the
-    detailed view would send content to. Not stdtel's own endpoint: the two
-    agree after `stdtel-install settings`, and differ after a hand edit, a
-    reinstall with another STDTEL_OTLP_ENDPOINT, or a project override."""
+    """Where Claude Code itself will send its events — the collector the detailed
+    view would send content to. Not stdtel's own endpoint: the two agree after
+    `stdtel-install settings`, and differ after a hand edit, a reinstall with
+    another STDTEL_OTLP_ENDPOINT, or a project override.
+
+    Resolved as the harness does: each variable from the highest-precedence
+    settings file that sets it (project local, project, user), else the process
+    environment; then the logs-specific endpoint, if any, beats the generic one,
+    because events are logs (#133).
+    """
     from stdtel.exporter import _endpoint
-    for f in _claude_settings_files(user):
-        v = _settings_env(f).get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        if v:
-            return str(v).rstrip("/")
-    return (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or _endpoint().removesuffix("/v1/traces")).rstrip("/")
+    keys = ("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT")
+    env = {k: os.environ[k] for k in keys if os.environ.get(k)}
+    for f in reversed(_claude_settings_files(user)):          # lowest precedence first
+        env.update({k: v for k, v in _settings_env(f).items() if k in keys and v})
+    logs = str(env.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") or "").rstrip("/")
+    if logs:
+        return logs.removesuffix("/v1/logs").rstrip("/")
+    return str(env.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+               or _endpoint().removesuffix("/v1/traces")).rstrip("/")
 
 
 def _read_tempo(probe_id: str) -> str:

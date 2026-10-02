@@ -322,3 +322,70 @@ def test_native_only_dry_run_prints_only_env(tmp_path, capsys):
 def test_native_only_and_no_native_contradict(tmp_path, capsys):
     with pytest.raises(SystemExit):
         install.main(["settings", "--path", str(tmp_path / "s.json"), "--native-only", "--no-native"])
+
+
+# --- #133: never silently redirect someone's telemetry -------------------------------------------
+
+@pytest.mark.parametrize("flag", [[], ["--native-only"]])
+def test_an_existing_endpoint_is_kept_and_reported(hook, tmp_path, monkeypatch, capsys, flag):
+    monkeypatch.delenv("STDTEL_OTLP_ENDPOINT", raising=False)
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector.team:4317",
+                                          "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}}))
+    assert install.main(["settings", "--path", str(target), *flag]) == 0
+    env = json.loads(target.read_text())["env"]
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector.team:4317"
+    assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "grpc", "the protocol belongs to the endpoint it was set with"
+    assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    out = capsys.readouterr().out
+    assert "kept the existing OTEL_EXPORTER_OTLP_ENDPOINT (http://collector.team:4317) and its protocol" in out
+    assert "--replace-endpoint" in out
+
+
+def test_replace_endpoint_overwrites_both(hook, tmp_path, monkeypatch):
+    monkeypatch.delenv("STDTEL_OTLP_ENDPOINT", raising=False)
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector.team:4317",
+                                          "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}}))
+    install.main(["settings", "--path", str(target), "--native-only", "--replace-endpoint"])
+    env = json.loads(target.read_text())["env"]
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://localhost:4318"
+    assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
+
+
+def test_the_same_endpoint_is_not_reported_as_kept(hook, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("STDTEL_OTLP_ENDPOINT", raising=False)
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318/"}}))
+    install.main(["settings", "--path", str(target), "--native-only"])
+    assert "kept" not in capsys.readouterr().out
+
+
+def test_events_go_to_the_logs_endpoint_when_one_is_set(tmp_path, monkeypatch):
+    """Claude Code's content-bearing records are events, and a signal-specific
+    endpoint beats the generic one wherever either is set."""
+    project = tmp_path / "project"
+    (project / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    user = tmp_path / "user.json"
+    user.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "https://logs.example.com/v1/logs"}}))
+    (project / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318"}}))
+    assert doctor.claude_code_endpoint(user) == "https://logs.example.com"
+
+
+def test_a_logs_endpoint_in_the_environment_counts_too(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "https://logs.example.com/v1/logs")
+    user = tmp_path / "user.json"
+    user.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318"}}))
+    assert doctor.claude_code_endpoint(user) == "https://logs.example.com"
+
+
+def test_the_gate_refuses_a_remote_logs_endpoint(tmp_path, probe, monkeypatch, capsys):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "project"))
+    target = tmp_path / "settings.json"
+    target.write_text(json.dumps({"env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
+                                          "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "https://logs.example.com/v1/logs"}}))
+    assert install.main(["detailed-view", "on", "--path", str(target)]) == 1
+    assert "the collector at https://logs.example.com is not on this machine" in capsys.readouterr().err
