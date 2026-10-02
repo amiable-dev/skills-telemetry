@@ -461,3 +461,71 @@ SELECT r.harness,
             ELSE r.attribution_source END AS attribution_source
 FROM llm_request r
 LEFT JOIN candidate c ON c.session_id = r.session_id AND c.prompt_id = r.prompt_id;
+
+-- #117 (ADR-014 decisions 1 and 10): a skill's cost is the harness's own requests
+-- named for it. One row per (session, prompt, skill): a skill run twice in one
+-- prompt must not claim the same requests twice (#23). The version is stdtel's —
+-- the harness does not know it — and NULL when the prompt ran two versions, or
+-- when stdtel never saw the skill. A native name may carry a plugin prefix
+-- (`acme:format`) where the catalogue name is bare.
+CREATE OR REPLACE VIEW skill_request_cost AS
+WITH req AS (
+  SELECT harness, session_id, prompt_id, skill_name,
+         min(ended_at)                                              AS first_request_at,
+         count(*)::int                                              AS requests,
+         count(cost_usd)::int                                       AS requests_priced,
+         count(*) FILTER (WHERE attribution_source = 'derived')::int AS requests_derived,
+         sum(input_tokens)          AS input_tokens,
+         sum(output_tokens)         AS output_tokens,
+         sum(cache_read_tokens)     AS cache_read_tokens,
+         sum(cache_creation_tokens) AS cache_creation_tokens,
+         sum(cost_usd)              AS cost_usd
+  FROM llm_request_attributed
+  WHERE skill_name IS NOT NULL AND skill_name <> 'third-party' AND prompt_id IS NOT NULL
+  GROUP BY harness, session_id, prompt_id, skill_name
+),
+ver AS (
+  SELECT r.harness, r.session_id, r.prompt_id, r.skill_name,
+         CASE WHEN count(DISTINCT i.skill_version) = 1 THEN min(i.skill_version) END AS skill_version
+  FROM req r
+  JOIN artefact_activation a ON a.kind = 'skill' AND a.session_id = r.session_id
+                            AND a.prompt_id = r.prompt_id
+                            AND (r.skill_name = a.name OR r.skill_name LIKE '%:' || a.name)
+  JOIN skill_invocation i ON i.span_id = a.span_id
+  GROUP BY r.harness, r.session_id, r.prompt_id, r.skill_name
+)
+SELECT r.*, v.skill_version
+FROM req r
+LEFT JOIN ver v USING (harness, session_id, prompt_id, skill_name);
+
+-- Per skill activation, grouped to (session, prompt, skill, version): what it cost,
+-- and whether it was abandoned. `abandoned` is NULL when the prompt has no native
+-- record at all — a session without native telemetry is unmeasured, not a
+-- session of abandoned skills (ADR-005). Cost attaches only where the version is
+-- unambiguous, so it is never counted under two versions.
+CREATE OR REPLACE VIEW skill_activation_cost AS
+WITH act AS (
+  SELECT DISTINCT i.harness, i.session_id, a.prompt_id, i.skill_name, i.skill_version,
+                  min(i.started_at) OVER (PARTITION BY i.harness, i.session_id, a.prompt_id,
+                                                       i.skill_name, i.skill_version) AS started_at
+  FROM skill_invocation i
+  JOIN artefact_activation a ON a.span_id = i.span_id
+  WHERE a.prompt_id IS NOT NULL
+)
+SELECT act.harness, act.session_id, act.prompt_id, act.skill_name, act.skill_version, act.started_at,
+       CASE WHEN NOT EXISTS (SELECT 1 FROM llm_request r WHERE r.session_id = act.session_id
+                                                           AND r.prompt_id = act.prompt_id) THEN NULL
+            WHEN EXISTS (SELECT 1 FROM skill_request_cost c
+                         WHERE c.session_id = act.session_id AND c.prompt_id = act.prompt_id
+                           AND (c.skill_name = act.skill_name OR c.skill_name LIKE '%:' || act.skill_name))
+            THEN false ELSE true END AS abandoned,
+       CASE WHEN NOT EXISTS (SELECT 1 FROM llm_request r WHERE r.session_id = act.session_id
+                                                           AND r.prompt_id = act.prompt_id) THEN NULL
+            ELSE coalesce(c.requests, 0) END AS requests,
+       c.requests_derived, c.input_tokens, c.output_tokens, c.cache_read_tokens,
+       c.cache_creation_tokens, c.cost_usd
+FROM act
+LEFT JOIN skill_request_cost c
+  ON c.session_id = act.session_id AND c.prompt_id = act.prompt_id
+ AND (c.skill_name = act.skill_name OR c.skill_name LIKE '%:' || act.skill_name)
+ AND c.skill_version = act.skill_version;
