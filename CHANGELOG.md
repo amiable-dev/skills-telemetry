@@ -4,7 +4,13 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
-## Unreleased
+## 0.9.0 — 2026-10-02
+
+A skill's cost is now the harness's own requests named for it, and stdtel's tail-rule estimate is
+retired (ADR-014 decision 10). **Breaking on the wire and in the warehouse**, as listed below; a minor
+bump, as with 0.4.0 and 0.7.0, because this is pre-1.0 and the changelog says plainly what breaks.
+Upgrade both halves: the package and the plugin (`stdtel-query` 1.2.0 and the analyst 1.1.0 ship in
+it).
 
 ### Changed — breaking, on the wire and in the warehouse
 - **A skill's cost is the harness's own requests, and stdtel's estimate is retired (ADR-014
