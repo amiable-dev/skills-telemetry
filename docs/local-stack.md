@@ -147,6 +147,18 @@ you whether the problem is upstream of the collector (your config) or downstream
 
 ## Troubleshooting
 
+### A panel says "Data source not found" after an upgrade
+
+Grafana reads its **datasource** provisioning only at startup. Dashboards reload from disk; datasources
+do not. So a stack that was already running when a release added one keeps running without it. Loki,
+added in 0.8.0, is the case that happened: every usage panel failed while Loki itself held the data.
+Restart Grafana alone; nothing else in the stack needs to move:
+
+```bash
+docker restart deploy-grafana-1          # or: docker compose -f deploy/docker-compose.yml restart grafana
+curl -s http://localhost:3000/api/datasources | grep -o '"uid":"[^"]*"'   # Loki, Prometheus, Tempo, Warehouse
+```
+
 ### Tempo returns nothing
 
 **Tempo silently returns zero results when a search has no `start` and `end`.** No error, no warning —
