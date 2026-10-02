@@ -47,7 +47,7 @@ def test_every_column_referenced_exists():
               "i", "invocations", "session_rows", "matched_prs", "policy_rows", "cache_read",
               "cache_hit_rate", "sessions", "prs", "policy_results", "tail_tokens_col",
               "change_requests", "turns", "attributed", "no_branch_identity", "filter", "kind", "turn",
-              "null", "left"}
+              "null", "left", "runs", "unmeasured", "usd", "abandoned", "requests", "nulls", "last"}
     for block in sql_blocks():
         for ident in re.findall(r"\b([a-z_][a-z0-9_]{3,})\b", block.lower()):
             if ident in ignore or ident in known:
@@ -68,7 +68,7 @@ def test_includes_a_refusal_example():
 
 def test_includes_misleading_readings_with_their_tells():
     assert TEXT.count("plausible") >= 2, "need more than one wrong-reading example"
-    assert "llm_requests = 0" in TEXT          # the "free skill" tell
+    assert "`unmeasured`" in TEXT and "free" in TEXT   # the "free skill" tell (#117: was llm_requests = 0)
     assert "one group" in FLAT                 # the single-group GROUP BY tell
     assert "## The recurring tells" in TEXT
 

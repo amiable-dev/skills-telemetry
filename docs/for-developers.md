@@ -141,8 +141,13 @@ metadata:
   telemetry.emit: "false"
 ```
 
-That suppresses the named span for that skill. Its tokens still count toward the session total, which
-is an aggregate and carries no skill name.
+That suppresses stdtel's named span for that skill. Its tokens still count toward the session total,
+which is an aggregate and carries no skill name.
+
+**It does not stop Claude Code naming the skill** on its own per-request records, if Claude Code's
+telemetry is on. Those come from Claude Code, not from stdtel, and since 0.9.0 they are where a
+skill's cost is read from (#117). To keep a skill out of per-skill cost as well, Claude Code's own
+telemetry has to be off: see [Claude Code's own telemetry](#claude-codes-own-telemetry).
 
 **Sub-agent and compaction capture** is switched off by the same `STDTEL_DISABLED=1` as everything
 else. If you want the rest but not these, remove the `SubagentStart`, `SubagentStop` and `PostCompact`

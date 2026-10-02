@@ -95,12 +95,13 @@ Still true and not yet an ADR:
 - Primary effectiveness metric = **first-time OPA policy pass rate** on the PR, with vs without the skill.
 - Custom attributes live in the `std.*` namespace; `gen_ai.*` is normalised at the collector (still
   Development, now in `open-telemetry/semantic-conventions-genai`; extend `transform/normalise`).
-- Token attribution: "tail" rule — llm requests after a skill loads until the next skill loads / turn
-  ends; `tail_tokens_first_only` kept as a sensitivity check.
-- Two span types at Stop: `std.session.cost` (total, emitted even with no skill) and
-  `std.artefact.activation` with `kind=skill` (a share of it). They overlap deliberately — never
-  sum them. The other three kinds (`subagent`, `compaction`, `turn`) are ADR-009; a turn's tokens and
-  a skill's tail overlap the same way.
+- A skill's cost is the harness's own requests named for it: `skill_activation_cost` /
+  `skill_request_cost` over `llm_request_attributed` (0.9.0, #117). The tail rule, its first-only
+  check and chars/4 `load_tokens` are retired; a `kind=skill` activation carries no usage or model.
+  NULL cost is **unmeasured** (no native record for the prompt), never free.
+- Two span types at Stop: `std.session.cost` (the transcript's total, emitted even with no skill) and
+  `std.artefact.activation`. A turn's and a sub-agent's tokens overlap the session total
+  deliberately — never sum them (ADR-009).
 - `PostToolUse`/`PostToolUseFailure` are unmatched (every tool); `PreToolUse` stays matched to Skill.
 - `SessionState.save()` must list every field — each hook is a separate process, so an unpersisted
   field reads as its default at the next event, silently.
@@ -141,7 +142,7 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
   `api_request` events in Loki by `warehouse/load_requests.py`. Read per-skill figures from
   `llm_request_attributed`, which names `"third-party"` requests from stdtel's own activation
   (`attribution_source = derived`). `session_cost` is reconciliation only, and the two are never
-  added together. `load_tokens` (chars/4) and the tail rule remain until the release after 0.8.0 (#117).
+  added together.
 - Live-verified on Claude Code 2.1.285, 2026-09-30:
   - `api_request` carries the real `skill_name` (`probe-echo`), while `skill_activated` redacts it
     to `custom_skill`;
@@ -152,7 +153,8 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
 - `stdtel-install settings` **enables Claude Code's own telemetry** (`--no-native` opts out).
   `OTEL_LOG_TOOL_DETAILS` is only ever set by `stdtel-install detailed-view on`. That command
   refuses unless the endpoint Claude Code will use is local (or `--collector-confirmed`) and the
-  content probe passes. It has not yet been run on this machine.
+  content probe passes. With the plugin installed use `settings --native-only` (0.8.1, #134): the
+  plugin registers the hooks. Applied on this machine 2026-10-01; the detailed view is off.
 - Langfuse v4 writes the `events_*` model while `GET /api/public/traces` reads the legacy tables, so
   that endpoint reads empty even when ingestion worked. Query `events_core` to confirm.
 - Documented but not yet seen in a live trace (ADR-014): Copilot's `github.copilot.tool.parameters.skill_name` / `github.copilot.git.*` span attributes, and its
@@ -163,11 +165,8 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
 1. **#115 Copilot loader**: blocked on a live Copilot trace. It verifies `github.copilot.tool.parameters.skill_name`
    and `github.copilot.git.*` (documented, not yet seen), then retires `copilot-skill-map.yaml`
    (ADR-014 d11) and loads Copilot `chat` spans into `llm_request` as `derived`.
-2. **#117, second half, due in the release after 0.8.0**: remove the tail rule,
-   `tail_tokens_first_only` and chars/4 `load_tokens`. Point `stdtel-query` and the scorecard analyst
-   at `llm_request_attributed` (both need a version bump and a skill-map regen).
-3. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
-4. Onboard a real project end to end (#21). Since ADR-013 any branch name joins; it needs a real repo
+2. Make `--exec-form` the default (now proven to work) and drop the shell-form fallback.
+3. Onboard a real project end to end (#21). Since ADR-013 any branch name joins; it needs a real repo
    with a remote, PRs, and the CI policy artefact.
 
 ## Done

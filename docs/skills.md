@@ -99,8 +99,9 @@ failure rate, or a specific session's spans.
 about sample size this skill does not make.
 
 **Refuses to** report a comparison below the sample-size floor, and always reports row counts beside
-any figure. Knowing which denominator a ratio uses is half of what it teaches: `session_cost` is total
-spend, `skill_invocation.tail_tokens` is the share one skill could claim, and they must never be summed.
+any figure. Knowing which denominator a ratio uses is half of what it teaches: a skill's cost is the
+harness's own requests named for it (`skill_activation_cost`), `session_cost` is the harness's total
+kept to check against, and they must never be added.
 
 ## `skills/structured-logging`
 
@@ -131,9 +132,9 @@ not a failure to answer. Pressed for one anyway, it gives the cost picture and s
 would be needed.
 
 It also knows this dataset's traps: `unversioned` means *not catalogued* (recommend onboarding rather
-than reporting a finding), work that joined no change request is kept for cost and excluded from outcome, and a wide
-gap between `tail_tokens` and `tail_tokens_first_only` means the per-skill split is an assumption
-rather than a measurement.
+than reporting a finding), work that joined no change request is kept for cost and excluded from outcome, an empty
+cost with `unmeasured` beside it means the harness's telemetry was off rather than the skill was free,
+and a `derived` request is an attribution while a `native` one is a measurement.
 
 ---
 
