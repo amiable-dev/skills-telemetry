@@ -187,3 +187,19 @@ def test_the_demo_fleet_shows_the_v3_join_and_partial_runs():
     assert any((r.get("external_requests_unpriced") or 0) > 0 and r["external_cost_usd"] is not None
                for r in ext), "no partial run"
     assert all(c["tool_use_id"].startswith("demo-") for c in calls.values()), "clear() matches demo- only"
+
+
+
+def test_the_demo_fleet_has_native_requests_for_its_skills(data):
+    """#117: per-skill cost comes from llm_request now; a demo without it shows
+    a scorecard of NULL cost that looks like a broken loader."""
+    reqs = data["llm_request"]
+    assert reqs and all(r["request_id"].startswith("demo-") for r in reqs)
+    assert any(r["skill_name"] for r in reqs) and any(not r["skill_name"] for r in reqs)
+    assert {r["attribution_source"] for r in reqs} <= {"native", "derived"}
+
+
+def test_retired_estimates_are_not_seeded(data):
+    for row in data["skill_invocation"]:
+        for col in ("load_tokens", "tail_tokens", "tail_tokens_first_only", "llm_requests"):
+            assert col not in row

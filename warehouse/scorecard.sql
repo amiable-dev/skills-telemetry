@@ -70,6 +70,23 @@ pass_without AS (
          COUNT(*) AS n_without                   -- PRs, never invocations
   FROM pr_pass_without GROUP BY 1
 ),
+-- #117: what the skill cost, from the harness's own requests named for it. One
+-- row per (session, prompt, skill, version) in skill_activation_cost, so a skill
+-- run twice in a prompt is not charged twice. `abandoned` is NULL where the
+-- prompt has no native record, and those prompts are counted, never averaged in.
+cost AS (
+  SELECT skill_name, skill_version, harness,
+         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tokens)  AS p50_tokens,
+         SUM(tokens)                                          AS total_tokens,
+         SUM(cost_usd)                                        AS total_cost_usd,
+         SUM(requests_derived)                                AS requests_derived,
+         AVG(CASE WHEN abandoned THEN 1 WHEN NOT abandoned THEN 0 END) AS abandonment_rate,
+         COUNT(*) FILTER (WHERE abandoned IS NULL)            AS unmeasured_activations
+  FROM (SELECT *, input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens AS tokens
+        FROM skill_activation_cost
+        WHERE started_at >= :week_start AND started_at < :week_end) a
+  GROUP BY 1,2,3
+),
 overlap AS (   -- redundancy: co-invocation with other skills in the same session
   SELECT a.skill_name, COUNT(DISTINCT b.skill_name) AS co_invoked_skills
   FROM inv a JOIN inv b ON a.session_id = b.session_id AND a.skill_name <> b.skill_name
@@ -80,11 +97,9 @@ SELECT
   COUNT(*)                                            AS invocations,
   COUNT(DISTINCT i.user_hash)                         AS distinct_users,
   COUNT(DISTINCT i.session_id)                        AS sessions,
-  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY i.load_tokens) AS p50_load_tokens,
-  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY i.tail_tokens) AS p50_tail_tokens,
-  SUM(i.load_tokens + i.tail_tokens)                  AS total_tokens,
+  c.p50_tokens, c.total_tokens, c.total_cost_usd, c.requests_derived,
   AVG(CASE WHEN i.is_error THEN 1 ELSE 0 END)         AS error_rate,
-  AVG(CASE WHEN i.llm_requests = 0 THEN 1 ELSE 0 END) AS abandonment_rate,
+  c.abandonment_rate, c.unmeasured_activations,
   pw.first_pass_rate_with, pw.n_with,
   pwo.first_pass_rate_without, pwo.n_without,
   COALESCE(o.co_invoked_skills, 0)                    AS co_invoked_skills,
@@ -107,5 +122,8 @@ FROM inv i
 LEFT JOIN pass_with pw ON pw.skill_name = i.skill_name AND pw.skill_version = i.skill_version AND pw.harness = i.harness
 LEFT JOIN pass_without pwo ON pwo.skill_name = i.skill_name
 LEFT JOIN overlap o ON o.skill_name = i.skill_name
-GROUP BY 1,2,3, pw.first_pass_rate_with, pw.n_with, pwo.first_pass_rate_without, pwo.n_without, o.co_invoked_skills
-ORDER BY total_tokens DESC;
+LEFT JOIN cost c ON c.skill_name = i.skill_name AND c.skill_version = i.skill_version AND c.harness = i.harness
+GROUP BY 1,2,3, pw.first_pass_rate_with, pw.n_with, pwo.first_pass_rate_without, pwo.n_without, o.co_invoked_skills,
+         c.p50_tokens, c.total_tokens, c.total_cost_usd, c.requests_derived, c.abandonment_rate,
+         c.unmeasured_activations
+ORDER BY c.total_cost_usd DESC NULLS LAST, invocations DESC;

@@ -499,15 +499,9 @@ def test_hook_latency_is_reported_per_hook_basename(loaded):
     assert all("/" not in hook for hook in out), "a hook is a basename, never a path"
 
 
-def test_cache_creation_share_of_a_skill_tail(loaded):
-    out = {r["skill_name"]: r for r in efficiency(
-        "05_skill_cache_creation_share.sql", {"since": SINCE, "until": UNTIL})}
-    assert set(out) == {"structured-logging", "stdtel-onboard"}, out
-    row = out["structured-logging"]
-    assert row["n_invocations"] == 1 and row["n_without_usage"] == 0
-    tail = 1200 + 800 + 90000 + 4000
-    assert row["tail_tokens"] == tail
-    assert float(row["cache_creation_share"]) == pytest.approx(4000 / tail, abs=5e-5)
+# Q5's behaviour, now over the harness's own requests (#117), is tested in
+# tests/test_skill_request_cost.py, which seeds llm_request; this module's fake
+# Tempo carries no native records.
 
 
 @pytest.mark.parametrize("name", sorted(

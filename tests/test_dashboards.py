@@ -88,7 +88,7 @@ def test_panel_sql_references_real_tables():
                 # line is still a CTE, and the pattern cannot span one.
                 bare = re.sub(r"--[^\n]*", "", sql)
                 ctes = set(re.findall(r"(?:WITH|,)\s*(\w+)\s+AS\s*\(", bare, re.I))
-                for ref in re.findall(r"\b(?:FROM|JOIN)\s+(\w+)", sql):
+                for ref in re.findall(r"(?<!DISTINCT )\b(?:FROM|JOIN)\s+(\w+)", sql):   # not IS [NOT] DISTINCT FROM
                     assert ref in tables or ref in ctes, \
                         f"{dash.name}/{panel.get('title')}: unknown table {ref!r}"
 
@@ -211,3 +211,46 @@ def test_scope_id_is_never_a_metrics_dimension():
         "containment is unqueryable in Prometheus without name and key"
     for file, panel, expr in _exprs():
         assert "std_scope_id" not in expr, f"{file}:{panel} groups by an unbounded id"
+
+
+
+def test_the_scorecard_panel_is_scorecard_sql_verbatim():
+    """The panel carried its own copy, kept in step by hand. A change to the
+    scorecard's columns (#117) would have left the dashboard on the old ones,
+    and no test reads panel columns."""
+    import json
+    board = json.loads((ROOT / "deploy" / "grafana" / "provisioning" / "dashboards"
+                        / "skill-scorecard-outcomes.json").read_text())
+    panel_sql = [t["rawSql"] for p in board["panels"] for t in p.get("targets", [])
+                 if t.get("rawSql", "").startswith("-- Weekly skill scorecard")]
+    assert len(panel_sql) == 1
+    src = (ROOT / "warehouse" / "scorecard.sql").read_text()
+    expected = src.replace(":week_start", "$__timeFrom()").replace(":week_end", "$__timeTo()").strip().rstrip(";")
+    assert panel_sql[0].strip().rstrip(";") == expected
+
+
+def _warehouse_panels():
+    out = []
+    for dash in DASHBOARDS:
+        for p in panels(dash):
+            for t in p.get("targets", []):
+                ds = t.get("datasource") or p.get("datasource") or {}
+                if isinstance(ds, dict) and ds.get("uid") == "Warehouse" and t.get("rawSql"):
+                    out.append((f"{dash.stem}/{p.get('title')}", t["rawSql"]))
+    return out
+
+
+@pytest.mark.parametrize("title,sql", _warehouse_panels(), ids=lambda v: v if isinstance(v, str) and "/" in v else "")
+def test_every_warehouse_panel_runs_against_the_schema(title, sql):
+    """Table names were checked; columns were not, so a panel selecting a
+    dropped column would pass every test and fail in Grafana (#117)."""
+    try:
+        import psycopg
+        conn = psycopg.connect("postgresql://postgres:stdtel@localhost:5432/stdtel", connect_timeout=3)
+    except Exception as e:                           # noqa: BLE001
+        pytest.skip(f"postgres unavailable: {str(e)[:80]}")
+    sql = (sql.replace("$__timeFrom()", "'1999-01-01'::timestamptz").replace("$__timeTo()", "'1999-01-02'::timestamptz")
+              .replace("$__timeFilter(started_at)", "started_at BETWEEN '1999-01-01' AND '1999-01-02'"))
+    with conn, conn.cursor() as cur:
+        cur.execute((ROOT / "warehouse" / "schema.sql").read_text())
+        cur.execute("SELECT * FROM (\n" + sql.rstrip().rstrip(";") + "\n) q LIMIT 0")

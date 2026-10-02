@@ -85,6 +85,30 @@ def db():
         request(cur, "wtest-src-r60", "p6", "acme-lint", "0.06")
         # p7: still "third-party" (nothing to name it from): not a skill called third-party
         request(cur, "wtest-src-r70", "p7", "third-party", "0.07")
+        # p8, p9: one scoped run of a loop skill over two turns (ADR-010). In p8 the
+        # loop itself makes one request and a sub-agent makes another; p9 is a later
+        # iteration where the loop does not activate again; p10 is in scope but has
+        # no native record.
+        for prompt, loop in (("p8", True), ("p9", False), ("p10", False)):
+            scope = ("wtest-loop", "k1", "wtest-scope-1", "artefact")
+            cur.execute("INSERT INTO artefact_activation (span_id, trace_id, session_id, started_at, ended_at, "
+                        "kind, prompt_id, source, harness, scope_name, scope_key, scope_id, scope_source) "
+                        "VALUES (%s,'t',%s,%s,%s,'turn',%s,'hook','claude-code',%s,%s,%s,%s)",
+                        (f"wtest-src-turn-{prompt}", S, T0, T0, prompt, *scope))
+            if loop:
+                activation(cur, f"wtest-src-loop-{prompt}", prompt, "wtest-loop", "0.1.0")
+                cur.execute("UPDATE artefact_activation SET scope_name=%s, scope_key=%s, scope_id=%s, "
+                            "scope_source=%s WHERE span_id = %s", (*scope, f"wtest-src-loop-{prompt}"))
+        # spend the harness cannot see, reported by an external emitter inside the scope
+        cur.execute("INSERT INTO artefact_activation (span_id, trace_id, session_id, started_at, ended_at, kind, "
+                    "name, prompt_id, source, harness, scope_name, scope_key, scope_id, scope_source, "
+                    "input_tokens, output_tokens) VALUES ('wtest-src-ext','t',%s,%s,%s,'external','llm-council',"
+                    "'p8','hook','claude-code','wtest-loop','k1','wtest-scope-1','artefact',7000,700)", (S, T0, T0))
+        # p11: a second prompt where lint ran with no native record
+        activation(cur, "wtest-src-a11", "p11", "acme-lint", "1.2.0")
+        request(cur, "wtest-src-r80", "p8", "wtest-loop", "0.10", inp=100, out=10, cr=0, cc=0)
+        request(cur, "wtest-src-r81", "p8", None, "0.20", inp=400, out=40, cr=0, cc=0)
+        request(cur, "wtest-src-r90", "p9", None, "0.30", inp=1000, out=100, cr=0, cc=0)
     yield conn
     with conn.cursor() as cur:
         _clean(cur)
@@ -158,7 +182,7 @@ def test_no_native_record_at_all_is_not_measured_never_abandoned(db):
 
 def test_one_activation_row_per_prompt_skill_and_version(db):
     rows = q(db, "SELECT prompt_id FROM skill_activation_cost WHERE session_id = %s", (S,))
-    assert sorted(r["prompt_id"] for r in rows) == ["p1", "p2", "p3", "p5", "p6", "p6"]
+    assert sorted(r["prompt_id"] for r in rows) == ["p1", "p11", "p2", "p3", "p5", "p6", "p6", "p8"]
 
 
 def test_an_ambiguous_version_is_not_abandoned_and_its_cost_goes_to_neither(db):
@@ -169,3 +193,54 @@ def test_an_ambiguous_version_is_not_abandoned_and_its_cost_goes_to_neither(db):
 
 def test_an_unnamed_third_party_request_is_not_a_skill_called_third_party(db):
     assert not [k for k in cost_rows(db) if k[1] == "third-party"]
+
+
+# --- the efficiency queries that read skill cost, rebased on native requests --------------------
+
+def efficiency(conn, name, params):
+    sql = (ROOT / "warehouse" / "efficiency" / name).read_text()
+    for key in params:
+        sql = sql.replace(f":{key}", f"%({key})s")
+    return q(conn, sql, params)
+
+
+WINDOW = {"since": T0 - dt.timedelta(days=1), "until": T0 + dt.timedelta(days=1)}
+
+
+def test_q5_reads_cache_creation_from_the_harness_record(db):
+    out = {r["skill_name"]: r for r in efficiency(db, "05_skill_cache_creation_share.sql", WINDOW)}
+    lint = out["acme-lint"]
+    # p1 (three requests) and p6 (one), each 10+5+100+20 tokens, 20 of them cache creation
+    assert lint["skill_tokens"] == 4 * 135 and lint["cache_creation_tokens"] == 4 * 20
+    assert float(lint["cache_creation_share"]) == pytest.approx(20 / 135, abs=5e-5)
+    assert lint["n_prompts"] == 2
+
+
+def test_q5_counts_activations_with_no_native_record_rather_than_hiding_them(db):
+    out = {r["skill_name"]: r for r in efficiency(db, "05_skill_cache_creation_share.sql", WINDOW)}
+    assert out["acme-lint"]["n_unmeasured"] == 2          # p3 and p11; p2 was measured and abandoned
+
+
+def test_q6_self_and_inclusive_count_each_request_once(db):
+    rows = efficiency(db, "06_scope_self_vs_inclusive.sql", {"scope_name": "wtest-loop", "since": WINDOW["since"]})
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["self_tokens"] == 110                          # the loop's own request
+    assert r["inclusive_tokens"] == 110 + 440 + 1100 + 7700  # every request in a scoped prompt, and external spend
+    assert r["n_turns"] == 3 and r["n_runs"] == 1
+    assert r["prompts_without_usage"] == 1                  # p10
+
+
+def test_q6_inclusive_is_never_less_than_self(db):
+    for r in efficiency(db, "06_scope_self_vs_inclusive.sql", {"scope_name": "wtest-loop", "since": WINDOW["since"]}):
+        assert r["inclusive_tokens"] >= r["self_tokens"]
+
+
+def test_the_scorecard_charges_each_version_only_its_own_cost(db):
+    """Two versions of one skill: cost must not be joined across versions."""
+    sql = (ROOT / "warehouse" / "scorecard.sql").read_text()
+    sql = sql.replace(":week_start", "%(a)s").replace(":week_end", "%(b)s")
+    rows = {(r["skill_name"], r["skill_version"]): r for r in
+            q(db, sql, {"a": T0 - dt.timedelta(days=1), "b": T0 + dt.timedelta(days=1)})}
+    assert rows[("acme-lint", "1.2.0")]["total_cost_usd"] == Decimal("0.0300003")   # p1 only; p6 is ambiguous
+    assert rows[("acme-lint", "1.3.0")]["total_cost_usd"] is None
