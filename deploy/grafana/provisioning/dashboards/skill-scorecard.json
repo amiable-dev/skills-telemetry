@@ -4,26 +4,234 @@
   "schemaVersion": 39,
   "panels": [
     {
+      "type": "stat",
+      "title": "Spend in range (USD)",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Claude Code's own cost_usd, summed.",
+      "targets": [
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd [$__range]))",
+          "queryType": "instant",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Model requests in range",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free.",
+      "targets": [
+        {
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" [$__range]))",
+          "queryType": "instant",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Spend / h (USD)",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Each point is what the previous hour cost.",
+      "targets": [
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd [1h]))",
+          "legendFormat": "USD in the trailing hour",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests / h by model",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free.",
+      "targets": [
+        {
+          "expr": "sum by (model) (count_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" [1h]))",
+          "legendFormat": "{{model}}",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens / h by type",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Cache reads usually dominate; compare the other three with each other.",
+      "targets": [
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap input_tokens [1h]))",
+          "legendFormat": "input",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        },
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap output_tokens [1h]))",
+          "legendFormat": "output",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "B"
+        },
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cache_read_tokens [1h]))",
+          "legendFormat": "cache read",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "C"
+        },
+        {
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cache_creation_tokens [1h]))",
+          "legendFormat": "cache creation",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Spend by skill, agent and repo (in range)",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. `(no skill)` is spend outside any skill, usually most of it. A third-party plugin's skill reads `third-party` unless the detailed view is on; the warehouse's llm_request_attributed names it where stdtel saw exactly one run in that prompt.",
+      "targets": [
+        {
+          "expr": "sum by (skill_name, agent_name, vcs_repository_name) (sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | label_format skill_name=`{{ or .skill_name \"(no skill)\" }}`, agent_name=`{{ or .agent_name \"(main)\" }}` | unwrap cost_usd [$__range]))",
+          "queryType": "instant",
+          "format": "table",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
       "type": "timeseries",
       "title": "Skill invocations / h",
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 20,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
-          "expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h]))"
+          "expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])) * 3600"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No skill ran in this range"
+        },
+        "overrides": []
+      }
     },
     {
       "type": "timeseries",
       "title": "Error rate by skill",
       "gridPos": {
         "x": 12,
-        "y": 0,
+        "y": 20,
         "w": 12,
         "h": 8
       },
@@ -31,14 +239,20 @@
         {
           "expr": "sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\",status_code=\"STATUS_CODE_ERROR\"}[1h])) / sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h]))"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No skill ran in this range"
+        },
+        "overrides": []
+      }
     },
     {
       "type": "timeseries",
       "title": "p50 skill window duration",
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 28,
         "w": 12,
         "h": 8
       },
@@ -46,52 +260,43 @@
         {
           "expr": "histogram_quantile(0.5, sum by (le, std_skill_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])))"
         }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Claude Code tokens by type",
-      "gridPos": {
-        "x": 12,
-        "y": 8,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "expr": "sum by (type) (rate(claude_code_token_usage_tokens_total[1h]))"
-        }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No skill ran in this range"
+        },
+        "overrides": []
+      }
     },
     {
       "type": "timeseries",
       "title": "Activations / h by artefact kind",
       "description": "Where the agent's work actually goes. Sub-agents and compaction were invisible before ADR-009; a session can have no skill activations at all and still be the most expensive one of the day.",
       "gridPos": {
-        "x": 0,
-        "y": 16,
+        "x": 12,
+        "y": 28,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
-          "expr": "sum by (std_artefact_kind) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\"}[1h]))"
+          "expr": "sum by (std_artefact_kind) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\"}[1h])) * 3600"
         }
       ]
     },
     {
       "type": "timeseries",
       "title": "Sub-agent calls / h by type",
-      "description": "Rate only \u2014 a sub-agent's token cost is a span attribute, so read that from the warehouse (warehouse/efficiency/), not from here.",
+      "description": "Rate only — a sub-agent's token cost is a span attribute, so read that from the warehouse (warehouse/efficiency/), not from here.",
       "gridPos": {
-        "x": 12,
-        "y": 16,
+        "x": 0,
+        "y": 36,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
-          "expr": "sum by (std_subagent_type) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"subagent\"}[1h]))"
+          "expr": "sum by (std_subagent_type) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"subagent\"}[1h])) * 3600"
         }
       ]
     },
@@ -100,8 +305,8 @@
       "title": "p50 hook-observed turn duration",
       "description": "The harness's own turn timing, not our clock.",
       "gridPos": {
-        "x": 0,
-        "y": 24,
+        "x": 12,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -116,14 +321,14 @@
       "title": "Compactions / h by reason",
       "description": "A rising auto-compaction rate is context pressure: the session is spending tokens re-reading itself. Pair with tokens_before in the warehouse.",
       "gridPos": {
-        "x": 12,
-        "y": 24,
+        "x": 0,
+        "y": 44,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
-          "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"compaction\"}[1h]))"
+          "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"compaction\"}[1h])) * 3600"
         }
       ]
     },
@@ -132,10 +337,10 @@
       "title": "External spend calls / h by system",
       "type": "timeseries",
       "datasource": null,
-      "description": "ADR-010 decision 7. Spend that happens outside the harness, reported by whatever spent it \u2014 a CLI the agent shells out to, or an MCP server calling models of its own. stdtel cannot observe this; it receives it, so an empty graph means either nothing ran or nothing is emitting, and those are different. The money is not here: cost is a Postgres figure, on the outcomes board.",
+      "description": "ADR-010 decision 7. Spend that happens outside the harness, reported by whatever spent it — a CLI the agent shells out to, or an MCP server calling models of its own. stdtel cannot observe this; it receives it, so an empty graph means either nothing ran or nothing is emitting, and those are different. The money is not here: cost is a Postgres figure, on the outcomes board.",
       "gridPos": {
-        "x": 0,
-        "y": 32,
+        "x": 12,
+        "y": 44,
         "w": 12,
         "h": 8
       },
@@ -149,5 +354,5 @@
       ]
     }
   ],
-  "description": "Invocation rate, errors, duration and token flow. The scorecard \u2014 first-time policy pass rate and the keep/refine/deprecate call \u2014 is on 'Skill scorecard'."
+  "description": "Invocation rate, errors, duration and token flow. The scorecard — first-time policy pass rate and the keep/refine/deprecate call — is on 'Skill scorecard'."
 }

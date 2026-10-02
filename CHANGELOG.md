@@ -4,6 +4,26 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Fixed
+- **The operational dashboard shows usage (#140).** During a live session that spent $15.43 over 167
+  model requests, it showed none of it. Three causes:
+  - **Nothing read Loki**, where Claude Code's own per-request records land. A new top row shows
+    spend and requests in the range, spend per hour, tokens per hour by type, requests per hour by
+    model, and spend by skill, agent and repo. All of it is live from Loki, with no loader in between.
+  - **"Claude Code tokens by type" read a native metric the collector drops** by design since #110,
+    so it could never show anything. It is removed. A test now fails any panel that queries a metric
+    prefix in the collector's `filter/native_metrics`.
+  - **Seven "/ h" panels plotted per-second rates.** "0.003 turns/h" was about 11. They are scaled to
+    per hour, and a test holds every "/ h" rate to it.
+
+  Skill panels now say "No skill ran in this range" instead of "No data". Every Loki panel's query is
+  run against Loki in tests.
+- **Grafana reads datasource provisioning only at startup**, so a stack running since before 0.8.0
+  has no Loki datasource and every usage panel fails with "Data source not found".
+  `docs/local-stack.md` gives the one-line fix: restart Grafana alone.
+
 ## 0.9.0 — 2026-10-02
 
 A skill's cost is now the harness's own requests named for it, and stdtel's tail-rule estimate is
