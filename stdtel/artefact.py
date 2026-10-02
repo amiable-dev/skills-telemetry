@@ -86,14 +86,15 @@ _COMMON = (frozenset({"std.artefact.kind", "std.artefact.source", "session.id"})
 #: `std.artefact.name` is deliberately absent from `turn`: a turn is identified
 #: by `std.prompt.id`, which is unbounded, and `name` is a metrics dimension.
 ALLOWED = {
-    KIND_SKILL: _COMMON | {
+    # #117: no usage and no model. What a skill cost is the harness's own requests
+    # named for it (ADR-014); the tail-rule estimate that filled these is retired.
+    KIND_SKILL: (_COMMON - _USAGE) | {
         "std.artefact.name",
         "std.skill.name", "std.skill.invoked_as", "std.skill.version", "std.skill.plugin",
-        "std.skill.trigger", "std.skill.load_tokens", "std.skill.tail_tokens",
-        "std.skill.tail_tokens_first_only", "std.skill.llm_requests", "std.skill.duration_ms",
+        "std.skill.trigger", "std.skill.duration_ms",
         "std.skill.content_hash", "std.skill.owner", "std.standard_id", "std.policy.ids",
         "std.prompt.id", "std.harness.permission_mode",
-        "gen_ai.request.model", "gen_ai.operation.name", "gen_ai.tool.name",
+        "gen_ai.operation.name", "gen_ai.tool.name",
     },
     KIND_SUBAGENT: _COMMON | {
         "std.artefact.name",

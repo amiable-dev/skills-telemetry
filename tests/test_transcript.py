@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from stdtel.transcript import read_slice, attribute
+from stdtel.transcript import read_slice
 
 def line(t, typ, **msg):
     return json.dumps({"type": typ, "timestamp": t, "message": msg})
@@ -19,17 +19,14 @@ def make_transcript(path: Path):
     ]
     path.write_text("\n".join(rows) + "\n")
 
-def test_incremental_and_attribution(tmp_path):
+def test_incremental_read(tmp_path):
+    """What the transcript observed: requests and skill loads. Attributing tokens
+    to skills (the tail rule, chars/4) was retired in #117."""
     p = tmp_path / "t.jsonl"; make_transcript(p)
     sl = read_slice(p, 0)
     assert len(sl.requests) == 5 and len(sl.skill_loads) == 2
-    assert sl.skill_loads[0].load_tokens == 100
-    att = {a.skill: a for a in attribute(sl)}
-    # structured-logging owns requests at t=101..103 (before 'other' loads at 104)
-    assert att["structured-logging"].tail.total == (20+5+100) + (30+15)
-    assert att["structured-logging"].tail_first_only.total == (20+5+100)+(30+15)+(5+5)+(40+20)
-    assert att["other"].tail.total == (5+5) + (40+20)
-    assert att["other"].models == ["claude-x", "claude-y"]
+    assert [l.skill for l in sl.skill_loads] == ["structured-logging", "other"]
+    assert sl.totals().total == (10+5) + (20+5+100) + (30+15) + (5+5) + (40+20)
     # second read from new offset yields nothing new
     assert read_slice(p, sl.new_offset).requests == []
 

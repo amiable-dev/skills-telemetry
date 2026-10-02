@@ -92,28 +92,8 @@ def test_a_subagent_that_used_two_models_names_neither(tmp_path):
     assert spans["subagent"]["std.subagent.llm_requests"] == 2
 
 
-def _skill_run(tmp_path, sid, tail_models):
-    loads = json.dumps({"type": "assistant", "timestamp": "2026-09-28T10:00:01.000Z",
-                        "message": {"model": tail_models[0], "usage": SOME, "content": [
-                            {"type": "tool_use", "name": "Skill", "id": "t1", "input": {"skill": "structured-logging"}}]}})
-    tail = [assistant(f"2026-09-28T10:00:0{2 + i}.000Z", m) for i, m in enumerate(tail_models)]
-    t = write(tmp_path / f"{sid}.jsonl", [user_turn("2026-09-28T10:00:00.000Z", "p1"), loads, *tail])
-    hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
-    hooks.pre_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1",
-                        "tool_input": {"skill": "structured-logging"}})
-    hooks.post_tool_use({"session_id": sid, "tool_name": "Skill", "tool_use_id": "t1"})
-    exp = InMemorySpanExporter()
-    hooks.stop({"session_id": sid, "transcript_path": str(t)}, exporter=exp)
-    return next(s.attributes for s in exp.get_finished_spans()
-                if s.attributes.get("std.artefact.kind") == "skill")
-
-
-def test_a_skill_tail_on_one_model_names_it(tmp_path):
-    assert _skill_run(tmp_path, "mn-3", ["claude-opus-5", "claude-opus-5"])["gen_ai.request.model"] == "claude-opus-5"
-
-
-def test_a_skill_tail_across_two_models_names_neither(tmp_path):
-    assert "gen_ai.request.model" not in _skill_run(tmp_path, "mn-4", ["claude-opus-5", "claude-sonnet-5"])
+# A skill span names no model at all since #117 (tests/test_retired_estimates.py):
+# its model was the tail's, and the tail is retired.
 
 
 def test_a_hook_observed_subagent_on_two_models_names_neither(tmp_path):

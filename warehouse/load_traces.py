@@ -162,13 +162,10 @@ def parse_span(attrs: dict, resource: dict, span: dict) -> dict:
         "skill_version": g("std.skill.version", "unversioned"),
         "content_hash": g("std.skill.content_hash"),
         "standard_id": g("std.standard_id"), "policy_ids": [p for p in (g("std.policy.ids", "") or "").split(",") if p],
-        "trigger": g("std.skill.trigger"), "model": g("gen_ai.request.model"),
-        "load_tokens": int(g("std.skill.load_tokens", 0)), "tail_tokens": int(g("std.skill.tail_tokens", 0)),
-        "tail_tokens_first_only": int(g("std.skill.tail_tokens_first_only", 0)),
-        "input_tokens": int(g("gen_ai.usage.input_tokens", 0)), "output_tokens": int(g("gen_ai.usage.output_tokens", 0)),
-        "cache_read_tokens": int(g("gen_ai.usage.cache_read_input_tokens", 0)),
-        "cache_creation_tokens": int(g("gen_ai.usage.cache_creation_input_tokens", 0)),
-        "llm_requests": int(g("std.skill.llm_requests", 0)),
+        "trigger": g("std.skill.trigger"),
+        # #117: no token or model columns. What a skill cost is skill_request_cost,
+        # from the harness's own requests; a span from before 0.9.0 still carrying
+        # the tail estimate loads without it.
         "is_error": span.get("status", {}).get("code") == "STATUS_CODE_ERROR",
         "branch_hash": g("std.branch.hash") or None,   # "" = no repository: NULL (#122)
         "repo": g("std.repo"), "team": g("std.team"),
@@ -315,8 +312,7 @@ def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
 
 COLS = ["span_id","trace_id","session_id","started_at","ended_at","harness","harness_mode","skill_name",
         "invoked_as","plugin","skill_version","content_hash",
-        "standard_id","policy_ids","trigger","model","load_tokens","tail_tokens","tail_tokens_first_only","input_tokens",
-        "output_tokens","cache_read_tokens","cache_creation_tokens","llm_requests","is_error","branch_hash","repo","team","user_hash"]
+        "standard_id","policy_ids","trigger","is_error","branch_hash","repo","team","user_hash"]
 
 ACTIVATION_COLS = ["span_id", "trace_id", "parent_span_id", "session_id",
                    "scope_name", "scope_key", "scope_id", "scope_source",

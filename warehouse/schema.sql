@@ -15,15 +15,7 @@ CREATE TABLE IF NOT EXISTS skill_invocation (
   standard_id        TEXT,
   policy_ids         TEXT[],
   trigger            TEXT,                   -- caller.type from the transcript ("direct"), or unknown
-  model              TEXT,
-  load_tokens        INT DEFAULT 0,
-  tail_tokens        INT DEFAULT 0,
-  tail_tokens_first_only INT DEFAULT 0,
-  input_tokens       INT DEFAULT 0,
-  output_tokens      INT DEFAULT 0,
-  cache_read_tokens  INT DEFAULT 0,
-  cache_creation_tokens INT DEFAULT 0,
-  llm_requests       INT DEFAULT 0,
+                                             -- no cost here: skill_request_cost (#117)
   is_error           BOOLEAN DEFAULT FALSE,
   branch_hash        TEXT,                   -- ADR-013 join key; NULL = no repo or branch readable
   repo               TEXT,
@@ -529,3 +521,18 @@ LEFT JOIN skill_request_cost c
   ON c.session_id = act.session_id AND c.prompt_id = act.prompt_id
  AND (c.skill_name = act.skill_name OR c.skill_name LIKE '%:' || act.skill_name)
  AND c.skill_version = act.skill_version;
+
+-- #117 (ADR-014 decision 10): the tail-rule estimate retires. A skill's cost is
+-- skill_request_cost, from the harness's own requests. The columns defaulted to
+-- 0, which for every new row would have read as "measured, and free" (ADR-005),
+-- so they go rather than stay empty. Prior values were estimates; single user,
+-- dropped as at the ADR-013 cutover.
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS load_tokens;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS tail_tokens;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS tail_tokens_first_only;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS llm_requests;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS input_tokens;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS output_tokens;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS cache_read_tokens;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS cache_creation_tokens;
+ALTER TABLE skill_invocation DROP COLUMN IF EXISTS model;

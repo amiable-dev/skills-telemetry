@@ -324,7 +324,9 @@ def test_a_skill_activation_lands_in_both_tables(loaded):
     assert len(act) == 1 and len(inv) == 1, "a skill activation must reach both tables"
     assert act[0]["kind"] == "skill" and act[0]["name"] == "structured-logging"
     assert inv[0]["skill_name"] == "structured-logging"
-    assert inv[0]["plugin"] == "epic-loop" and inv[0]["tail_tokens"] == 28199
+    assert inv[0]["plugin"] == "epic-loop"
+    # the seeded span still carries 0.8's tail estimate; it loads, without it (#117)
+    assert "tail_tokens" not in inv[0] and "load_tokens" not in inv[0]
     assert inv[0]["policy_ids"] == ["logging.required_fields", "logging.no_pii"]
 
 
