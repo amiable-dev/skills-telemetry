@@ -39,5 +39,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/drop_content, transform/identity, transform/copilot_git, transform/normalise, transform/copilot_skills, transform/pseudonymise, transform/langfuse_metadata, batch]
+      processors: [memory_limiter, transform/tool_names, attributes/drop_content, transform/identity, transform/copilot_git, transform/normalise, transform/copilot_skills, transform/pseudonymise, transform/langfuse_metadata, batch]
       exporters: [otlp/tempo, spanmetrics, otlphttp/langfuse]

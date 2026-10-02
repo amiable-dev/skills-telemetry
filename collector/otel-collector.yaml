@@ -72,6 +72,27 @@ processors:
   # every span attribute set — verified live against Claude Code 2.1.284 — so a
   # resource-level rule never sees it. The email becomes the same pseudonym the
   # resource rule below computes; the account and organisation ids go.
+  # #142: with the detailed view on, Claude Code puts the MCP server and tool
+  # names, the Skill tool's skill_name and the Agent tool's subagent_type ONLY
+  # inside tool_parameters — the JSON that also carries bash_command. tool_name is
+  # the literal "mcp_tool" for every user-configured server. drop_content deletes
+  # tool_parameters whole, so these names are lifted out first: an allowlist of
+  # four keys, and only values shaped like a name (short, no spaces). Nothing
+  # else in the JSON is read into an attribute. Runs before drop_content.
+  transform/tool_names:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements: &tool_names
+          - merge_maps(cache, ParseJSON(attributes["tool_parameters"]), "upsert") where attributes["tool_parameters"] != nil
+          - set(attributes["mcp_server_name"], cache["mcp_server_name"]) where IsString(cache["mcp_server_name"]) and IsMatch(cache["mcp_server_name"], "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
+          - set(attributes["mcp_tool_name"], cache["mcp_tool_name"]) where IsString(cache["mcp_tool_name"]) and IsMatch(cache["mcp_tool_name"], "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
+          - set(attributes["skill_name"], cache["skill_name"]) where IsString(cache["skill_name"]) and IsMatch(cache["skill_name"], "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
+          - set(attributes["subagent_type"], cache["subagent_type"]) where IsString(cache["subagent_type"]) and IsMatch(cache["subagent_type"], "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
+    trace_statements:
+      - context: span
+        statements: *tool_names
+
   transform/identity:
     error_mode: ignore
     trace_statements:
@@ -224,7 +245,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/drop_content, transform/identity, transform/copilot_git, transform/normalise, transform/copilot_skills, transform/pseudonymise, batch]
+      processors: [memory_limiter, transform/tool_names, attributes/drop_content, transform/identity, transform/copilot_git, transform/normalise, transform/copilot_skills, transform/pseudonymise, batch]
       exporters: [otlp/tempo, spanmetrics]
     metrics:
       receivers: [otlp, spanmetrics]
@@ -232,5 +253,5 @@ service:
       exporters: [prometheusremotewrite]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, attributes/drop_content, transform/identity, batch]
+      processors: [memory_limiter, transform/tool_names, attributes/drop_content, transform/identity, batch]
       exporters: [otlphttp/loki]

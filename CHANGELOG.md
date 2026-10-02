@@ -7,6 +7,19 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Fixed
+- **MCP server, MCP tool and skill names survive the collector (#142).** With the detailed view on,
+  Claude Code puts them only inside `tool_parameters`, beside shell commands. Every user-configured
+  MCP call's `tool_name` is the literal `"mcp_tool"`. The collector deleted `tool_parameters` whole,
+  so the names a user opted in to never reached storage.
+  - A new `transform/tool_names` lifts exactly four keys out first: `mcp_server_name`,
+    `mcp_tool_name`, `skill_name` and `subagent_type`. Only values shaped like a name are lifted
+    (short, no spaces); the content is then dropped as before. It runs on logs and traces, under both
+    overlays, and is tested on the real image with a content marker beside the names.
+  - Verified live: the first MCP call after the collector restart arrived as `llm-council`, and no
+    content key appeared in any of 66 real events.
+  - The operational dashboard gains tables for MCP calls by server and tool, skills invoked, and
+    tool calls by tool and success. A hidden name reads `(hidden: detailed view off)`.
+  - Tables now show their value instead of a timestamp, and cache-read tokens sit on their own axis.
 - **The operational dashboard shows usage (#140).** During a live session that spent $15.43 over 167
   model requests, it showed none of it. Three causes:
   - **Nothing read Loki**, where Claude Code's own per-request records land. A new top row shows

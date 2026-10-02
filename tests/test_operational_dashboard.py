@@ -120,3 +120,43 @@ def test_every_loki_panel_query_runs(title, expr):
     url = "http://127.0.0.1:11010/loki/api/v1/query?" + urllib.parse.urlencode({"query": q, "time": int(time.time())})
     body = json.loads(urllib.request.urlopen(url, timeout=10).read())
     assert body["status"] == "success", (title, body)
+
+
+
+# --- #142: which MCP servers, skills and tools ----------------------------------------------------
+
+WHICH = {"mcp calls by server and tool": ['event_name="tool_result"', 'tool_name="mcp_tool"', "mcp_server_name"],
+         "skills invoked": ['event_name="tool_result"', 'tool_name="Skill"', "skill_name"],
+         "tool calls by tool": ['event_name="tool_result"', "by (tool_name, success)"]}
+
+
+@pytest.mark.parametrize("title,needles", sorted(WHICH.items()))
+def test_the_dashboard_says_which_mcp_skills_and_tools(title, needles):
+    panels = [(p, t) for p, t in loki_targets(OPERATIONAL) if title in p["title"].lower()]
+    assert panels, f"no Loki panel titled like {title!r}"
+    exprs = " ".join(t["expr"] for _p, t in panels)
+    for n in needles:
+        assert n in exprs, (title, n)
+
+
+def test_a_hidden_name_says_why_rather_than_reading_blank():
+    """Without the detailed view the names never arrive; a blank cell reads as a bug."""
+    for p, t in loki_targets(OPERATIONAL):
+        if "mcp_server_name" in t["expr"] or 'tool_name="Skill"' in t["expr"]:
+            assert "detailed view off" in t["expr"], p["title"]
+
+
+def test_tables_show_their_value_not_a_timestamp():
+    """An instant query's table leads with Time; the value column fell off-screen."""
+    for p in OPERATIONAL["panels"]:
+        if p["type"] != "table" or (p.get("datasource") or {}).get("uid") != "Loki":
+            continue
+        org = [x for x in p.get("transformations", []) if x["id"] == "organize"]
+        assert org and org[0]["options"]["excludeByName"].get("Time") is True, p["title"]
+        assert "Value #A" in org[0]["options"]["renameByName"], p["title"]
+
+
+def test_cache_reads_do_not_flatten_the_other_token_types():
+    p = next(p for p in OPERATIONAL["panels"] if p["title"].lower().startswith("tokens / h"))
+    overrides = json.dumps(p.get("fieldConfig", {}).get("overrides", []))
+    assert "cache read" in overrides and "right" in overrides

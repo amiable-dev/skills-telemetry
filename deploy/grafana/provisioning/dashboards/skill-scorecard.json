@@ -132,7 +132,7 @@
         "w": 12,
         "h": 8
       },
-      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Cache reads usually dominate; compare the other three with each other.",
+      "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Cache reads usually dominate; compare the other three with each other. Cache reads are on the right axis: they are usually 100x the rest.",
       "targets": [
         {
           "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap input_tokens [1h]))",
@@ -170,7 +170,28 @@
           },
           "refId": "D"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache read"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "cache read"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "type": "table",
@@ -203,14 +224,203 @@
           "unit": "currencyUSD"
         },
         "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "USD"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "USD",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "MCP calls by server and tool (in range)",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own tool_result events in Loki (ADR-014). Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). MCP server and tool names, and the skill a Skill call loaded, arrive only with the detailed view on (`stdtel-install detailed-view on`, via the stdtel-setup skill); without it they read `(hidden: detailed view off)`. The collector keeps those names and drops everything else in the call (#142).",
+      "targets": [
+        {
+          "expr": "sum by (mcp_server_name, mcp_tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | tool_name=\"mcp_tool\" | label_format mcp_server_name=`{{ or .mcp_server_name \"(hidden: detailed view off)\" }}`, mcp_tool_name=`{{ or .mcp_tool_name \"-\" }}` [$__range]))",
+          "queryType": "instant",
+          "format": "table",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "calls"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "calls",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No MCP call in this range"
+        },
+        "overrides": []
       }
+    },
+    {
+      "type": "table",
+      "title": "Skills invoked (in range)",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own tool_result events in Loki (ADR-014). Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). MCP server and tool names, and the skill a Skill call loaded, arrive only with the detailed view on (`stdtel-install detailed-view on`, via the stdtel-setup skill); without it they read `(hidden: detailed view off)`. The collector keeps those names and drops everything else in the call (#142). Counts Skill tool calls in the range, so a long loop started earlier does not appear.",
+      "targets": [
+        {
+          "expr": "sum by (skill_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | tool_name=\"Skill\" | label_format skill_name=`{{ or .skill_name \"(hidden: detailed view off)\" }}` [$__range]))",
+          "queryType": "instant",
+          "format": "table",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "invocations"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "invocations",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No skill ran in this range"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "Tool calls by tool (in range)",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "description": "From Claude Code's own tool_result events in Loki (ADR-014). Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). Every tool call, with success true or false. User-configured MCP servers all read `mcp_tool` here; the MCP table splits them by server.",
+      "targets": [
+        {
+          "expr": "sum by (tool_name, success) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" [$__range]))",
+          "queryType": "instant",
+          "format": "table",
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "calls"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "calls",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "timeseries",
       "title": "Skill invocations / h",
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -231,7 +441,7 @@
       "title": "Error rate by skill",
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -252,7 +462,7 @@
       "title": "p50 skill window duration",
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -274,7 +484,7 @@
       "description": "Where the agent's work actually goes. Sub-agents and compaction were invisible before ADR-009; a session can have no skill activations at all and still be the most expensive one of the day.",
       "gridPos": {
         "x": 12,
-        "y": 28,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -290,7 +500,7 @@
       "description": "Rate only — a sub-agent's token cost is a span attribute, so read that from the warehouse (warehouse/efficiency/), not from here.",
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -306,7 +516,7 @@
       "description": "The harness's own turn timing, not our clock.",
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -322,7 +532,7 @@
       "description": "A rising auto-compaction rate is context pressure: the session is spending tokens re-reading itself. Pair with tokens_before in the warehouse.",
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -340,7 +550,7 @@
       "description": "ADR-010 decision 7. Spend that happens outside the harness, reported by whatever spent it — a CLI the agent shells out to, or an MCP server calling models of its own. stdtel cannot observe this; it receives it, so an empty graph means either nothing ran or nothing is emitting, and those are different. The money is not here: cost is a Postgres figure, on the outcomes board.",
       "gridPos": {
         "x": 12,
-        "y": 44,
+        "y": 56,
         "w": 12,
         "h": 8
       },
