@@ -3,7 +3,7 @@ name: skill-scorecard-analyst
 description: Reviews collected skill telemetry and recommends keep / refine / merge / deprecate per skill, with the evidence behind each call. Use when asked to review skill performance, analyse the scorecard, decide which skills to retire, or explain why a skill's cost or pass rate changed.
 tools: Bash, Read, Grep, Glob
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   standard_id: STD-TEL-001
   owner: platform-observability
   telemetry.emit: "true"
@@ -44,11 +44,14 @@ These are the traps specific to this dataset. Check each before you conclude any
 - **A `branch`-only link is weaker evidence.** `activation_change_request.method` says how each
   activation was joined. The scorecard counts only `branch+commit` and `commit` in the with-arm, and
   keeps `branch`-only change requests out of both arms. Report how many were excluded that way.
-- **Tail attribution splits tokens by load order.** When several skills load in one turn, compare
-  `std.skill.tail_tokens` against `std.skill.tail_tokens_first_only`. If they disagree materially, the
-  per-skill cost split is an assumption, not a measurement — report both.
-- **`load_tokens` is a chars/4 heuristic.** Never present it as a token count; treat it as an ordering
-  signal only.
+- **A skill's cost is the harness's own requests named for it** (ADR-014, #117): the scorecard's
+  `total_cost_usd`, `total_tokens` and `p50_tokens`, from `skill_activation_cost`. It is a
+  measurement for `native` rows. `requests_derived` counts requests Claude Code sent as
+  `"third-party"` and stdtel named from the one skill that ran in that prompt; say how many a figure
+  includes.
+- **NULL cost is unmeasured, never free.** `unmeasured_activations` counts skill runs in prompts with
+  no native record, because Claude Code's own telemetry was off. `abandonment_rate` excludes them. If
+  they are a large share, the cost figure describes the measured sessions only — say so.
 - **Cost is not comparable across harnesses.** Copilot reports AI Credits, Claude Code reports USD.
   Compare tokens, or state the conversion assumption you used.
 - **Developers with telemetry disabled are invisible.** That hole is non-random, so a with-versus-without
@@ -57,8 +60,9 @@ These are the traps specific to this dataset. Check each before you conclude any
 ## The recommendations
 
 - **keep** — lifts first-time pass rate at acceptable cost.
-- **refine** — right idea, poor economics: high tail cost for a small lift, or a wide gap between
-  `tail_tokens` and `tail_tokens_first_only` suggesting it is being loaded alongside overlapping skills.
+- **refine** — right idea, poor economics: high cost per run for a small lift, or a high
+  `abandonment_rate` (loaded, then no request it served), which usually means it is loaded when it
+  should not be.
 - **merge** — two skills co-occur on the same tickets and cover overlapping `policy_ids`. Name both.
 - **deprecate** — no measurable lift over the without arm, or effectively unused. Distinguish these two:
   "not used" is a discoverability problem (usually the `description`), not an ineffectiveness finding.
@@ -93,7 +97,7 @@ whole point of asking twice.
 | what does a call to each sub-agent type cost | `02_subagent_cost_per_call.sql` |
 | how often does context compact, and after what | `03_compaction_frequency.sql` |
 | which hook is spending the wall time | `04_hook_latency_by_hook.sql` |
-| how much of a skill's tail is cache creation, not reuse | `05_skill_cache_creation_share.sql` |
+| how much of a skill's spend is cache creation, not reuse | `05_skill_cache_creation_share.sql` |
 | what was spent outside the harness, and how much of it is known | `07_external_spend_and_coverage.sql` |
 
 Lead every answer with the row count and the newest timestamp in the data. `loader_run` says when the
@@ -104,11 +108,11 @@ anything, because the honest answer may be "this is stale" rather than "this wen
 
 The same discipline as above, with traps specific to these kinds:
 
-- **Never sum across kinds.** A skill's tail tokens are *inside* the turn that loaded it, and a
-  sub-agent's tokens are inside the turn that spawned it. Kinds overlap deliberately, exactly as
-  `std.session.cost` overlaps skill invocations. Compare kinds; do not add them.
+- **Never sum across kinds.** A sub-agent's tokens are inside the turn that spawned it, and a skill's
+  requests are inside the turn that ran it. Kinds overlap deliberately, exactly as `std.session.cost`
+  overlaps the requests. Compare kinds; do not add them.
 - **A sub-agent's `cache_read_tokens` is large by construction.** It re-reads the parent context on
-  every request, so cache reads dominate its total and comparing that total against a skill's tail
+  every request, so cache reads dominate its total and comparing that total against a skill's spend
   compares two different things. Report cache reads separately, and rank sub-agents on tokens
   *excluding* cache read, which `02` gives you.
 - **Count turns with `DISTINCT prompt_id`.** A turn emits one row per Stop carrying that slice's
@@ -173,7 +177,7 @@ any volume. What it can do is tell you where an expensive run's time actually we
 already decided the run is worth doing.
 
 **`self` is inside `inclusive`.** They overlap by construction. Adding them double-counts, exactly like
-the session-cost and skill-tail pair.
+adding `session_cost` to the requests it totals.
 
 **Iterations are not equal work.** One ticket may be a typo fix and the next a migration. Read `turns`
 alongside the tokens, and do not rank iterations by cost alone.

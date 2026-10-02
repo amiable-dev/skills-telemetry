@@ -32,9 +32,8 @@ def test_lifecycle(tmp_path, monkeypatch):
     assert sl.attributes["std.skill.version"] == "2.3.0"
     assert sl.attributes["std.standard_id"] == "STD-LOG-001"
     assert sl.attributes["std.policy.ids"] == "logging.required_fields,logging.no_pii"
-    assert sl.attributes["std.skill.load_tokens"] == 100
-    assert sl.attributes["std.skill.tail_tokens"] == 170
-    assert sl.attributes["gen_ai.usage.cache_read_input_tokens"] == 100
+    # #117: a skill span says what ran, never what it cost (that is the harness's record)
+    assert not [k for k in sl.attributes if k.startswith("gen_ai.usage.") or "tail_tokens" in k]
     assert sl.resource.attributes["std.branch.hash"] == expected
     assert sl.resource.attributes["std.harness"] == "claude-code"
     assert spans["other"].attributes["std.skill.version"] == "unversioned"

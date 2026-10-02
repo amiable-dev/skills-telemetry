@@ -52,6 +52,14 @@ def state_dir() -> Path:
     return d
 
 
+def _known(cls, saved: dict):
+    """A saved record, minus keys this version no longer has. A session open
+    across an upgrade holds the old shape (`load_tokens` before #117), and an
+    unknown keyword raised — inside a hook that exits 0, so in silence."""
+    fields = cls.__dataclass_fields__
+    return cls(**{k: v for k, v in saved.items() if k in fields})
+
+
 @dataclass
 class SkillWindow:
     skill: str
@@ -60,7 +68,6 @@ class SkillWindow:
     started_at: float
     ended_at: float | None = None
     tool_use_id: str | None = None
-    load_tokens: int = 0
     error: bool = False
     # straight from the hook payload (validated against a live session 2026-09-10)
     prompt_id: str = ""         # correlates with native claude_code.* telemetry
@@ -183,10 +190,10 @@ class SessionState:
         st = cls(session_id=session_id, transcript_offset=raw.get("transcript_offset", 0),
                  started_at=raw.get("started_at", 0.0), resource=raw.get("resource", {}),
                  last_export_ok=raw.get("last_export_ok"))
-        st.windows = [SkillWindow(**w) for w in raw.get("windows", [])]
+        st.windows = [_known(SkillWindow, w) for w in raw.get("windows", [])]
         st.tool_calls = {k: list(v) for k, v in (raw.get("tool_calls") or {}).items()}
-        st.subagents = [SubagentWindow(**s) for s in raw.get("subagents", [])]
-        st.compactions = [CompactionEvent(**c) for c in raw.get("compactions", [])]
+        st.subagents = [_known(SubagentWindow, s) for s in raw.get("subagents", [])]
+        st.compactions = [_known(CompactionEvent, c) for c in raw.get("compactions", [])]
         st.open_prompt_id = raw.get("open_prompt_id", "")
         st.open_prompt_started_at = raw.get("open_prompt_started_at", 0.0)
         st.seen_agent_ids = list(raw.get("seen_agent_ids") or [])

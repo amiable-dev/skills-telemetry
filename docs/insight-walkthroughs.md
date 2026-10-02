@@ -44,29 +44,33 @@ support an answer; see example 2.
 
 ## 1. What did each skill cost?
 
-Answerable at any volume. Cost is a description of what happened, not a comparison.
+Answerable at any volume. Cost is a description of what happened, not a comparison. Since 0.9.0 it is
+the harness's own requests named for the skill, never an estimate (#117):
 
 ```sql
-SELECT skill_name, count(*) AS invocations, sum(tail_tokens) AS tail_tokens,
-       sum(llm_requests) AS llm_requests
-FROM skill_invocation GROUP BY 1 ORDER BY 3 DESC;
+SELECT skill_name, skill_version, count(*) AS runs, sum(requests) AS requests,
+       sum(cost_usd) AS usd,
+       count(*) FILTER (WHERE abandoned)         AS abandoned,
+       count(*) FILTER (WHERE abandoned IS NULL) AS unmeasured
+FROM skill_activation_cost GROUP BY 1,2 ORDER BY usd DESC NULLS LAST;
 ```
 
+Captured from this machine's warehouse on 2026-10-02 (1 row):
+
 ```
-     skill_name     | invocations | tail_tokens | llm_requests
---------------------+-------------+-------------+--------------
- stdtel-onboard     |           1 |       28199 |            1
- structured-logging |           1 |           0 |            0
+  skill_name   | skill_version | runs | requests | usd | abandoned | unmeasured
+---------------+---------------+------+----------+-----+-----------+------------
+ berth-onboard | unversioned   |    1 |          |     |         0 |          1
 ```
 
-**A plausible and completely wrong reading of this table: "structured-logging is free."**
+**A plausible and completely wrong reading of this table: "berth-onboard is free."**
 
-It is not. `tail_tokens = 0` means no LLM request followed the skill load in that turn — the tail rule
-attributes tokens from *after* a skill loads until the next one loads or the turn ends, so a skill
-loaded at the very end of a turn accrues nothing. The tell is in the next column: `llm_requests = 0`.
+It is not. The empty `usd` is not zero: the prompt it ran in has no row in `llm_request` at all,
+because Claude Code's own telemetry was off in that session. The tell is the last column: `unmeasured`
+counts exactly those runs, and `abandoned` is only ever counted where the prompt *was* measured.
 
-**Never read `tail_tokens` without `llm_requests` beside it.** Zero requests means "not measured
-here", not "cost nothing". Two invocations cannot rank two skills in any case.
+**Never read `usd` without `unmeasured` beside it.** An empty cost means "not measured here", not
+"cost nothing". One run cannot rank anything in any case.
 
 ## 2. Which skills should we deprecate?
 
@@ -152,10 +156,11 @@ spend — the same empty-join trap as above, one table along.
 Two sessions of real spend, joined to zero PRs. Written as a ratio with a `LEFT JOIN`, this would
 divide by `NULL` and report nothing — indistinguishable at a glance from "the answer is zero".
 
-Note also **which denominator you are using**. `session_cost` is total spend; `skill_invocation`
-`tail_tokens` is the share one skill could claim. They overlap and must never be summed. Cost per PR
-built from `tail_tokens` alone understates real spend by however much work happens with no skill
-loaded, which is usually most of it.
+Note also **which denominator you are using**. `llm_request` is every model request; the per-skill
+views cover only the requests a skill was named on. Cost per PR built from skill cost alone
+understates real spend by however much work happens with no skill loaded, which is usually most of
+it. `session_cost` is the harness's own running total, kept to check the requests against; it must
+never be added to them.
 
 ## 5. How do the harnesses compare on cache-hit rate?
 
@@ -208,18 +213,21 @@ psql -f warehouse/efficiency/06_scope_self_vs_inclusive.sql \
 ```
 
 ```
- scope_key   scope_source  n_runs  n_turns  self_tokens  inclusive_tokens
- DEMO-101    artefact           1        8       15,044           125,060
- DEMO-186    overlay            1        2            0           113,348
- DEMO-103    artefact           1        9       17,227            39,068
+ scope_key         scope_source  n_runs  n_turns  self_tokens  inclusive_tokens  prompts_without_usage  prompts_in_scope
+ 7bd3bc1a805fe616  artefact           1        7          395            98,313                      0                 7
+ 14fd0a95a9b3910d  overlay            1        6        6,263            82,725                      0                 6
+ 19f1bbcb3a777250  artefact           1        4            0            65,939                      4                 4
+ ...
+(42 rows; demo fleet, seed 42, captured 2026-10-02)
 ```
 
-**How to read it.** `self_tokens` is what the skill's own activations carried. `inclusive_tokens` is
-everything recorded while its container was open. One row per ticket, because the scope key is the
-ticket and it rolls every iteration — so these are iterations of one run, not three separate runs.
+**How to read it.** `self_tokens` is the harness's own requests named for the loop skill.
+`inclusive_tokens` is every request in a prompt inside its container, each counted once, plus spend
+reported from outside the harness. One row per branch hash, because the scope key is the branch
+(ADR-013) and it rolls every iteration — so these are iterations, not separate runs.
 
-The first row is the shape you are looking for: the skill accounts for about a tenth of what happened
-under it. That ratio is where optimisation effort belongs, and it is invisible in any per-skill view.
+The first row is the shape you are looking for: the skill's own requests are well under one percent of
+what happened under it. That ratio is where optimisation effort belongs, and it is invisible in any per-skill view.
 
 **Four ways to misread it.**
 
@@ -229,18 +237,20 @@ this answers **what was incurred under** the skill. Whether the skill was worth 
 with-and-without arm at PR grain, and no volume of this data substitutes for it.
 
 *By summing the two columns.* They overlap by construction: `self` is inside `inclusive`. Adding them
-double-counts, the same trap as the session-cost and skill-tail pair.
+double-counts, the same trap as adding `session_cost` to the requests it totals.
 
-*By comparing iterations as though they were equal work.* `DEMO-101` covers eight turns and `DEMO-186`
-covers two. One ticket may be a typo fix and the next a migration. `n_turns` is in the output so that
+*By comparing iterations as though they were equal work.* The first row covers seven turns and the
+third four. One ticket may be a typo fix and the next a migration. `n_turns` is in the output so that
 this is visible rather than assumed.
 
 *By treating an overlay row as the artefact's own claim.* `scope_source = overlay` means somebody here
 asserted that unit on a third party's behalf. It can be wrong, and it can go stale when the artefact
 changes without changing its name.
 
-**A zero in `self_tokens` is not a bug.** It means the container is open but the skill did not activate
-again in that window — the normal case for a loop, which activates once and then runs.
+**A zero in `self_tokens` is not a bug.** It means the container is open but no request in it was named
+for the skill — the normal case for a loop, which activates once and then runs. **Read it with
+`prompts_without_usage` beside it**, though: in the third row every prompt is unmeasured, so its
+65,939 is external spend alone, and both columns say nothing about what the harness spent.
 
 ## From nothing to a populated dashboard
 
@@ -309,9 +319,9 @@ it.
 
 | looks like | actually is | the tell |
 |---|---|---|
-| a cheap skill | not measured | `llm_requests = 0` |
+| a cheap skill | not measured | `unmeasured > 0`, empty `usd` |
 | no effect | no data | join inputs are empty; print counts |
 | a harness comparison | one group | `count(DISTINCT harness) = 1` |
 | an empty pipeline | a missing time range | Tempo needs `start`/`end` |
-| total cost per PR | skill-attributed only | using `tail_tokens` where `session_cost` was meant |
+| total cost per PR | skill-attributed only | using skill cost where every request was meant |
 | what a skill caused | what happened while it ran | reading `inclusive_tokens` as an effect |

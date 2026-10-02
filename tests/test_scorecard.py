@@ -228,3 +228,48 @@ def test_a_branch_only_link_is_in_neither_arm(seeded):
     r = rows["structured-logging"]
     assert int(r["n_with"]) + int(r["n_without"]) <= total_merged_with_policy - leaked, \
         "a branch-only change request was counted in an arm"
+
+
+
+# --- #117: cost comes from the harness's own requests --------------------------------------------
+
+RETIRED = ("p50_load_tokens", "p50_tail_tokens")
+
+
+def test_the_scorecard_reports_native_cost_not_the_tail_estimate(seeded):
+    rows = scorecard_rows()
+    assert rows
+    for col in ("total_cost_usd", "total_tokens", "p50_tokens", "abandonment_rate", "unmeasured_activations",
+                "requests_derived"):
+        assert col in rows[0], col
+    for col in RETIRED:
+        assert col not in rows[0], col
+    assert any(r["total_cost_usd"] for r in rows), "the demo fleet must show some cost"
+
+
+def test_scorecard_cost_reconciles_with_the_activation_view(seeded):
+    """The scorecard sums skill_activation_cost; it must not multiply it."""
+    rows = scorecard_rows()
+    for r in rows:
+        if r["total_cost_usd"] is None:
+            continue
+        direct = psql(f"SELECT sum(cost_usd) FROM skill_activation_cost WHERE skill_name = '{r['skill_name']}' "
+                      f"AND skill_version = '{r['skill_version']}' AND harness = '{r['harness']}' "
+                      "AND started_at >= '2026-07-01' AND started_at < '2026-09-01'")
+        assert r["total_cost_usd"] == direct, r["skill_name"]
+
+
+def test_scorecard_abandonment_ignores_unmeasured_activations(seeded):
+    """A session without native telemetry is not a session of abandoned skills."""
+    for r in scorecard_rows():
+        got = psql(f"SELECT avg(CASE WHEN abandoned THEN 1 ELSE 0 END) FROM skill_activation_cost "
+                   f"WHERE abandoned IS NOT NULL AND skill_name = '{r['skill_name']}' "
+                   f"AND skill_version = '{r['skill_version']}' AND harness = '{r['harness']}' "
+                   "AND started_at >= '2026-07-01' AND started_at < '2026-09-01'")
+        unmeasured = psql(f"SELECT count(*) FROM skill_activation_cost WHERE abandoned IS NULL "
+                          f"AND skill_name = '{r['skill_name']}' AND skill_version = '{r['skill_version']}' "
+                          f"AND harness = '{r['harness']}' "
+                          "AND started_at >= '2026-07-01' AND started_at < '2026-09-01'")
+        assert r["abandonment_rate"] == got, r["skill_name"]
+        assert (r["unmeasured_activations"] or 0) == unmeasured, r["skill_name"]
+    assert any(r["unmeasured_activations"] for r in scorecard_rows()), "the demo must show unmeasured ones"

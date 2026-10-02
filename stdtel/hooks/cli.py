@@ -556,7 +556,7 @@ def stop(p: dict, exporter=None) -> int:
     from stdtel.exporter import build_provider, emit_activations, emit_session_cost
     from stdtel.state import SessionState
     from stdtel.manifest import DEFAULT_SCOPE
-    from stdtel.transcript import attribute, read_slice, single_model
+    from stdtel.transcript import read_slice
 
     sid = p.get("session_id", "unknown")
     st = SessionState.load(sid)
@@ -564,7 +564,6 @@ def stop(p: dict, exporter=None) -> int:
     transcript = Path(p.get("transcript_path", ""))
     sl = read_slice(transcript, st.transcript_offset)
     st.transcript_offset = sl.new_offset
-    attributions = {a.skill: a for a in attribute(sl)}
     loads = {l.skill: l for l in sl.skill_loads}
     cat = _catalogue()
     # any window still open at Stop is closed now (turn ended)
@@ -588,7 +587,6 @@ def stop(p: dict, exporter=None) -> int:
             "std.skill.version": w.version,
             # the transcript's caller block is ground truth; the hook payload may not carry it
             "std.skill.trigger": (load.caller if load and load.caller else w.trigger),
-            "std.skill.load_tokens": load.load_tokens if load else 0,
         }
         if ":" in w.skill:
             attrs["std.skill.plugin"] = w.skill.rsplit(":", 1)[0]
@@ -601,18 +599,8 @@ def stop(p: dict, exporter=None) -> int:
             attrs["std.skill.duration_ms"] = w.duration_ms
         if manifest:
             attrs.update(manifest.as_attributes())
-        a = attributions.get(w.skill)
-        if a:
-            attrs["std.skill.tail_tokens"] = a.tail.total
-            attrs["std.skill.tail_tokens_first_only"] = a.tail_first_only.total
-            attrs["std.skill.llm_requests"] = a.request_count
-            # "unknown" when no request fell in the tail, as before; a tail across
-            # two models names neither (ADR-012 decision 5)
-            if not a.models:
-                attrs["gen_ai.request.model"] = "unknown"
-            elif single_model(a.models):
-                attrs["gen_ai.request.model"] = single_model(a.models)
-            attrs.update(a.tail.as_attributes())
+        # #117: no tokens and no model here. What the skill cost is the harness's
+        # own requests named for it (ADR-014 decision 10), joined by prompt id.
         # ADR-010 decision 8: the OpenTelemetry gen-ai conventions distinguish a
         # tool execution from a workflow invocation, and a skill that declares a
         # unit of work is the second. Emitting `execute_tool` for both would make

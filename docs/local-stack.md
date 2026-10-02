@@ -105,7 +105,7 @@ curl -s --get http://localhost:3200/api/search \
 
 # 5. load traces into the warehouse, then query it
 python warehouse/load_traces.py --tempo http://localhost:3200 --dsn "$STDTEL_DSN" --since 24h
-psql "$STDTEL_DSN" -c 'SELECT skill_name, skill_version, branch_hash, tail_tokens FROM skill_invocation;'
+psql "$STDTEL_DSN" -c 'SELECT skill_name, skill_version, branch_hash, started_at FROM skill_invocation;'
 
 # 6. with Claude Code's native events switched on (ADR-014), load its model requests too
 python -m warehouse.load_requests --loki http://localhost:11010 --dsn "$STDTEL_DSN" --since 24h

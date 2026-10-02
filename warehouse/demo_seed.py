@@ -33,7 +33,7 @@ DEMO_MARKER = "DEMO"
 DEMO_REPO_ID = "github.com/demo-org/demo-repo"
 TABLES = ("ticket", "change_request", "change_request_commit", "change_request_ticket",
           "commit_evidence", "policy_result", "skill_invocation", "session_cost",
-          "defect", "artefact_activation", "mcp_tool_call")
+          "defect", "artefact_activation", "mcp_tool_call", "llm_request")
 
 #: Sub-agent types the demo fleet spawns, with how expensive each is per call.
 #: Deliberately uneven: the point of the efficiency queries is that one artefact
@@ -139,7 +139,11 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
         })
 
         if used_skill:
-            tail = int(total_in * rng.uniform(0.3, 0.7))
+            # #117: skill rows carry no tokens; a skill's cost is the harness's own
+            # requests named for it (llm_request below). The draws that fed the
+            # retired estimates are still made, in the same order, so every later
+            # value in the fleet stays where the docs show it.
+            rng.uniform(0.3, 0.7)                                   # was the tail
             # ~5% of invocations are of a skill the catalogue does not know
             catalogued = rng.random() > 0.05
             out["skill_invocation"].append({
@@ -155,12 +159,10 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "skill_version": skill["version"] if catalogued else "unversioned",
                 "standard_id": skill["standard_id"] if catalogued else None,
                 "policy_ids": skill["policies"] if catalogued else [],
-                "trigger": "direct", "model": "claude-opus-5",
-                "load_tokens": rng.randint(200, 900), "tail_tokens": tail,
-                "tail_tokens_first_only": tail, "input_tokens": total_in,
-                "output_tokens": total_out,
-                "cache_read_tokens": int(total_in * 0.5), "cache_creation_tokens": int(total_in * 0.1),
-                "llm_requests": rng.randint(1, 9), "is_error": rng.random() < 0.03,
+                "trigger": "direct",
+                # the two retired draws (load and request count) sat here, between
+                # ended_at's and is_error's; a tuple is truthy, so this only spends them
+                "is_error": (rng.randint(200, 900), rng.randint(1, 9)) and rng.random() < 0.03,
                 "branch_hash": sc_branch, "repo": "demo-org/demo-repo", "team": team,
                 "user_hash": f"demo-user-{dev}",
             })
@@ -219,17 +221,43 @@ def generate(seed: int = 42, prs: int = 120) -> dict[str, list[dict]]:
                 "kind": "skill",
                 "name": "demo-epic-loop" if scoped else si["skill_name"], "source": "hook",
                 "prompt_id": f"demo-prompt-{n}-0", "parent_prompt_id": None,
-                "model": si["model"], "input_tokens": si["input_tokens"],
-                "output_tokens": si["output_tokens"],
-                "cache_read_tokens": si["cache_read_tokens"],
-                "cache_creation_tokens": si["cache_creation_tokens"],
-                "llm_requests": si["llm_requests"], "tool_calls": None,
+                "model": None, "input_tokens": None, "output_tokens": None,
+                "cache_read_tokens": None, "cache_creation_tokens": None,
+                "llm_requests": None, "tool_calls": None,
                 "duration_ms": None, "is_error": si["is_error"],
                 "subagent_type": None, "subagent_id": None, "subagent_depth": None,
                 "compaction_reason": None, "compaction_tokens_before": None,
                 "compaction_tokens_after": None, "compaction_turns_since_previous": None,
                 "hook_ms": None, "hook_ms_by_hook": None,
             })
+
+        # ADR-014 / #117: the harness's own requests, one row each. A separate
+        # random stream per PR, so adding these moved no other value in the fleet.
+        # About one session in ten has native telemetry off (no rows: unmeasured);
+        # a few skill prompts have requests none of which name the skill
+        # (abandoned); in the rest about two thirds of the skill prompt's requests
+        # are named for it.
+        req_rng = random.Random(seed * 7919 + n)
+        if req_rng.random() > 0.1:
+            skill_named = (("demo-epic-loop" if scoped else out["skill_invocation"][-1]["skill_name"])
+                           if used_skill and req_rng.random() > 0.05 else None)
+            for turn_no in range(turns):
+                at = opened + dt.timedelta(minutes=turn_no * 6 + 1)
+                for k in range(req_rng.randint(1, 4)):
+                    inp, outp = req_rng.randint(5, 400), req_rng.randint(20, 2000)
+                    cr, cc = req_rng.randint(5_000, 60_000), req_rng.randint(0, 8_000)
+                    named = skill_named if turn_no == 0 and req_rng.random() < 0.67 else None
+                    out["llm_request"].append({
+                        "harness": "claude-code", "request_id": f"demo-req-{n:06d}-{turn_no}-{k}",
+                        "session_id": session_id, "prompt_id": f"demo-prompt-{n}-{turn_no}",
+                        "ended_at": _iso(at + dt.timedelta(seconds=k * 9)),
+                        "duration_ms": req_rng.randint(800, 30_000), "model": "claude-opus-5",
+                        "input_tokens": inp, "output_tokens": outp,
+                        "cache_read_tokens": cr, "cache_creation_tokens": cc,
+                        "cost_usd": round((inp * 15 + outp * 75 + cr * 1.5 + cc * 18.75) / 1e6, 7),
+                        "skill_name": named, "query_source": "main",
+                        "user_hash": f"demo-user-{dev}", "attribution_source": "native",
+                    })
 
         # ADR-013 commit evidence. Most skill-using change requests carry it, so
         # their skill link is `branch+commit` and they reach the with-arm; some
@@ -399,7 +427,7 @@ def load(dsn: str, data: dict[str, list[dict]]) -> dict[str, int]:
     from warehouse.load_delivery import CONFLICT_KEYS, TABLES as DELIVERY_COLS
     conflict = dict(CONFLICT_KEYS, skill_invocation="span_id", session_cost="session_id",
                     artefact_activation="span_id", mcp_tool_call="tool_use_id",
-                    commit_evidence="patch_id, activation_span_id")
+                    commit_evidence="patch_id, activation_span_id", llm_request="harness, request_id")
     counts = {}
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         for table, rows in data.items():
@@ -431,6 +459,7 @@ def clear(dsn: str) -> dict[str, int]:
             ("session_cost", "session_id", "demo-session-%"), ("ticket", "ticket_id", f"{DEMO_MARKER}-%"),
             ("artefact_activation", "span_id", "demoact-%"),
             ("mcp_tool_call", "tool_use_id", "demo-toolu-%"),
+            ("llm_request", "request_id", "demo-req-%"),
         ):
             cur.execute(f"DELETE FROM {table} WHERE {column} LIKE %s", (pattern,))
             counts[table] = cur.rowcount

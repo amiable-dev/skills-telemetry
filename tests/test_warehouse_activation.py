@@ -324,7 +324,9 @@ def test_a_skill_activation_lands_in_both_tables(loaded):
     assert len(act) == 1 and len(inv) == 1, "a skill activation must reach both tables"
     assert act[0]["kind"] == "skill" and act[0]["name"] == "structured-logging"
     assert inv[0]["skill_name"] == "structured-logging"
-    assert inv[0]["plugin"] == "epic-loop" and inv[0]["tail_tokens"] == 28199
+    assert inv[0]["plugin"] == "epic-loop"
+    # the seeded span still carries 0.8's tail estimate; it loads, without it (#117)
+    assert "tail_tokens" not in inv[0] and "load_tokens" not in inv[0]
     assert inv[0]["policy_ids"] == ["logging.required_fields", "logging.no_pii"]
 
 
@@ -451,6 +453,8 @@ def test_tokens_by_artefact_kind_reports_every_kind_and_counts_turns_once(loaded
     assert out["subagent"]["n_without_usage"] == 1, "the usage-free sub-agent is declared"
     assert out["subagent"]["cache_read_tokens"] == 3200000 + 500000
     assert out["compaction"]["input_tokens"] is None, "a compaction reports no usage"
+    # #117: no native records in this module, so the skill row is unmeasured, not zero
+    assert out["skill"]["input_tokens"] is None and out["skill"]["n_without_usage"] == 1
 
 
 def test_tokens_by_kind_is_scoped_to_the_session_it_was_asked_about(loaded):
@@ -499,15 +503,9 @@ def test_hook_latency_is_reported_per_hook_basename(loaded):
     assert all("/" not in hook for hook in out), "a hook is a basename, never a path"
 
 
-def test_cache_creation_share_of_a_skill_tail(loaded):
-    out = {r["skill_name"]: r for r in efficiency(
-        "05_skill_cache_creation_share.sql", {"since": SINCE, "until": UNTIL})}
-    assert set(out) == {"structured-logging", "stdtel-onboard"}, out
-    row = out["structured-logging"]
-    assert row["n_invocations"] == 1 and row["n_without_usage"] == 0
-    tail = 1200 + 800 + 90000 + 4000
-    assert row["tail_tokens"] == tail
-    assert float(row["cache_creation_share"]) == pytest.approx(4000 / tail, abs=5e-5)
+# Q5's behaviour, now over the harness's own requests (#117), is tested in
+# tests/test_skill_request_cost.py, which seeds llm_request; this module's fake
+# Tempo carries no native records.
 
 
 @pytest.mark.parametrize("name", sorted(

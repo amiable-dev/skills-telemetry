@@ -57,7 +57,7 @@ questions, including the ones the data cannot answer:
 skills/<name>/SKILL.md      skill catalogue with validated front-matter (the contract)
 stdtel/manifest.py          front-matter parser + `stdtel-validate` CI gate
 stdtel/hooks/cli.py         Claude Code hooks: session-start | pre-tool-use | post-tool-use | stop
-stdtel/transcript.py        incremental JSONL reader + token attribution (tail rule, first-only sensitivity)
+stdtel/transcript.py        incremental JSONL reader: requests, usage, skill loads, turns, sub-agents
 stdtel/artefact.py          the capture contract: kinds and their attribute allowlists
 stdtel/exporter.py          std.artefact.activation spans via OTLP/HTTP (content scrubbed)
 stdtel/enrich.py            join keys: std.branch.hash, commit patch-ids, std.repo, std.team, std.harness
@@ -196,10 +196,12 @@ tool-calls onto `std.skill.*`.
 
 ## Span schema
 
-Two span types, emitted at `Stop`. **They overlap by design and must never be summed:**
-`std.session.cost` is the session's total spend, `std.artefact.activation` attributes a *share* of that
-total to one skill. Use session cost as the denominator for cost-per-PR; use invocation tail tokens to
-compare skills with each other.
+Two span types, emitted at `Stop`. `std.session.cost` is the session's total spend, from the
+transcript. `std.artefact.activation` records that an artefact ran, and for a turn, sub-agent or
+compaction what the transcript observed it spend. **A skill activation carries no cost** since 0.9.0
+(#117): what a skill cost is the harness's own requests named for it, in `skill_activation_cost`
+(ADR-014). Never add session cost to the per-request figures; it is the harness's total, kept to check
+them against.
 
 ### `std.session.cost`
 
@@ -238,8 +240,7 @@ and an observation are not the same measurement and a query can tell them apart.
 | `std.skill.name/version/trigger`, `std.standard_id`, `std.policy.ids` | hook + manifest |
 | `std.skill.invoked_as`, `std.skill.plugin` | raw invocation string (plugin skills are namespaced) |
 | `std.skill.content_hash` | SHA-256 of the SKILL.md **body**, truncated. The version is asserted; this is observed — one version with two hashes is an edit that skipped the bump |
-| `std.skill.load_tokens`, `std.skill.tail_tokens`, `std.skill.tail_tokens_first_only`, `std.skill.llm_requests` | transcript attribution |
-| `gen_ai.usage.{input,output,cache_read_input,cache_creation_input}_tokens`, `gen_ai.request.model` | transcript |
+| *(no usage, no model)* | retired in 0.9.0 (#117): the tail-rule estimate. Cost is `skill_activation_cost` |
 | `std.branch.hash`, `std.repo`, `std.team`, `std.harness`, `std.harness.mode` | resource (branch refreshed every Stop) |
 | `std.user.hash` | hook, already SHA-256 of uid + hostname (the collector also pseudonymises `user.email` if a harness supplies one) |
 
@@ -250,9 +251,9 @@ and an observation are not the same measurement and a query can tell them apart.
   outright and a test asserts nothing leaks.
 - Skill name is parsed from the Skill tool input in hooks (the field is `skill`, verified against 120 real invocations). Parsing is isolated in `hooks/cli.py::_skill_from_payload`.
 - `std.skill.trigger` reports the transcript's `caller.type` where present, else `unknown` — it is never guessed.
-- Tail attribution splits by load order; when several skills load in one turn compare against `tail_tokens_first_only`.
 - Copilot granularity is per turn; use Claude Code's finer data for within-harness tuning only.
-- `load_tokens` uses a chars/4 heuristic on the Skill tool result.
+- Per-skill cost needs Claude Code's own telemetry on (`stdtel-install settings`, or `--native-only`
+  with the plugin). Without it a skill's runs are counted as `unmeasured`, never as free.
 - A turn emits one span per `Stop` carrying that slice's **delta**, so two Stops inside one turn
   produce two rows that sum correctly. Count turns with `count(DISTINCT prompt_id)`, never `count(*)`.
 - `subagent` and `compaction` are Claude Code only. Copilot has no confirmed equivalent, so those

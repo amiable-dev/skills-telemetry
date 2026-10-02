@@ -4,6 +4,59 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Changed — breaking, on the wire and in the warehouse
+- **A skill's cost is the harness's own requests, and stdtel's estimate is retired (ADR-014
+  decision 10, #117).** Native records were verified live in 0.8.0, which started the clock the ADR
+  set. A user will see three things:
+  1. **Skill spans carry no tokens and no model.** `std.skill.load_tokens`, `std.skill.tail_tokens`,
+     `std.skill.tail_tokens_first_only`, `std.skill.llm_requests` and the `gen_ai.usage.*` and
+     `gen_ai.request.model` attributes are gone from `kind=skill` activations, and the allowlist
+     refuses them. Turn, sub-agent, compaction and session spans keep their counts: those are what the
+     transcript observed, not an attribution.
+  2. **Nine `skill_invocation` columns are dropped**: the three estimates, `llm_requests`, the four
+     token columns and `model`. They defaulted to 0, which for every new row would have read as
+     "measured, and free". As at the ADR-013 cutover, the old values (estimates) are not migrated.
+  3. **Per-skill cost is NULL for any session without Claude Code's own telemetry on**: every
+     machine that has not run `stdtel-install settings` (or `--native-only` with the plugin) since
+     0.8.0. Such runs are counted as `unmeasured`, never as free.
+- New views:
+  - `skill_request_cost`, one row per (session, prompt, skill) over `llm_request_attributed`;
+  - `skill_activation_cost`, the same with stdtel's version, plus `abandoned`, which is NULL when
+    the prompt has no native record.
+- Rebuilt on the new views:
+  - the scorecard: `total_cost_usd`, `total_tokens`, `p50_tokens`, `requests_derived`,
+    `abandonment_rate` and `unmeasured_activations` replace `p50_load_tokens`, `p50_tail_tokens`
+    and the old `total_tokens`;
+  - Q5 (`skill_tokens`, `n_prompts`, `n_unmeasured`);
+  - Q6, which counts each request in a scoped prompt once, plus external spend, and reports
+    `prompts_without_usage`;
+  - the loop and token-by-kind dashboard panels;
+  - Q1, whose skill row now reports the harness's requests named for a skill in the session, and
+    counts unmeasured runs, rather than showing every skill as usage-free;
+  - the demo fleet, which now seeds `llm_request`. Every value it seeded before is unchanged: a full
+    dump of `generate(42)` before and after, minus the retired fields, is byte-identical.
+- The scorecard panel is now held verbatim to `scorecard.sql` by a test, and every Warehouse panel
+  is executed against the schema in tests. Before, a panel selecting a dropped column passed all of
+  them.
+- `stdtel-query` 1.2.0 and the scorecard analyst 1.1.0 read cost from the views.
+- **`telemetry.emit: false` means less than it did.** It still suppresses stdtel's named span. It
+  cannot stop Claude Code naming the skill on its own requests, which are now where a skill's cost is
+  read from. `docs/for-developers.md` says so.
+- **Copilot loses nothing it had.** Copilot's own hook dialect sends `transcriptPath`, which the Stop
+  hook never read, so the tail rule never produced Copilot data. Copilot per-skill tokens arrive with
+  #115.
+
+### Privacy
+- The transcript reader no longer reads a Skill tool result's content. chars/4 was the only reason
+  it ever did.
+
+### Fixed
+- A session open across an upgrade no longer loses its skill windows. Saved state is loaded with
+  unknown keys skipped. Without that, the removed `load_tokens` field would have made every 0.8
+  state file raise inside a hook that exits 0, so the loss would have been silent.
+
 ## 0.8.1 — 2026-10-01
 
 One fix for plugin installs, which are the common case.

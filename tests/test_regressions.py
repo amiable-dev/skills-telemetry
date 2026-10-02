@@ -38,7 +38,7 @@ def test_stop_without_transcript_still_emits(tmp_path):
     assert hooks.stop({"session_id": sid}, exporter=e) == 2      # was 0, silently
     span = next(s for s in e.get_finished_spans()
                 if s.attributes.get("std.artefact.kind") == "skill")
-    assert span.attributes["std.skill.load_tokens"] == 0
+    assert span.attributes["std.skill.name"] == "structured-logging"
 
 
 # --- 2/3. the endpoint never reached the hook, and the flush never timed out ---
@@ -211,9 +211,9 @@ def test_session_with_no_skill_still_emits_cost(tmp_path):
     assert span.attributes["gen_ai.usage.input_tokens"] > 0
 
 
-def test_session_cost_is_the_total_not_the_tail(tmp_path):
-    """Session cost and skill tail deliberately overlap; the total must be >= the
-    tail, and the two must never be summed."""
+def test_session_cost_is_the_whole_slice(tmp_path):
+    """The session's cost is every request in the slice, whether or not a skill
+    loaded. (It used to be checked against the skill tail, retired in #117.)"""
     from tests.test_transcript import make_transcript
     t = tmp_path / "t.jsonl"
     make_transcript(t)
@@ -225,10 +225,7 @@ def test_session_cost_is_the_total_not_the_tail(tmp_path):
     e = InMemorySpanExporter()
     hooks.stop({"session_id": sid, "transcript_path": str(t)}, exporter=e)
     by_name = {s.name: s for s in e.get_finished_spans()}
-    by_kind = {s.attributes.get("std.artefact.kind"): s for s in e.get_finished_spans()}
-    total = by_name["std.session.cost"].attributes["gen_ai.usage.input_tokens"]
-    tail = by_kind["skill"].attributes["gen_ai.usage.input_tokens"]
-    assert total >= tail > 0
+    assert by_name["std.session.cost"].attributes["gen_ai.usage.input_tokens"] == 10 + 20 + 30 + 5 + 40
 
 
 def test_empty_slice_emits_nothing(tmp_path):
