@@ -250,7 +250,7 @@ and an observation are not the same measurement and a query can tell them apart.
   `tool_response` carry commands, file contents and diffs — `scrub()` refuses those attribute names
   outright and a test asserts nothing leaks.
 - Skill name is parsed from the Skill tool input in hooks (the field is `skill`, verified against 120 real invocations). Parsing is isolated in `hooks/cli.py::_skill_from_payload`.
-- `std.skill.trigger` reports the transcript's `caller.type` where present, else `unknown` — it is never guessed.
+- `std.skill.trigger` reports the transcript's `caller.type` where present, else `unknown` — it is never guessed. A skill you typed as `/name` is `user-slash`; a catalogued skill named first in a `/loop` argument (`/loop /epic-loop …`) is `loop`. Both are read from the transcript (`std.artefact.source=transcript`), because neither goes through the Skill tool (#144). `loop` is an inference — the harness activates only `/loop` — so filter it out when you want only what the harness activated.
 - Copilot granularity is per turn; use Claude Code's finer data for within-harness tuning only.
 - Per-skill cost needs Claude Code's own telemetry on (`stdtel-install settings`, or `--native-only`
   with the plugin). Without it a skill's runs are counted as `unmeasured`, never as free.

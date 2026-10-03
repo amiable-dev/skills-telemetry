@@ -8,6 +8,7 @@ because Claude Code records each request with the skill it served.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,6 +69,28 @@ class HookRun:
 
 
 @dataclass
+class SlashSkill:
+    """A skill the user started by typing it (#144), or one named first in
+    `/loop`'s arguments. `loaded` means the harness wrote its skill-load entry
+    ("Base directory for this skill:") on the same prompt; a built-in command
+    such as /clear has none. Only the name is kept — never the arguments."""
+    ts: float
+    name: str
+    prompt_id: str
+    trigger: str            # "user-slash" | "loop"
+    loaded: bool = False
+
+
+#: A skill or command name, as typed. Anything else in that position is not one.
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_COMMAND = re.compile(r"<command-name>/?([^<\s]+)</command-name>")
+_FIRST_ARG = re.compile(r"<command-args>\s*(\S+)")
+SKILL_LOAD_PREFIX = "Base directory for this skill:"
+#: Claude Code's bundled scheduler. Its first argument may be another command.
+LOOP_COMMAND = "loop"
+
+
+@dataclass
 class CompactionMark:
     """A `system`/`compact_boundary` entry. Compaction *appends* to the
     transcript rather than rewriting it — checked on a session with two
@@ -94,10 +117,34 @@ class TranscriptSlice:
     #: key an MCP emitter receives as `_meta["claudecode/toolUseId"]`; nothing
     #: else about the call — no input, no result — is read.
     mcp_calls: list[tuple] = field(default_factory=list)
+    #: Slash commands seen, and the prompts on which the harness loaded a skill
+    #: (#144). Read through slash_skills(); nothing else about the entry is kept.
+    slash_commands: list = field(default_factory=list)
+    skill_load_prompts: set = field(default_factory=set)
     #: Last `cost-state` entry seen. Cumulative for the whole session and
     #: carries no timestamp, so it is the session's total, never a turn's.
     cost_state: dict | None = None
     new_offset: int = 0
+
+    def slash_skills(self, include_unloaded: bool = False) -> list[SlashSkill]:
+        """Skills typed by the user, and skills named first in `/loop`'s arguments.
+
+        A typed command counts when the harness loaded a skill for it; with
+        include_unloaded, every typed command is returned so the caller can
+        check it against the catalogue instead. A `/loop` argument is never
+        loaded by the harness, so it is always returned for that check.
+        """
+        out = []
+        for ts, name, pid, first in self.slash_commands:
+            if name == LOOP_COMMAND:
+                inner = first[1:] if first.startswith("/") else ""
+                if inner and _NAME.match(inner):
+                    out.append(SlashSkill(ts, inner, pid, "loop"))
+                continue
+            loaded = pid in self.skill_load_prompts
+            if loaded or include_unloaded:
+                out.append(SlashSkill(ts, name, pid, "user-slash", loaded))
+        return out
 
     def totals(self) -> Usage:
         """Every token in the slice, whether or not a skill was loaded.
@@ -234,7 +281,33 @@ def read_slice(path: Path, offset: int = 0) -> TranscriptSlice:
             if pid and not e.get("isMeta") and str(pid) not in _seen_turns:
                 _seen_turns.add(str(pid))
                 out.turns.append(TurnMark(ts=_ts(e), prompt_id=str(pid)))
+            _read_slash(out, e, msg, str(pid or ""))
     return out
+
+
+def _user_text(msg: dict) -> str:
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def _read_slash(out: TranscriptSlice, e: dict, msg: dict, pid: str) -> None:
+    """Record a typed command's name and first argument token, and whether the
+    harness loaded a skill on this prompt. The skill's text and the rest of the
+    arguments are content; only a prefix test and two regexes touch them."""
+    text = _user_text(msg)
+    if e.get("isMeta"):
+        if text.startswith(SKILL_LOAD_PREFIX):
+            out.skill_load_prompts.add(pid)
+        return
+    m = _COMMAND.search(text)
+    if not m or not _NAME.match(m.group(1)):
+        return
+    first = _FIRST_ARG.search(text)
+    out.slash_commands.append((_ts(e), m.group(1), pid, first.group(1) if first else ""))
 
 
 @dataclass

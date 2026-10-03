@@ -86,6 +86,10 @@ Claude Code sends it, not stdtel.
 ## What never leaves your machine
 
 - **No prompts, no model responses, no messages.** Not truncated, not hashed — never read into a span.
+  One narrow exception: when you type a slash command, its **name** is read, so that a skill you start
+  by typing `/name` is recorded like one the model invoked. For `/loop`, the **first word** of its
+  argument is read too, and kept only when it names a skill in your catalogue (`/loop /epic-loop …`
+  records `epic-loop`). Nothing else you typed after the command is read (#144).
 - **No file contents, diffs, or paths you edited.**
 - **Nothing a sub-agent was asked to do or said back.** When a sub-agent ends, the harness hands the
   hook its final reply (`last_assistant_message`) and the path to its transcript. Neither is read.
