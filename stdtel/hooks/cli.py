@@ -478,6 +478,46 @@ def _scope_key(st, unit: str) -> str:
     return ""
 
 
+def _slash_activations(st, sl, cat) -> list[dict]:
+    """Skills the user typed, and catalogued skills named first in `/loop`'s
+    arguments (#144). Neither goes through the Skill tool, so `PreToolUse` never
+    sees them; both are read from the transcript, and labelled so.
+
+    A typed command is a skill when the harness loaded one for it, or when the
+    catalogue knows the name. A `/loop` argument is never loaded by the harness
+    — only `loop` is — so it counts only when the catalogue knows it, and its
+    trigger says `loop`, so the inference can always be told apart and filtered.
+    Either way the skill's declared scope opens, which is the point: a loop is
+    usually started by typing it.
+    """
+    from stdtel import artefact
+    from stdtel.manifest import DEFAULT_SCOPE
+    out = []
+    for sk in sl.slash_skills(include_unloaded=True):
+        manifest, resolved = _resolve(sk.name, cat)
+        if manifest is None and not sk.loaded:
+            continue                    # a built-in command, or a /loop argument nothing vouches for
+        if manifest is not None:
+            _apply_scope(st, manifest, resolved)
+            if not manifest.telemetry_emit:
+                continue
+        attrs = {"std.skill.name": resolved, "std.skill.invoked_as": sk.name,
+                 "std.skill.version": manifest.version if manifest else "unversioned",
+                 "std.skill.trigger": sk.trigger,
+                 "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "Skill"}
+        if ":" in sk.name:
+            attrs["std.skill.plugin"] = sk.name.rsplit(":", 1)[0]
+        if sk.prompt_id:
+            attrs["std.prompt.id"] = sk.prompt_id
+        if manifest is not None:
+            attrs.update(manifest.as_attributes())
+            if manifest.effective_scope() != DEFAULT_SCOPE:
+                attrs["gen_ai.operation.name"] = "invoke_workflow"
+        out.append(artefact.activation(artefact.KIND_SKILL, sk.ts, sk.ts, attrs, name=resolved,
+                                       source=artefact.SOURCE_TRANSCRIPT))
+    return out
+
+
 def _apply_scope(st, manifest, name: str) -> None:
     """Open or roll the container this artefact declares (ADR-010).
 
@@ -613,6 +653,7 @@ def stop(p: dict, exporter=None) -> int:
         invocations.append(artefact.activation(
             artefact.KIND_SKILL, w.started_at, w.ended_at or time.time(),
             attrs, name=resolved, error=w.error))
+    invocations.extend(_slash_activations(st, sl, cat))
     now = time.time()
     invocations.extend(_turn_activations(st, sl, str(p.get("permission_mode") or ""), now))
     _commit_evidence(st, Path(p.get("cwd", ".")), invocations)

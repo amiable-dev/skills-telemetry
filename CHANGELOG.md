@@ -7,6 +7,21 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Fixed
+- **A skill started by slash command is recorded, and a loop skill started that way opens its scope
+  (#144).** stdtel captured skills only through the Skill tool. A skill the user types as `/name`
+  never goes through that tool, so it was invisible. Verified: `/probe-echo` produced a turn and no
+  skill activation. A loop skill declaring `telemetry.scope` therefore never opened its container
+  when started the usual way. The Stop hook now reads typed commands from the transcript:
+  - A command is a skill when the harness loaded one for it (its "Base directory for this skill:"
+    entry), or when the catalogue knows the name. Built-ins such as `/model` and `/compact` are
+    ignored. A typed skill is recorded with trigger `user-slash`.
+  - **`/loop /epic-loop …`**: the harness activates only `loop`, and `epic-loop` is its argument.
+    By decision, a catalogued skill named first in `/loop`'s argument is recorded as invoked with
+    trigger `loop`, so the inference is labelled and can be filtered out.
+  - Both are `std.artefact.source=transcript`. Only the command name and that first argument word
+    are read. Replayed against the real sightline transcript, it finds the session's five
+    `/loop /epic-loop` starts, the first on 31 August, and ignores `/model`, `/compact` and
+    `/advisor`.
 - **MCP server, MCP tool and skill names survive the collector (#142).** With the detailed view on,
   Claude Code puts them only inside `tool_parameters`, beside shell commands. Every user-configured
   MCP call's `tool_name` is the literal `"mcp_tool"`. The collector deleted `tool_parameters` whole,
