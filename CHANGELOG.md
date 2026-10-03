@@ -4,7 +4,10 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
-## Unreleased
+## 0.9.1 — 2026-10-03
+
+Fixes found watching a live session: usage on the dashboard, MCP and skill names through the collector, and
+skills started by slash command. Restart the collector and Grafana after upgrading (`docs/local-stack.md`).
 
 ### Fixed
 - **A skill started by slash command is recorded, and a loop skill started that way opens its scope
