@@ -98,8 +98,8 @@ def fake(fail_chunk_containing: int | None = None):
 
     def write_chunk(batches):
         calls["written"].append({table: [r.get("span_id") or r.get("session_id") for r in rows]
-                                 for table, _, rows, _ in batches if rows})
-        return sum(len(rows) for _, _, rows, _ in batches)
+                                 for table, _, rows, *_ in batches if rows})
+        return sum(len(rows) for _, _, rows, *_ in batches)
     return search, fetch, write_chunk, calls
 
 
@@ -276,3 +276,90 @@ def test_load_chunks_searches_through_the_splitting_search(monkeypatch):
         return search(query, start, end)[:2]
     lt.load_chunks([(T0, T0 + 168 * H), (T0 + 168 * H, T0 + 336 * H)], capped, fetch, write_chunk)
     assert sorted(span_ids_written(calls)) == ["wtest-edge", "wtest-extra", "wtest-mid", "wtest-old"]
+
+
+# --- council round 2 on #172: the newest session snapshot wins --------------------------------
+
+def session_span(sid: str, ended: int, tokens: int) -> dict:
+    s = otlp_span(lt.SESSION_SPAN_NAME, "wtest-sc-" + str(ended), {
+        "session.id": sid, "std.harness": "claude-code", "gen_ai.usage.input_tokens": tokens,
+        "gen_ai.usage.output_tokens": 1}, start=dt.datetime.fromtimestamp(T0, dt.timezone.utc))
+    s["endTimeUnixNano"] = str(ended * 10**9)
+    return s
+
+
+def parsed(span: dict) -> dict:
+    (row,) = lt.collect({"t": {}}, lambda tid: trace_doc([span]))[2]
+    return row
+
+
+def test_a_session_snapshot_records_when_it_was_observed():
+    """std.session.cost is emitted at every Stop with the transcript's running
+    total; every snapshot starts at the session's start, and ends at its Stop."""
+    row = parsed(session_span("wtest-s", T0 + 3 * H, 5))
+    assert row["observed_at"] == dt.datetime.fromtimestamp(T0 + 3 * H, dt.timezone.utc)
+    assert "observed_at" in lt.SESSION_COLS
+
+
+@pytest.fixture
+def pg():
+    psycopg = pytest.importorskip("psycopg")
+    dsn = "postgresql://postgres:stdtel@localhost:5432/stdtel"
+    try:
+        conn = psycopg.connect(dsn, connect_timeout=2, autocommit=True)
+    except Exception:                                      # noqa: BLE001
+        pytest.skip("no local warehouse")
+    from pathlib import Path
+    conn.execute((Path(__file__).resolve().parent.parent / "warehouse" / "schema.sql").read_text())
+    clean = lambda: conn.execute("DELETE FROM session_cost WHERE session_id LIKE 'wtest-%'")   # noqa: E731
+    clean()
+    yield dsn, conn
+    clean()
+    conn.close()
+
+
+@pytest.mark.parametrize("order", [("old", "new"), ("new", "old")])
+def test_the_newest_snapshot_wins_whatever_order_it_arrives_in(pg, order):
+    dsn, conn = pg
+    snaps = {"old": parsed(session_span("wtest-snap", T0 + 1 * H, 100)),
+             "new": parsed(session_span("wtest-snap", T0 + 5 * H, 900))}
+    for which in order:
+        lt.write(dsn, [lt.session_batch([snaps[which]])])
+    (tokens,) = conn.execute("SELECT input_tokens FROM session_cost WHERE session_id = 'wtest-snap'").fetchone()
+    assert tokens == 900
+
+
+def test_a_run_whose_row_cannot_be_recorded_does_not_exit_clean(monkeypatch):
+    search, fetch, write_chunk, _ = fake()
+    monkeypatch.setattr(lt, "tempo_max_window_s", lambda base, get_text=None: 168 * H)
+    monkeypatch.setattr(lt, "_tempo_io", lambda base: (search, fetch))
+    monkeypatch.setattr(lt, "write", lambda dsn, batches: write_chunk(batches))
+    monkeypatch.setattr(lt, "record_run", lambda dsn, row: False)
+    monkeypatch.setattr(lt, "_now_s", lambda: T0 + 400 * H)
+    assert lt.main(["--tempo", "http://t", "--dsn", "postgresql://x", "--since", "400h"]) == 1
+
+
+def test_within_one_batch_the_newest_snapshot_is_the_one_offered(pg):
+    dsn, conn = pg
+    rows = [parsed(session_span("wtest-batch", T0 + h * H, h * 100)) for h in (3, 7, 5)]
+    lt.write(dsn, [lt.session_batch(rows)])
+    (tokens,) = conn.execute("SELECT input_tokens FROM session_cost WHERE session_id = 'wtest-batch'").fetchone()
+    assert tokens == 700
+
+
+def test_a_row_written_before_observed_at_existed_is_replaced(pg):
+    dsn, conn = pg
+    conn.execute("INSERT INTO session_cost (session_id, input_tokens) VALUES ('wtest-legacy', 1)")
+    lt.write(dsn, [lt.session_batch([parsed(session_span("wtest-legacy", T0 + H, 50))])])
+    (tokens,) = conn.execute("SELECT input_tokens FROM session_cost WHERE session_id = 'wtest-legacy'").fetchone()
+    assert tokens == 50
+
+
+def test_load_chunks_writes_session_cost_newest_wins(monkeypatch):
+    monkeypatch.setitem(TRACES, "sess", (T0 + 20 * H, {**session_span("wtest-sb", T0 + 21 * H, 5),
+                                                       "traceID": "sess"}))
+    seen = []
+    search, fetch, _, _ = fake()
+    lt.load_chunks([(T0, T0 + 168 * H)], search, fetch, lambda batches: seen.extend(batches) or 0)
+    (batch,) = [b for b in seen if b[0] == "session_cost"]
+    assert batch == lt.session_batch(batch[2]) and len(batch[2]) == 1

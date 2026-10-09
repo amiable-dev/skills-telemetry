@@ -276,7 +276,8 @@ def parse_activation(attrs: dict, resource: dict, span: dict) -> dict:
 
 SESSION_COLS = ["session_id", "harness", "model", "branch_hash", "team", "input_tokens",
                 "output_tokens", "cache_read_tokens", "cache_creation_tokens",
-                "cost_usd", "api_ms", "tool_ms", "duration_ms", "active_seconds", "started_at"]
+                "cost_usd", "api_ms", "tool_ms", "duration_ms", "active_seconds", "started_at",
+                "observed_at"]
 
 
 def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
@@ -286,6 +287,9 @@ def parse_session(attrs: dict, resource: dict, span: dict) -> dict:
     start = int(span["startTimeUnixNano"])
     cost = g("std.session.cost_usd")
     return {
+        # Every snapshot starts at the session's start; its end is the Stop that
+        # emitted it, which is what orders snapshots of a running total.
+        "observed_at": dt.datetime.fromtimestamp(int(span["endTimeUnixNano"]) / 1e9, dt.timezone.utc),
         "session_id": g("session.id", ""),
         "harness": g("std.harness", "unknown"),
         "model": g("gen_ai.request.model"),
@@ -423,17 +427,37 @@ def collect(traces: dict, fetch, unknown=None, mcp_calls=None,
     return activations, rows, session_rows
 
 
-def write(dsn: str, batches: list[tuple[str, list[str], list[dict], str]]) -> int:
-    """Insert each (table, cols, rows, conflict key) batch. Returns rows offered."""
+def session_batch(rows: list[dict]) -> tuple:
+    """session_cost holds a running total, re-sent at every Stop: the newest
+    snapshot replaces an older one, whatever order the snapshots load in."""
+    return ("session_cost", SESSION_COLS, rows, "session_id", "observed_at")
+
+
+def write(dsn: str, batches: list[tuple]) -> int:
+    """Insert each (table, cols, rows, conflict key[, newer-by column]) batch.
+    Without a newer-by column a conflict keeps the existing row; with one, the
+    row whose column is greater wins. Returns rows offered."""
     import psycopg
     total = 0
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        for table, cols, data, key in batches:
+        for table, cols, data, key, *newer_by in batches:
             if not data:
                 continue
+            if newer_by:
+                by = newer_by[0]
+                rows = {}
+                for r in data:                          # newest per key within the batch, too
+                    k = r.get(key)
+                    if k not in rows or (r.get(by) and (rows[k].get(by) is None or r[by] > rows[k][by])):
+                        rows[k] = r
+                data = list(rows.values())
+                action = (f"DO UPDATE SET {', '.join(f'{c} = EXCLUDED.{c}' for c in cols if c != key)} "
+                          f"WHERE {table}.{by} IS NULL OR EXCLUDED.{by} > {table}.{by}")
+            else:
+                action = "DO NOTHING"
             sql = (f"INSERT INTO {table} ({','.join(cols)}) "
                    f"VALUES ({','.join('%(' + c + ')s' for c in cols)}) "
-                   f"ON CONFLICT ({key}) DO NOTHING")
+                   f"ON CONFLICT ({key}) {action}")
             cur.executemany(sql, [{c: r.get(c) for c in cols} for r in data])
             total += len(data)
     return total
@@ -592,7 +616,7 @@ def load_chunks(windows: list[tuple[int, int]], search, fetch, write_chunk) -> C
             out.rows_loaded += write_chunk([
                 ("artefact_activation", ACTIVATION_COLS, activations, "span_id"),
                 ("skill_invocation", COLS, rows, "span_id"),
-                ("session_cost", SESSION_COLS, session_rows, "session_id"),
+                session_batch(session_rows),
                 ("mcp_tool_call", MCP_CALL_COLS, mcp_calls, "tool_use_id"),
                 ("commit_evidence", EVIDENCE_COLS, evidence, "patch_id, activation_span_id"),
             ])
@@ -639,7 +663,10 @@ def main(argv=None) -> int:
     run["ok"] = not r.errors
     run["error"] = "; ".join(r.errors)[:2000] if r.errors else None
     run["finished_at"] = dt.datetime.now(dt.timezone.utc)
-    record_run(a.dsn, run)
+    if not record_run(a.dsn, run):
+        print("stdtel: the load ran but its loader_run row was not written, so doctor cannot see "
+              "it; exiting non-zero", file=sys.stderr)
+        return 1
     if r.errors:
         print(f"load failed, {len(r.errors)} chunk(s); any other chunks loaded: {run['error']}",
               file=sys.stderr)
