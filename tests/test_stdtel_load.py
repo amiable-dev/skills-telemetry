@@ -219,7 +219,7 @@ def test_unreadable_watermarks_fall_back_to_the_floor(monkeypatch):
 # --- packaging -------------------------------------------------------------------------------
 
 def test_the_loaders_ship_in_the_wheel_and_the_command_exists():
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")                # stdlib from Python 3.11
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent
     cfg = tomllib.loads((root / "pyproject.toml").read_text())
@@ -265,3 +265,48 @@ def test_a_failing_delivery_load_fails_the_run(monkeypatch):
     monkeypatch.setattr(load, "_run", lambda name, argv: 1 if name == "load_delivery" else 0)
     monkeypatch.setenv("STDTEL_LOAD_REPO", "a/b")
     assert load.run_all(dsn="d", tempo="t", loki="l") == 1
+
+
+# --- council round 2 on #174 -----------------------------------------------------------------
+
+def test_a_failed_policy_fetch_never_hands_delivery_a_previous_runs_file(home, monkeypatch):
+    """The artefact is removed before fetching: a stale file is not today's data."""
+    stale = home / "policy-results.jsonl"
+    stale.write_text('{"old": true}\n')
+    seen = {}
+
+    def run(name, argv):
+        if name == "load_delivery":
+            seen["artefact"] = argv[argv.index("--policy-results") + 1] if "--policy-results" in argv else None
+            seen["exists"] = stale.exists()
+        return 1 if name == "fetch_policy_results" else 0
+    monkeypatch.setattr(load, "watermarks", lambda dsn: {})
+    monkeypatch.setattr(load, "_run", run)
+    monkeypatch.setenv("STDTEL_LOAD_REPO", "a/b")
+    load.run_all(dsn="d", tempo="t", loki="l")
+    assert seen == {"artefact": None, "exists": False}
+
+
+@pytest.mark.parametrize("code,want", [(None, 0), (0, 0), (3, 3), ("usage", 1)])
+def test_a_loaders_sys_exit_is_read_as_python_reads_it(monkeypatch, code, want):
+    import types
+    mod = types.SimpleNamespace(main=lambda argv: (_ for _ in ()).throw(SystemExit(code)))
+    monkeypatch.setitem(sys.modules, "warehouse.fake_loader", mod)
+    assert load._run("fake_loader", []) == want
+
+
+def test_a_fetch_that_fails_after_writing_part_of_its_file_is_not_loaded(home, monkeypatch):
+    seen = {}
+
+    def run(name, argv):
+        if name == "fetch_policy_results":
+            (home / "policy-results.jsonl").write_text('{"partial": ')
+            return 1
+        if name == "load_delivery":
+            seen["args"] = argv
+        return 0
+    monkeypatch.setattr(load, "watermarks", lambda dsn: {})
+    monkeypatch.setattr(load, "_run", run)
+    monkeypatch.setenv("STDTEL_LOAD_REPO", "a/b")
+    load.run_all(dsn="d", tempo="t", loki="l")
+    assert "--policy-results" not in seen["args"]

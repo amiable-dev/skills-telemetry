@@ -107,8 +107,8 @@ def _run(name: str, argv: list[str]) -> int:
     import importlib
     try:
         return int(importlib.import_module(f"warehouse.{name}").main(argv) or 0)
-    except SystemExit as e:                       # a usage error
-        return int(e.code or 0) if isinstance(e.code, int) else 1
+    except SystemExit as e:                       # as Python reads it: None 0, an int itself, text 1
+        return 0 if e.code is None else e.code if isinstance(e.code, int) else 1
     except Exception as e:                        # noqa: BLE001
         print(f"{name} failed: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
@@ -133,10 +133,13 @@ def run_all(dsn: str, tempo: str, loki: str) -> int:
            _run("load_requests", ["--loki", loki, "--dsn", dsn, "--since", since("load_requests")])]
     repo = os.environ.get("STDTEL_LOAD_REPO")
     if repo:
-        artefact = str(home() / "policy-results.jsonl")
-        # enrichment, not a precondition: `make load-delivery` carries on without it too
-        _run("fetch_policy_results", ["--repo", repo, "--out", artefact])
-        rcs.append(_run("load_delivery", ["--repo", repo, "--dsn", dsn, "--policy-results", artefact]))
+        artefact = home() / "policy-results.jsonl"
+        # enrichment, not a precondition: `make load-delivery` carries on without it too.
+        # A previous run's file is removed first, so a failed fetch never passes it off as today's.
+        artefact.unlink(missing_ok=True)
+        fetched = _run("fetch_policy_results", ["--repo", repo, "--out", str(artefact)]) == 0
+        extra = ["--policy-results", str(artefact)] if fetched and artefact.exists() else []
+        rcs.append(_run("load_delivery", ["--repo", repo, "--dsn", dsn, *extra]))
     else:
         # a failed run, recorded so `loader liveness` names the setting, and counted
         t = _now()
