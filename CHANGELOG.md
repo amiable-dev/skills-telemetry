@@ -18,6 +18,13 @@ version until this number changes — so bump it for anything a user would recei
   - An unreadable state directory, a hook probe that could not run, a content probe that never
     arrived or could not be sent, and a check that raised are each `unknown`. The detailed view
     still refuses to turn on unless the content probe passes.
+- **`stdtel-doctor` names the sessions Claude Code is not exporting for** (`native coverage`, ADR-015
+  decision 2, #151). A session reads its telemetry settings once, at start, so one begun before native
+  telemetry was on never exports, and resuming it changes nothing. The check correlates session state
+  with Loki's `api_request` events by session id, with a 10-minute grace period and a 24-hour window,
+  and names each silent session with its repository and start time. Session state gains
+  `first_turn_at`, set once at Stop. A session judges from its first Stop after upgrading, so until
+  then this check reads `pending`.
 - **`content dropped` looks at every Claude Code content setting, not just the detailed view** (#164).
   `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES` on now runs the probe, which also carries
   `response`. `OTEL_LOG_RAW_API_BODIES` on fails outright: nothing can prove a raw body is dropped.

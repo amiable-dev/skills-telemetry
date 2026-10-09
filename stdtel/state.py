@@ -134,6 +134,9 @@ class SessionState:
     # SubagentStop hook is firing, which is the observed path.
     seen_agent_ids: list = field(default_factory=list)
     turn_count: int = 0
+    #: Start of the first completed turn stdtel saw, set once at Stop (ADR-015
+    #: decision 2): the age `native coverage` judges a session by.
+    first_turn_at: float | None = None
     turns_at_last_compaction: int = 0
     # ADR-010: the container currently open. `name` is the scoping artefact and
     # holds for the whole run; `key` is the unit instance and rolls each
@@ -198,6 +201,7 @@ class SessionState:
         st.open_prompt_started_at = raw.get("open_prompt_started_at", 0.0)
         st.seen_agent_ids = list(raw.get("seen_agent_ids") or [])
         st.turn_count = raw.get("turn_count", 0)
+        st.first_turn_at = raw.get("first_turn_at")
         st.turns_at_last_compaction = raw.get("turns_at_last_compaction", 0)
         st.observed_events = list(raw.get("observed_events") or [])
         for f in ("scope_name", "scope_unit", "scope_key", "scope_id", "scope_source",
@@ -293,6 +297,7 @@ class SessionState:
             "open_prompt_started_at": self.open_prompt_started_at,
             "seen_agent_ids": self.seen_agent_ids[-200:],
             "turn_count": self.turn_count,
+            "first_turn_at": self.first_turn_at,
             "turns_at_last_compaction": self.turns_at_last_compaction,
             "scope_name": self.scope_name,
             "scope_unit": self.scope_unit,
