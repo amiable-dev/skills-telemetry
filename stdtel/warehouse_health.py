@@ -31,6 +31,7 @@ FRESHNESS, LIVENESS = "warehouse freshness", "loader liveness"
 LOADERS = ("load_traces", "load_requests", "load_delivery")
 SOURCES = ("load_traces", "load_requests")          # the loaders whose source doctor can read
 DEFAULT_INTERVAL_S = 900
+MAX_INTERVAL_S = 7 * 86400
 DEFAULT_DSN = "postgresql://postgres:stdtel@localhost:5432/stdtel"
 TIMEOUT_S = 10
 ERROR_SHOWN = 200                                   # characters of a run's error printed
@@ -56,14 +57,17 @@ class LoaderState:
     any_ok: bool                        # has any run ever succeeded
 
 
+_NEVER = LoaderState(None, None, False)             # a loader with no row at all
+
+
 def load_interval_s() -> int:
     raw = os.environ.get("STDTEL_LOAD_INTERVAL", str(DEFAULT_INTERVAL_S))
     try:
         v = int(raw)
     except ValueError:
         v = 0
-    if v <= 0:
-        raise ValueError(f"STDTEL_LOAD_INTERVAL={raw!r} is not a positive number of seconds")
+    if not 0 < v <= MAX_INTERVAL_S:
+        raise ValueError(f"STDTEL_LOAD_INTERVAL={raw!r} is not a number of seconds between 1 and {MAX_INTERVAL_S}")
     return v
 
 
@@ -113,17 +117,23 @@ def _window(since: dt.datetime | None, now: dt.datetime, max_s: int) -> tuple[in
 def tempo_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool | None:
     """Any stdtel span in Tempo starting after `since`? True, False, or None when
     the answer is not knowable (nothing found, but the search had to be clamped).
-    One search with limit 1, never wider than Tempo's maximum window."""
-    w = _window(since, now, TEMPO_MAX_WINDOW_S)
-    if w is None:
-        return False
-    start_ns, end_ns, clamped = w
+    One search with limit 1. Tempo takes whole seconds, so the bounds round
+    inward: the start up and the end down. The window then never exceeds Tempo's
+    maximum and never reaches before the cutoff, at the cost of under a second
+    added to the allowance."""
+    end_s = _ns(now) // 10**9
+    floor_s = end_s - TEMPO_MAX_WINDOW_S
+    if since is None:
+        start_s, clamped = floor_s, True
+    else:
+        cut_s = -(-(_ns(since) + 1) // 10**9)          # ceil: strictly after `since`
+        if cut_s >= end_s:
+            return False                                # cutoff in this second or later
+        start_s, clamped = max(cut_s, floor_s), cut_s < floor_s
     get = get or _get_json
     base = os.environ.get("STDTEL_TEMPO", "http://localhost:3200").rstrip("/")
     q = " || ".join(f'name = "{n}"' for n in TEMPO_SPAN_NAMES)
-    # Tempo takes whole seconds: the start rounds down, which can only widen the window
-    params = urllib.parse.urlencode({"q": f"{{ {q} }}", "start": start_ns // 10**9,
-                                     "end": -(-end_ns // 10**9), "limit": 1})
+    params = urllib.parse.urlencode({"q": f"{{ {q} }}", "start": start_s, "end": end_s, "limit": 1})
     body = get(f"{base}/api/search?{params}")
     if not isinstance(body, dict) or not isinstance(body.get("traces"), list):
         raise RuntimeError("Tempo search returned no trace list")
@@ -142,7 +152,10 @@ def loki_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> boo
     body = get(f"{base}/loki/api/v1/query_range?{params}")
     if not isinstance(body, dict) or body.get("status") != "success":
         raise RuntimeError(f"Loki query failed: {(body or {}).get('error') or (body or {}).get('status')}")
-    if any(st.get("values") for st in body["data"]["result"]):
+    result = (body.get("data") or {}).get("result")
+    if not isinstance(result, list):
+        raise RuntimeError("Loki returned success with no result list")
+    if any(isinstance(st, dict) and st.get("values") for st in result):
         return True
     return None if clamped else False
 
@@ -157,6 +170,11 @@ def source_has_newer(loader: str, since: dt.datetime | None) -> bool | None:
 
 # --- the judges ----------------------------------------------------------------------------
 
+def _printable(text: str) -> str:
+    """A run's error as one line of plain text: no control characters reach a terminal."""
+    return "".join(c if c.isprintable() else " " for c in text)
+
+
 def _age(now: dt.datetime, then: dt.datetime) -> str:
     h = (now - then).total_seconds() / 3600
     return f"{h * 60:.0f} min" if h < 1 else f"{h:.1f} h" if h < 48 else f"{h / 24:.1f} days"
@@ -167,17 +185,17 @@ def judge_liveness(state: dict[str, LoaderState], now: dt.datetime, interval_s: 
     limit = dt.timedelta(seconds=2 * interval_s)
     bad = []
     for name in LOADERS:
-        run = state[name].latest
+        run = state.get(name, _NEVER).latest
         if run is None:
             bad.append(f"{name} has never run")
         elif not run.ok:
             bad.append(f"{name}'s latest run ({_age(now, run.started_at)} ago) failed: "
-                       f"{(run.error or 'no error recorded')[:ERROR_SHOWN]}")
+                       f"{_printable(run.error or 'no error recorded')[:ERROR_SHOWN]}")
         elif now - run.started_at > limit:
             bad.append(f"{name} last ran {_age(now, run.started_at)} ago, past twice the "
                        f"{interval_s // 60}-minute interval")
     if bad:
-        failed = any(state[n].latest and not state[n].latest.ok for n in LOADERS)
+        failed = any(state.get(n, _NEVER).latest and not state.get(n, _NEVER).latest.ok for n in LOADERS)
         return Check(LIVENESS, FAIL, "; ".join(bad),
                      _RUN_REMEDY + ("; fix the error shown first" if failed else "; to keep it current, schedule it"))
     return Check(LIVENESS, PASS, f"every loader ran within {2 * interval_s // 60} min, and the latest run of each succeeded")
@@ -192,7 +210,7 @@ def judge_freshness(state: dict[str, LoaderState], newer: dict, now: dt.datetime
     Precedence: any stale fails; else any unknown; else pass."""
     stale, unknown, fine = [], [], []
     for name in SOURCES:
-        s, answer = state[name], newer.get(name)
+        s, answer = state.get(name, _NEVER), newer.get(name)
         if not s.any_ok:
             unknown.append(f"{name} has no successful run, so no watermark")
         elif isinstance(answer, Exception):
@@ -254,7 +272,7 @@ def warehouse_freshness(read_state=read_state, newer=source_has_newer, now: dt.d
         now = now or dt.datetime.now(dt.timezone.utc)
         try:
             every = load_interval_s() if interval_s is None else interval_s
-            if isinstance(every, bool) or not isinstance(every, int) or every <= 0:
+            if isinstance(every, bool) or not isinstance(every, int) or not 0 < every <= MAX_INTERVAL_S:
                 raise ValueError(f"interval {every!r} is not a positive number of seconds")
         except ValueError as e:
             return Check(FRESHNESS, UNKNOWN, str(e), "set STDTEL_LOAD_INTERVAL to the loader's interval in seconds")
@@ -264,7 +282,7 @@ def warehouse_freshness(read_state=read_state, newer=source_has_newer, now: dt.d
         allowance = dt.timedelta(seconds=2 * every)
         answers: dict[str, bool | Exception] = {}
         for name in SOURCES:
-            if not state[name].any_ok:
+            if not state.get(name, _NEVER).any_ok:
                 continue
             wm = state[name].watermark
             try:

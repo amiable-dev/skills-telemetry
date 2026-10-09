@@ -376,10 +376,73 @@ def test_a_loki_stream_with_no_values_is_not_an_event():
     assert wh.loki_has_newer(NOW - H, now=NOW, get=lambda u: body) is False
 
 
-def test_tempo_start_rounds_down_so_the_window_can_only_widen():
+def _tempo_bounds(since, now):
     import urllib.parse
     seen = []
-    since = NOW - H + dt.timedelta(milliseconds=500)
-    wh.tempo_has_newer(since, now=NOW, get=lambda u: seen.append(u) or {"traces": []})
+    wh.tempo_has_newer(since, now=now, get=lambda u: seen.append(u) or {"traces": []})
     q = urllib.parse.parse_qs(urllib.parse.urlsplit(seen[0]).query)
-    assert int(q["start"][0]) == int((NOW - H).timestamp())
+    return int(q["start"][0]), int(q["end"][0])
+
+
+FRACTIONAL = NOW + dt.timedelta(milliseconds=700)
+
+
+@pytest.mark.parametrize("since", [FRACTIONAL - 30 * 24 * H, None])
+def test_a_clamped_tempo_window_never_exceeds_the_maximum_with_fractional_seconds(since):
+    """#169 round 2: start floored and end ceiled made it 168 h plus a second."""
+    start, end = _tempo_bounds(since, FRACTIONAL)
+    assert end - start <= wh.TEMPO_MAX_WINDOW_S
+
+
+def test_tempo_rounds_inward_so_nothing_before_the_cutoff_counts():
+    """The start rounds up and the end down: never an event before the cutoff,
+    at the cost of under a second added to a 30-minute allowance."""
+    since = NOW - H + dt.timedelta(milliseconds=500)
+    start, end = _tempo_bounds(since, FRACTIONAL)
+    assert start == int((NOW - H).timestamp()) + 1
+    assert end == int(NOW.timestamp())
+
+
+def test_a_cutoff_inside_the_current_second_is_answered_without_a_query():
+    """Rounded inward, the window would be empty or inverted: nothing can be newer."""
+    assert wh.tempo_has_newer(FRACTIONAL - dt.timedelta(milliseconds=200), now=FRACTIONAL, get=_never) is False
+
+
+@pytest.mark.parametrize("body", [{"status": "success"}, {"status": "success", "data": {}},
+                                  {"status": "success", "data": {"result": None}}])
+def test_a_malformed_loki_success_raises_a_protocol_error(body):
+    with pytest.raises(RuntimeError):
+        wh.loki_has_newer(NOW - H, now=NOW, get=lambda u: body)
+
+
+def test_a_huge_interval_is_unknown_not_an_overflow(monkeypatch):
+    monkeypatch.setenv("STDTEL_LOAD_INTERVAL", str(10**18))
+    c = wh.loader_liveness(read_state=lambda: fresh_all(), now=NOW)
+    assert c.outcome == "unknown" and "STDTEL_LOAD_INTERVAL" in c.detail
+
+
+def test_a_loader_error_is_shown_without_control_characters():
+    state = fresh_all(load_traces=wh.LoaderState(latest=Run(NOW - M, False, "bad\x1b[31m\nnext\x07"),
+                                                 watermark=NOW, any_ok=True))
+    d = liveness(state).detail
+    assert "\x1b" not in d and "\x07" not in d and "\n" not in d and "bad" in d
+
+
+def test_a_loader_missing_from_the_state_is_treated_as_never_run():
+    state = fresh_all()
+    del state["load_delivery"]
+    c = liveness(state)
+    assert c.outcome == "fail" and "load_delivery has never run" in c.detail
+
+
+def test_a_loki_window_is_clamped_to_its_own_maximum():
+    import urllib.parse
+    seen = []
+    wh.loki_has_newer(NOW - 30 * 24 * H, now=NOW, get=lambda u: seen.append(u) or {"status": "success", "data": {"result": []}})
+    q = urllib.parse.parse_qs(urllib.parse.urlsplit(seen[0]).query)
+    assert int(q["end"][0]) - int(q["start"][0]) <= wh.LOKI_WINDOW_S * 10**9
+
+
+def test_a_loki_error_status_raises_even_with_a_result():
+    with pytest.raises(RuntimeError, match="failed"):
+        wh.loki_has_newer(NOW - H, now=NOW, get=lambda u: {"status": "error", "data": {"result": []}})
