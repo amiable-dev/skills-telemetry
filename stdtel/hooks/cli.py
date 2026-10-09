@@ -460,6 +460,9 @@ def _turn_activations(st, sl, permission_mode: str, now: float) -> list:
             mcp_tool_use_ids=t.mcp_tool_use_ids))
     if sl.turns:
         st.turn_count += len(sl.turns)
+        # set if unset, not on the first turn only: a session already past its
+        # first turn when this shipped is judged from its next Stop
+        st.first_turn_at = st.first_turn_at or min(t.ts for t in sl.turns)
         st.open_prompt_id = sl.turns[-1].prompt_id
         st.open_prompt_started_at = sl.turns[-1].ts
     return out

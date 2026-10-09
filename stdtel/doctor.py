@@ -575,8 +575,15 @@ def content_dropped() -> Check:
     return probe_content(endpoint=claude_code_endpoint())
 
 
+@named("native coverage")
+def native_coverage() -> Check:
+    """Sessions Claude Code is not exporting for (ADR-015 decision 2); see stdtel/coverage.py."""
+    from stdtel.coverage import native_coverage as judge
+    return judge()
+
+
 CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, branch_identity, catalogue_ok,
-          scope_adoption, collector_ok, content_dropped, recent_state, artefacts_observed)
+          scope_adoption, collector_ok, content_dropped, recent_state, artefacts_observed, native_coverage)
 
 
 def check_all() -> list[Check]:
