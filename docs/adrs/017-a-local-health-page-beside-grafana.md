@@ -1,6 +1,6 @@
 ---
 title: "ADR-017: A local health page beside Grafana, not instead of it"
-status: proposed
+status: accepted
 date: 2026-10-09
 tags: [adr, dashboard, grafana, ui, health]
 links: ["006-langfuse-as-an-optional-trace-backend.md", "015-telemetry-health-is-a-mechanism.md", "016-counting-rare-events.md"]

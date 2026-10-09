@@ -82,6 +82,21 @@ was rejected and what the decision costs, which is what you need before re-litig
   after a doctor check proves the collector drops a content marker. The "metadata only" rule is now
   "nothing past the collector ever holds content" (decision 14, applied 2026-09-30). Blocks on the collector first: no record-level pseudonymising, events stored
   nowhere. Survey and sources: `docs/landscape.md`. Issue #107.
+- **[ADR-015](docs/adrs/015-telemetry-health-is-a-mechanism.md)** — telemetry health is a mechanism,
+  not an instruction. Doctor checks have four outcomes (pass/fail/pending/unknown; `--json`, exit 0/1/2).
+  `native coverage` names sessions with no Loki records (a session reads settings at start; resume is
+  not start). `warehouse freshness` (data watermark) and `loader liveness` (latest attempted run) are
+  separate checks. Each session warns about itself in the status line. The loader is scheduled
+  (`stdtel-install loader`), PID-locked, and splits windows wider than Tempo's 168 h maximum.
+  Instructions come last and point at `stdtel-doctor --json`.
+- **[ADR-016](docs/adrs/016-counting-rare-events.md)** — a counter's first appearance is invisible to
+  `rate()`/`increase()`, and stdtel's events are rare. Prometheus 3.15 (pinned by digest) receives
+  metrics over OTLP with `created-timestamp-zero-ingestion`, which was measured to count a first
+  occurrence; remote write cannot. `std.scope.key` leaves the spanmetrics dimensions. Exact per-name
+  counts read Loki or the warehouse, never `increase()`.
+- **[ADR-017](docs/adrs/017-a-local-health-page-beside-grafana.md)** — `stdtel-ui`, a berth-shaped
+  local page beside Grafana. It shows what only the machine can see, from doctor's checks, and links
+  to Grafana for every aggregate. Loopback only, Host-validated, text-only rendering.
 - **[ADR-007](docs/adrs/007-plugin-evals-and-what-each-eval-measures.md)** (proposed) — two things are
   called "eval": `eval/run_eval.py` grades policy outcomes with OPA (deterministic); `claude plugin
   eval` grades Claude's behaviour on a prompt (not). Our suite verifies no behaviour at all — skill and

@@ -1,6 +1,6 @@
 ---
 title: "ADR-015: Telemetry health is a mechanism, not an instruction"
-status: proposed
+status: accepted
 date: 2026-10-09
 tags: [adr, health, doctor, loader, statusline, agents]
 links: ["003-hook-execution-constraints.md", "005-data-integrity.md", "009-artefact-activation-as-the-unit-of-capture.md", "014-harness-native-telemetry.md"]

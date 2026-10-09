@@ -1,6 +1,6 @@
 ---
 title: "ADR-016: Count rare events where a first occurrence is visible"
-status: proposed
+status: accepted
 date: 2026-10-09
 tags: [adr, metrics, prometheus, spanmetrics, dashboards]
 links: ["009-artefact-activation-as-the-unit-of-capture.md", "010-containment-and-scope.md", "014-harness-native-telemetry.md"]
