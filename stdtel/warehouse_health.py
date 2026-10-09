@@ -1,0 +1,239 @@
+"""`warehouse freshness` and `loader liveness` (ADR-015 decision 3).
+
+Two checks, because they fail for different reasons and one can hide the other:
+
+* **freshness** measures data. A loader's watermark is the newest source
+  timestamp any successful run loaded (`max(source_max_ts) WHERE ok`), so a
+  partial run never advances it. It is stale when its source now holds an
+  event newer than the watermark by more than twice the load interval. Asking
+  the source "anything past this point?" rather than "what is your newest?"
+  needs no ordering guarantee from Tempo's search.
+* **liveness** measures the scheduler: the latest attempted run per loader,
+  whatever its status. It needs only Postgres, so a source outage never hides a
+  failed attempt.
+
+`load_delivery`'s source is GitHub, which doctor does not read: it is judged
+for liveness only. psycopg is an optional extra (`stdtel[warehouse]`); without
+it both checks are unknown and say how to install it.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+
+from stdtel.doctor import FAIL, PASS, UNKNOWN, Check
+
+FRESHNESS, LIVENESS = "warehouse freshness", "loader liveness"
+LOADERS = ("load_traces", "load_requests", "load_delivery")
+SOURCES = ("load_traces", "load_requests")          # the loaders whose source doctor can read
+DEFAULT_INTERVAL_S = 900
+DEFAULT_DSN = "postgresql://postgres:stdtel@localhost:5432/stdtel"
+TIMEOUT_S = 10
+ERROR_SHOWN = 200                                   # characters of a run's error printed
+#: The loaders' own source queries; a test holds them equal.
+TEMPO_SPAN_NAMES = ("std.artefact.activation", "std.skill.invocation", "std.session.cost")
+LOKI_QUERY = '{service_name="claude-code"} | event_name="api_request"'
+TEMPO_MAX_WINDOW_S = 168 * 3600                     # query_frontend.search.max_duration
+_RUN_REMEDY = "run `make load` (or `make load-watch`), then check again"
+
+
+@dataclass(frozen=True)
+class Run:
+    started_at: dt.datetime
+    ok: bool
+    error: str | None
+
+
+@dataclass(frozen=True)
+class LoaderState:
+    latest: Run | None                  # latest attempted run, any status
+    watermark: dt.datetime | None       # max(source_max_ts) over successful runs
+    any_ok: bool                        # has any run ever succeeded
+
+
+def load_interval_s() -> int:
+    raw = os.environ.get("STDTEL_LOAD_INTERVAL", str(DEFAULT_INTERVAL_S))
+    try:
+        v = int(raw)
+    except ValueError:
+        v = 0
+    if v <= 0:
+        raise ValueError(f"STDTEL_LOAD_INTERVAL={raw!r} is not a positive number of seconds")
+    return v
+
+
+def _dsn() -> str:
+    return os.environ.get("STDTEL_DSN") or DEFAULT_DSN
+
+
+def read_state(dsn: str | None = None, loaders=LOADERS) -> dict[str, LoaderState]:
+    """Latest attempt and watermark per loader, in two queries."""
+    import psycopg
+    with psycopg.connect(dsn or _dsn(), connect_timeout=TIMEOUT_S) as conn:
+        latest = {r[0]: Run(r[1], bool(r[2]), r[3]) for r in conn.execute(
+            "SELECT DISTINCT ON (loader) loader, started_at, ok, error FROM loader_run "
+            "WHERE loader = ANY(%s) ORDER BY loader, started_at DESC", (list(loaders),))}
+        ok = {r[0]: r[1] for r in conn.execute(
+            "SELECT loader, max(source_max_ts) FROM loader_run WHERE ok AND loader = ANY(%s) "
+            "GROUP BY loader", (list(loaders),))}
+    return {name: LoaderState(latest.get(name), ok.get(name), name in ok) for name in loaders}
+
+
+# --- the sources ---------------------------------------------------------------------------
+
+def _get_json(url: str, headers: dict | None = None) -> dict:
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+        return json.loads(r.read().decode())
+
+
+def tempo_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool:
+    """Any stdtel span in Tempo starting after `since`? One search, clamped to
+    Tempo's maximum window; `since` None means anything in that window."""
+    get = get or _get_json
+    base = os.environ.get("STDTEL_TEMPO", "http://localhost:3200").rstrip("/")
+    end = int(now.timestamp())
+    start = max(int(since.timestamp()) + 1 if since else 0, end - TEMPO_MAX_WINDOW_S)
+    q = " || ".join(f'name = "{n}"' for n in TEMPO_SPAN_NAMES)
+    params = urllib.parse.urlencode({"q": f"{{ {q} }}", "start": start, "end": end, "limit": 1})
+    return bool(get(f"{base}/api/search?{params}").get("traces"))
+
+
+def loki_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool:
+    """Any Claude Code api_request in Loki after `since`?"""
+    get = get or _get_json
+    base = os.environ.get("STDTEL_LOKI", "http://localhost:11010").rstrip("/")
+    end = int(now.timestamp() * 1e9)
+    start = int(since.timestamp() * 1e9) + 1 if since else end - TEMPO_MAX_WINDOW_S * 10**9
+    params = urllib.parse.urlencode({"query": LOKI_QUERY, "start": start, "end": end, "limit": 1})
+    body = get(f"{base}/loki/api/v1/query_range?{params}")
+    if body.get("status") != "success":
+        raise RuntimeError(f"Loki query failed: {body.get('error') or body.get('status')}")
+    return any(s.get("values") for s in body["data"]["result"])
+
+
+_NEWER = {"load_traces": tempo_has_newer, "load_requests": loki_has_newer}
+_SOURCE = {"load_traces": "Tempo", "load_requests": "Loki"}
+
+
+def source_has_newer(loader: str, since: dt.datetime | None) -> bool:
+    return _NEWER[loader](since, dt.datetime.now(dt.timezone.utc))
+
+
+# --- the judges ----------------------------------------------------------------------------
+
+def _age(now: dt.datetime, then: dt.datetime) -> str:
+    h = (now - then).total_seconds() / 3600
+    return f"{h * 60:.0f} min" if h < 1 else f"{h:.1f} h" if h < 48 else f"{h / 24:.1f} days"
+
+
+def judge_liveness(state: dict[str, LoaderState], now: dt.datetime, interval_s: int) -> Check:
+    """Fail when a loader's latest attempt failed, or none was made within twice the interval."""
+    limit = dt.timedelta(seconds=2 * interval_s)
+    bad = []
+    for name in LOADERS:
+        run = state[name].latest
+        if run is None:
+            bad.append(f"{name} has never run")
+        elif not run.ok:
+            bad.append(f"{name}'s latest run ({_age(now, run.started_at)} ago) failed: "
+                       f"{(run.error or 'no error recorded')[:ERROR_SHOWN]}")
+        elif now - run.started_at > limit:
+            bad.append(f"{name} last ran {_age(now, run.started_at)} ago, past twice the "
+                       f"{interval_s // 60}-minute interval")
+    if bad:
+        failed = any(state[n].latest and not state[n].latest.ok for n in LOADERS)
+        return Check(LIVENESS, FAIL, "; ".join(bad),
+                     _RUN_REMEDY + ("; fix the error shown first" if failed else "; to keep it current, schedule it"))
+    return Check(LIVENESS, PASS, f"every loader ran within {2 * interval_s // 60} min, and the latest run of each succeeded")
+
+
+def judge_freshness(state: dict[str, LoaderState], newer: dict[str, bool | Exception], now: dt.datetime,
+                    interval_s: int) -> Check:
+    """`newer[loader]` answers "does the source hold anything past the watermark
+    plus the allowance?", or holds the exception that stopped it being asked.
+    Precedence: any stale fails; else any unknown; else pass."""
+    stale, unknown, fine = [], [], []
+    for name in SOURCES:
+        s = state[name]
+        if not s.any_ok:
+            unknown.append(f"{name} has no successful run, so no watermark")
+        elif isinstance(newer.get(name), Exception):
+            unknown.append(f"{name}: {_SOURCE[name]} unreadable ({type(newer[name]).__name__})")
+        elif newer.get(name):
+            at = f"loaded up to {_age(now, s.watermark)} ago" if s.watermark else "has never loaded a row"
+            stale.append(f"{name} {at}, and {_SOURCE[name]} holds newer events past the "
+                         f"{2 * interval_s // 60}-minute allowance")
+        else:
+            fine.append(name)
+    if stale:
+        return Check(FRESHNESS, FAIL, "; ".join(stale + unknown),
+                     _RUN_REMEDY + ". Warehouse figures quoted before then are out of date")
+    if unknown:
+        return Check(FRESHNESS, UNKNOWN, "; ".join(unknown),
+                     _RUN_REMEDY + "; if a source is unreadable, start the stack (`make up`)")
+    return Check(FRESHNESS, PASS, f"{', '.join(fine)} hold everything their sources hold "
+                 f"(within {2 * interval_s // 60} min)")
+
+
+# --- the checks ----------------------------------------------------------------------------
+
+_PG_REMEDY = ("start the stack (`make up`), or set STDTEL_DSN; the checks need the warehouse extras: "
+              "`uv tool install 'stdtel[warehouse]'`")
+
+
+def _read(read_state):
+    """The loader state, or the Check that says why it could not be read."""
+    try:
+        return read_state(), None
+    except ImportError:
+        return None, ("the warehouse extras are not installed (no psycopg)", _PG_REMEDY)
+    except Exception as e:                        # noqa: BLE001
+        return None, (f"cannot read Postgres: {type(e).__name__}", _PG_REMEDY)
+
+
+def loader_liveness(read_state=read_state, now: dt.datetime | None = None) -> Check:
+    try:
+        now = now or dt.datetime.now(dt.timezone.utc)
+        try:
+            every = load_interval_s()
+        except ValueError as e:
+            return Check(LIVENESS, UNKNOWN, str(e), "set STDTEL_LOAD_INTERVAL to the loader's interval in seconds")
+        state, why = _read(read_state)
+        if why:
+            return Check(LIVENESS, UNKNOWN, *why)
+        return judge_liveness(state, now=now, interval_s=every)
+    except Exception as e:                        # noqa: BLE001 - a diagnostic must not raise
+        return Check(LIVENESS, UNKNOWN, f"the check itself failed: {type(e).__name__}: {e}",
+                     "this is a bug in stdtel doctor")
+
+
+def warehouse_freshness(read_state=read_state, newer=source_has_newer, now: dt.datetime | None = None,
+                        interval_s: int | None = None) -> Check:
+    try:
+        now = now or dt.datetime.now(dt.timezone.utc)
+        try:
+            every = interval_s or load_interval_s()
+        except ValueError as e:
+            return Check(FRESHNESS, UNKNOWN, str(e), "set STDTEL_LOAD_INTERVAL to the loader's interval in seconds")
+        state, why = _read(read_state)
+        if why:
+            return Check(FRESHNESS, UNKNOWN, *why)
+        allowance = dt.timedelta(seconds=2 * every)
+        answers: dict[str, bool | Exception] = {}
+        for name in SOURCES:
+            if not state[name].any_ok:
+                continue
+            wm = state[name].watermark
+            try:
+                answers[name] = newer(name, wm + allowance if wm else None)
+            except Exception as e:                # noqa: BLE001 - this source is unknown, not the check
+                answers[name] = e
+        return judge_freshness(state, answers, now=now, interval_s=every)
+    except Exception as e:                        # noqa: BLE001 - a diagnostic must not raise
+        return Check(FRESHNESS, UNKNOWN, f"the check itself failed: {type(e).__name__}: {e}",
+                     "this is a bug in stdtel doctor")

@@ -18,6 +18,12 @@ version until this number changes — so bump it for anything a user would recei
   - An unreadable state directory, a hook probe that could not run, a content probe that never
     arrived or could not be sent, and a check that raised are each `unknown`. The detailed view
     still refuses to turn on unless the content probe passes.
+- **`stdtel-doctor` says how far the warehouse is behind, and whether the loader runs** (`warehouse
+  freshness` and `loader liveness`, ADR-015 decision 3, #152). Freshness compares each loader's watermark
+  (the newest source timestamp a successful run loaded) with whether Tempo or Loki now holds anything
+  newer, beyond twice `STDTEL_LOAD_INTERVAL` (default 900 s). Liveness reads the latest attempted run of
+  each loader, names a failed run's error, and needs only Postgres. Both read `STDTEL_DSN` and need
+  `stdtel[warehouse]`. On 2026-10-09 this is what said the warehouse was a week behind.
 - **`stdtel-doctor` names the sessions Claude Code is not exporting for** (`native coverage`, ADR-015
   decision 2, #151). A session reads its telemetry settings once, at start, so one begun before native
   telemetry was on never exports, and resuming it changes nothing. The check correlates session state
