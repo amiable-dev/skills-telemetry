@@ -24,7 +24,8 @@ from stdtel.doctor import FAIL, PASS, PENDING, UNKNOWN, Check
 
 NAME = "native coverage"
 WINDOW_S = 24 * 3600      # sessions whose state was written this recently are judged
-GRACE_S = 600             # a first completed turn younger than this may not have reached Loki
+GRACE_S = 600             # a completed turn younger than this may not have reached Loki
+LOOKBACK_S = 7 * 86400    # how far back Loki is asked; bounds the query whatever a session's age
 QUERY_TIMEOUT_S = 10
 BATCH = 50                # session ids per Loki query, so no query outgrows a URL
 #: What a Claude Code session id looks like. Ids go into a quoted LogQL regex, so
@@ -44,6 +45,7 @@ class Session:
     started_at: float
     first_turn_at: float | None     # start of its first completed turn; None until a Stop records it
     written_at: float               # state file mtime
+    last_turn_at: float | None = None   # start of its latest completed turn (open_prompt_started_at)
 
 
 def _ts(v, optional: bool = False) -> float | None:
@@ -66,8 +68,9 @@ def _session(stem: str, raw, written: float) -> Session:
     harness, repo = res.get("std.harness", HARNESS), res.get("std.repo", "")
     if not isinstance(harness, str) or not isinstance(repo, str):
         raise ValueError("harness or repo is not text")
+    last = _ts(raw.get("open_prompt_started_at", 0.0)) or None    # 0.0 is its "no turn yet"
     return Session(stem, harness, repo, _ts(raw.get("started_at", 0.0)),
-                   _ts(raw.get("first_turn_at"), optional=True), _ts(written))
+                   _ts(raw.get("first_turn_at"), optional=True), _ts(written), last)
 
 
 def read_states() -> list[Session]:
@@ -100,16 +103,16 @@ def duration_s(text: str) -> float:
 
 
 def retention_from_config(cfg: dict) -> float | None:
-    """The shortest retention the compactor enforces: `limits_config.retention_period`
-    or any `retention_stream` period, since a stream rule may be the one covering
-    Claude Code's events. None means kept for ever: zero, or not enforced.
-    Per-tenant runtime overrides are not read; this stack runs one tenant, no overrides."""
+    """`limits_config.retention_period`, applied only when the compactor enforces it.
+    None means kept for ever: zero, or not enforced.
+
+    Not evaluated: `retention_stream` rules (which stream a selector matches, and
+    rule priority, are Loki's to decide) and per-tenant overrides. This stack sets
+    neither. Taking the minimum of every stream rule was tried and let an unrelated
+    short-lived stream turn the whole check unknown (#166)."""
     if not (cfg.get("compactor") or {}).get("retention_enabled"):
         return None
-    limits = cfg.get("limits_config") or {}
-    periods = [duration_s(limits.get("retention_period") or "0s"),
-               *(duration_s(r.get("period") or "0s") for r in limits.get("retention_stream") or [])]
-    return min((p for p in periods if p), default=None)
+    return duration_s((cfg.get("limits_config") or {}).get("retention_period") or "0s") or None
 
 
 def _loki() -> str:
@@ -175,7 +178,22 @@ def read_observed(ids: list[str], since: float, fetch=None, now: float | None = 
 def population(sessions: list[Session], now: float) -> list[Session]:
     """Claude Code sessions written within the window that have completed a turn."""
     return [x for x in sessions
-            if x.harness == HARNESS and x.first_turn_at and now - x.written_at <= WINDOW_S]
+            if x.harness == HARNESS and (x.first_turn_at is not None or x.last_turn_at is not None)
+            and now - x.written_at <= WINDOW_S]
+
+
+def reach(retention_s: float | None) -> float:
+    """How far back the evidence can be: the lookback, or less if Loki keeps less."""
+    return LOOKBACK_S if retention_s is None else min(LOOKBACK_S, retention_s)
+
+
+def anchor(x: Session, now: float, reach_s: float) -> float | None:
+    """The earliest completed turn of this session that Loki can still be asked
+    about: its first, else its latest. None when both are out of reach."""
+    for t in (x.first_turn_at, x.last_turn_at):
+        if t is not None and now - t <= reach_s:
+            return t
+    return None
 
 
 def _name(x: Session) -> str:
@@ -187,25 +205,25 @@ def _name(x: Session) -> str:
 
 
 def judge(sessions: list[Session], observed: set[str], retention_s: float | None, now: float) -> Check:
-    """Outcome precedence: any missing fails; else any pending; else any unknown; else pass.
-    The whole check is unknown when Loki keeps less than the window, and pending
-    when there is nobody to judge (an empty population is not a pass)."""
+    """Each unobserved session is judged by its anchor turn: none in reach is
+    unknown (absence beyond what Loki keeps proves nothing), inside the grace
+    period is pending, otherwise missing. Precedence: any missing fails; else
+    any pending; else any unknown; else pass. Nobody to judge is pending, not a
+    pass (ADR-005)."""
     pop = population(sessions, now)
-    if retention_s is not None and retention_s < WINDOW_S:
-        return Check(NAME, UNKNOWN, f"Loki retention is {retention_s / 3600:g} h, shorter than the "
-                     f"{WINDOW_S // 3600} h window, so an absent record proves nothing",
-                     "raise limits_config.retention_period in Loki's config (deploy/loki.yaml keeps 720h)")
     if not pop:
         return Check(NAME, PENDING, f"no Claude Code session completed a turn in the last {WINDOW_S // 3600} h",
                      "nothing to judge yet: run a session and check again")
+    r = reach(retention_s)
     missing, pending, unknown = [], [], []
     for x in pop:
         if x.session_id in observed:
             continue
-        if now - x.first_turn_at < GRACE_S:
-            pending.append(x)
-        elif retention_s is not None and now - x.first_turn_at > retention_s:
+        a = anchor(x, now, r)
+        if a is None:
             unknown.append(x)
+        elif now - a < GRACE_S:
+            pending.append(x)
         else:
             missing.append(x)
     seen = len(pop) - len(missing) - len(pending) - len(unknown)
@@ -216,8 +234,8 @@ def judge(sessions: list[Session], observed: set[str], retention_s: float | None
         return Check(NAME, PENDING, f"{summary}; inside the {GRACE_S // 60}-minute grace period: "
                      + "; ".join(map(_name, pending)), "check again in a few minutes")
     if unknown:
-        return Check(NAME, UNKNOWN, f"{summary}; first turn older than Loki's retention, so absence "
-                     "proves nothing: " + "; ".join(map(_name, unknown)),
+        return Check(NAME, UNKNOWN, f"{summary}; no completed turn within the last {r / 3600:g} h that Loki "
+                     "can still hold, so absence proves nothing: " + "; ".join(map(_name, unknown)),
                      "nothing to do unless it is still running; if it is, restart it")
     return Check(NAME, PASS, summary)
 
@@ -242,11 +260,7 @@ def _native_coverage(states, observed, retention, now: float) -> Check:
         return judge(sessions, set(), None, now)
     try:
         keep = retention()
-        if keep is not None and keep < WINDOW_S:
-            return judge(sessions, set(), keep, now)
-        oldest = min(x.first_turn_at for x in pop)
-        since = max(oldest - 60, now - keep) if keep is not None else oldest - 60
-        seen = observed(sorted(x.session_id for x in pop), since)
+        seen = observed(sorted(x.session_id for x in pop), now - reach(keep))
     except Exception as e:                        # noqa: BLE001
         return Check(NAME, UNKNOWN, f"cannot read Loki ({_loki_shown()}): {type(e).__name__}",
                      "start the stack (`make up`), or point STDTEL_LOKI at Loki's query API")

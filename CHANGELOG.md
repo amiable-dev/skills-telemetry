@@ -23,11 +23,13 @@ version until this number changes — so bump it for anything a user would recei
   telemetry was on never exports, and resuming it changes nothing. The check correlates session state
   with Loki's `api_request` events by session id, with a 10-minute grace period and a 24-hour window,
   and names each silent session with its repository and start time. Session state gains
-  `first_turn_at`, set once at Stop. A session judges from its first Stop after upgrading, so until
-  then this check reads `pending`.
-  Malformed state files are skipped one at a time, session ids are queried in batches of 50, and the
-  Loki URL is shown without credentials. The shortest enforced retention counts, including any
-  `retention_stream` rule.
+  `first_turn_at`, set once at Stop. Each session is judged by its first completed turn, or by its
+  latest when the first is beyond reach, so sessions already running are judged at once. Loki is
+  asked about the last 7 days at most (less if it keeps less), whatever a session's age. A session
+  with no turn inside that reach is `unknown`, not missing. Retention is Loki's global
+  `retention_period`; `retention_stream` rules and per-tenant overrides are not evaluated. Malformed
+  state files are skipped one at a time, session ids are queried in batches of 50, and the Loki URL
+  is shown without credentials.
 - **`content dropped` looks at every Claude Code content setting, not just the detailed view** (#164).
   `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES` on now runs the probe, which also carries
   `response`. `OTEL_LOG_RAW_API_BODIES` on fails outright: nothing can prove a raw body is dropped.

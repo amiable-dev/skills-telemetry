@@ -87,7 +87,10 @@ So a session can know, from inside, whether it started with Claude Code's own te
      - `pending`: inside the grace period;
      - `unknown`: Loki unreachable.
    - Loki retains 720 hours (`deploy/loki.yaml`), well past the 24-hour window. A retention shorter than
-     the window makes the check `unknown`, not `missing`.
+     the window makes the check `unknown`, not `missing`. *Implemented per session (#151): a session
+     with no completed turn inside what Loki can still hold is `unknown`; one with a turn inside it
+     is judged. Loki is asked about at most 7 days, so a months-long session never makes every run
+     count months of events.*
    - Each `missing` session is named with its project and start time, and the remedy is "restart it;
      resuming is not enough".
 

@@ -23,10 +23,12 @@ NOW = 1_800_000_000.0
 DAY = 86400.0
 
 
-def s(sid, first_turn_ago=3600.0, written_ago=60.0, harness="claude-code", repo="a/b", started_ago=7200.0):
+def s(sid, first_turn_ago=3600.0, written_ago=60.0, harness="claude-code", repo="a/b", started_ago=7200.0,
+      last_turn_ago=None):
+    ago = lambda v: None if v is None else NOW - v          # noqa: E731
     return Session(session_id=sid, harness=harness, repo=repo, started_at=NOW - started_ago,
-                   first_turn_at=None if first_turn_ago is None else NOW - first_turn_ago,
-                   written_at=NOW - written_ago)
+                   first_turn_at=ago(first_turn_ago), written_at=NOW - written_ago,
+                   last_turn_at=ago(last_turn_ago))
 
 
 def judge(sessions, observed=frozenset(), retention_s=30 * DAY):
@@ -73,8 +75,11 @@ def test_a_session_with_no_completed_turn_is_excluded():
 
 
 def test_retention_shorter_than_the_window_is_unknown_not_missing():
-    c = judge([s("x")], retention_s=12 * 3600)
-    assert c.outcome == "unknown" and "retention" in c.detail
+    """Judged per session (#166 round 3): a session whose turns all lie beyond what
+    Loki keeps is unknown; one with a turn inside it is still judged."""
+    c = judge([s("aged", first_turn_ago=20 * 3600)], retention_s=12 * 3600)
+    assert c.outcome == "unknown" and "aged" in c.detail and "12 h" in c.detail
+    assert judge([s("recent", first_turn_ago=3600)], retention_s=12 * 3600).outcome == "fail"
 
 
 # --- the population ---------------------------------------------------------------------------
@@ -186,18 +191,55 @@ def test_unlimited_retention_judges_normally():
     assert judge([s("x")], observed={"x"}, retention_s=None).outcome == "pass"
 
 
-def test_the_query_range_reaches_the_oldest_first_turn_and_stops_at_retention():
+def test_the_query_looks_back_a_bounded_reach_whatever_the_sessions_age():
+    """#166 round 3: a months-long session must not make every run count months of events."""
+    assert coverage.LOOKBACK_S == 7 * DAY
     seen = {}
 
     def observed(ids, since):
         seen["since"] = since
         return set(ids)
-    coverage.native_coverage(states=lambda: [s("a", first_turn_ago=3 * DAY), s("b")], observed=observed,
-                             retention=lambda: 30 * DAY, now=NOW)
-    assert NOW - seen["since"] >= 3 * DAY
-    coverage.native_coverage(states=lambda: [s("a", first_turn_ago=40 * DAY)], observed=observed,
-                             retention=lambda: 30 * DAY, now=NOW)
-    assert NOW - seen["since"] <= 30 * DAY
+    for keep, reach in ((30 * DAY, 7 * DAY), (None, 7 * DAY), (2 * DAY, 2 * DAY)):
+        coverage.native_coverage(states=lambda: [s("a", first_turn_ago=90 * DAY, last_turn_ago=3600)],
+                                 observed=observed, retention=lambda: keep, now=NOW)
+        assert NOW - seen["since"] == reach
+
+
+def test_a_first_turn_beyond_reach_is_judged_by_its_last_turn():
+    """A long-running session's first turn is out of reach; its last completed turn
+    is evidence the query can see."""
+    old = dict(first_turn_ago=40 * DAY, started_ago=40 * DAY)
+    assert judge([s("long", last_turn_ago=2 * 3600, **old)]).outcome == "fail"
+    assert judge([s("long", last_turn_ago=120, **old)]).outcome == "pending"
+    c = judge([s("long", last_turn_ago=9 * DAY, **old)])
+    assert c.outcome == "unknown" and "long" in c.detail
+
+
+def test_a_busy_session_is_judged_by_its_first_turn_not_its_latest():
+    """A session taking a turn every few minutes always has a latest turn inside
+    the grace period. Its first turn is what makes it judgeable."""
+    assert judge([s("busy", first_turn_ago=2 * 3600, last_turn_ago=120)]).outcome == "fail"
+
+
+def test_state_written_before_first_turn_at_is_judged_by_its_last_turn():
+    """Sessions running when this ships have no first_turn_at, but their state
+    already holds the last completed turn: they are judged now, not after upgrade."""
+    assert judge([s("legacy", first_turn_ago=None, last_turn_ago=2 * 3600)]).outcome == "fail"
+    assert judge([s("legacy", first_turn_ago=None, last_turn_ago=2 * 3600)], observed={"legacy"}).outcome == "pass"
+
+
+def test_last_turn_is_read_from_state_and_zero_means_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path))
+    (tmp_path / "a.json").write_text(json.dumps({"started_at": 1.0, "open_prompt_started_at": 5.0}))
+    (tmp_path / "b.json").write_text(json.dumps({"started_at": 1.0, "open_prompt_started_at": 0.0}))
+    got = {x.session_id: x.last_turn_at for x in coverage.read_states()}
+    assert got == {"a": 5.0, "b": None}
+
+
+def test_a_first_turn_at_zero_is_a_turn_not_an_absence():
+    x = s("z")
+    x = Session(x.session_id, x.harness, x.repo, x.started_at, 0.0, x.written_at)
+    assert coverage.population([x], NOW) == [x]
 
 
 def test_no_query_when_nobody_is_judged():
@@ -313,11 +355,14 @@ def test_credentials_in_the_loki_url_never_reach_the_output(monkeypatch):
     assert c.outcome == "unknown" and "s3cret" not in c.detail and "loki.example:3100" in c.detail
 
 
-def test_a_shorter_stream_retention_is_the_one_that_counts():
+def test_stream_retention_rules_are_not_evaluated():
+    """#166 round 3: taking the minimum of every stream rule let an unrelated
+    short-lived stream make the check unknown, and evaluating selectors and
+    priority is Loki's job. Only the global period is read; the docs say so."""
     cfg = {"compactor": {"retention_enabled": True},
            "limits_config": {"retention_period": "30d",
-                             "retention_stream": [{"selector": '{service_name="claude-code"}', "period": "12h"}]}}
-    assert coverage.retention_from_config(cfg) == 12 * 3600
+                             "retention_stream": [{"selector": '{app="other"}', "period": "12h"}]}}
+    assert coverage.retention_from_config(cfg) == 30 * DAY
 
 
 @pytest.mark.parametrize("text", ["1h1h", "1m1h", "1s1ms1s"])
