@@ -156,6 +156,13 @@ So a session can know, from inside, whether it started with Claude Code's own te
      - The lock also records the owner's start time. A PID reused by an unrelated process is treated
        as dead, so a stale lock cannot become permanent.
      - A skipped run writes nothing; `loader liveness` (decision 3) notices runs that never happen.
+     - *Implemented with an OS lock (#170): `flock` on `~/.stdtel/loader.lock`, which the kernel grants
+       atomically and releases on the holder's exit. The directory, PID and start-time protocol above had
+       race windows between creating the lock and naming its owner, and between judging it stale and
+       removing it (Council, 7abf9a1f). The properties above hold without any staleness judgement.
+       The lock lives under the user's home, so "per machine" means per user, which is the scope of
+       the per-user scheduler. Runs by two users are safe together for the same reason as compose plus
+       scheduler: every write is idempotent or newest-wins (Council, 4f1a0add).*
    - The compose `loader` profile (#121) remains the container option. Running both is detected by
      doctor and reported as one finding. They are not unsafe together: every insert is
      `ON CONFLICT DO NOTHING` on a stable key.

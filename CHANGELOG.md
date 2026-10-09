@@ -18,6 +18,12 @@ version until this number changes — so bump it for anything a user would recei
   - An unreadable state directory, a hook probe that could not run, a content probe that never
     arrived or could not be sent, and a check that raised are each `unknown`. The detailed view
     still refuses to turn on unless the content probe passes.
+- **`stdtel-load` runs every loader once, under a lock** (ADR-015 decision 5, #170). One command for a
+  scheduler, or for you. Each loader's window reaches back to its last successful watermark (24 h at
+  least, 720 h at most), so an outage longer than a day is repaired. Only one run at a time, by an
+  OS lock the kernel releases when its holder exits: an overlapping run exits without writing. The
+  log is kept to 1 MB. Without the warehouse extras it refuses and says how to install them. The `warehouse` loaders now ship in the wheel; install with
+  `uv tool install 'stdtel[warehouse]'`.
 - **`load_traces` catches up after a week away** (ADR-015 decision 5, #153). A window wider than
   Tempo's search maximum (168 h here, read from `/status/config`) used to fail with HTTP 400. It is
   now split into chunks, each written as it loads. A failing chunk leaves the others loaded and records

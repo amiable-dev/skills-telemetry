@@ -34,6 +34,7 @@ stdtel-validate = "stdtel.manifest:cli"
 stdtel-install = "stdtel.install:main"
 stdtel-policy-report = "stdtel.policy_report:main"
 stdtel-doctor = "stdtel.doctor:main"
+stdtel-load = "stdtel.load:main"
 stdtel-statusline = "stdtel.statusline:main"
 stdtel-export = "stdtel.spool_export:main"
 stdtel-hook = "stdtel.hooks.cli:main"
@@ -45,7 +46,7 @@ requires = ["setuptools>=77"]   # PEP 639: license-files
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["stdtel*", "eval*"]
+include = ["stdtel*", "eval*", "warehouse*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
