@@ -58,14 +58,15 @@ def _session(stem: str, raw, written: float) -> Session:
     """One state file's session, or ValueError when any field is not what it must be."""
     if not ID_RE.fullmatch(stem) or not isinstance(raw, dict):
         raise ValueError("not a session")
-    res = raw.get("resource")
-    res = {} if res is None else res
+    # absent means the default; present means it must be the right type. Never
+    # `or`: a false or empty value is corruption, not a default.
+    res = raw.get("resource", {})
     if not isinstance(res, dict):
         raise ValueError("resource is not an object")
-    harness, repo = res.get("std.harness") or HARNESS, res.get("std.repo") or ""
+    harness, repo = res.get("std.harness", HARNESS), res.get("std.repo", "")
     if not isinstance(harness, str) or not isinstance(repo, str):
         raise ValueError("harness or repo is not text")
-    return Session(stem, harness, repo, _ts(raw.get("started_at") or 0.0),
+    return Session(stem, harness, repo, _ts(raw.get("started_at", 0.0)),
                    _ts(raw.get("first_turn_at"), optional=True), _ts(written))
 
 
@@ -116,10 +117,17 @@ def _loki() -> str:
 
 
 def _loki_shown() -> str:
-    """Loki's URL as printed: never with credentials in it."""
-    u = urllib.parse.urlsplit(_loki())
-    return urllib.parse.urlunsplit(u._replace(netloc=u.hostname + (f":{u.port}" if u.port else ""))) \
-        if u.hostname else "STDTEL_LOKI"
+    """Loki's URL as printed: never with credentials in it, and never raising,
+    since it is called from an error path. Unparseable means it is not shown."""
+    try:
+        u = urllib.parse.urlsplit(_loki())
+        host = u.hostname
+        if not host:
+            return "STDTEL_LOKI"
+        host = f"[{host}]" if ":" in host else host
+        return urllib.parse.urlunsplit(u._replace(netloc=host + (f":{u.port}" if u.port else "")))
+    except ValueError:
+        return "STDTEL_LOKI (unparseable)"
 
 
 def read_retention() -> float | None:
@@ -171,7 +179,10 @@ def population(sessions: list[Session], now: float) -> list[Session]:
 
 
 def _name(x: Session) -> str:
-    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(x.started_at)) if x.started_at else "unknown start"
+    try:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(x.started_at)) if x.started_at else "unknown start"
+    except (OverflowError, OSError, ValueError):     # a time_t this platform cannot hold
+        when = "unknown start"
     return f"{x.session_id} ({x.repo or 'unknown project'}, started {when})"
 
 
@@ -213,15 +224,25 @@ def judge(sessions: list[Session], observed: set[str], retention_s: float | None
 
 def native_coverage(states=read_states, observed=read_observed, retention=read_retention,
                     now: float | None = None) -> Check:
-    now = time.time() if now is None else now
+    """Never raises: each read that fails is named, and anything else is unknown."""
+    try:
+        return _native_coverage(states, observed, retention, time.time() if now is None else now)
+    except Exception as e:                        # noqa: BLE001 - a diagnostic must not raise
+        return Check(NAME, UNKNOWN, f"the check itself failed: {type(e).__name__}: {e}",
+                     "this is a bug in stdtel doctor")
+
+
+def _native_coverage(states, observed, retention, now: float) -> Check:
     try:
         sessions = states()
-    except Exception as e:                        # noqa: BLE001 - a diagnostic must not raise
+    except Exception as e:                        # noqa: BLE001
         return Check(NAME, UNKNOWN, f"cannot read session state: {e}", "check STDTEL_STATE_DIR")
     pop = population(sessions, now)
+    if not pop:                                   # nobody to judge: no reason to read Loki
+        return judge(sessions, set(), None, now)
     try:
         keep = retention()
-        if not pop or (keep is not None and keep < WINDOW_S):
+        if keep is not None and keep < WINDOW_S:
             return judge(sessions, set(), keep, now)
         oldest = min(x.first_turn_at for x in pop)
         since = max(oldest - 60, now - keep) if keep is not None else oldest - 60

@@ -324,3 +324,56 @@ def test_a_shorter_stream_retention_is_the_one_that_counts():
 def test_units_must_appear_once_largest_first(text):
     with pytest.raises(ValueError):
         coverage.duration_s(text)
+
+
+# --- council round 2 on #166: nothing in the check raises -------------------------------------
+
+@pytest.mark.parametrize("url", ["http://localhost:notaport", "http://[::1", "http://[::1]:3100",
+                                 "not a url", "http://u:p@[::1]:3100"])
+def test_a_malformed_loki_url_is_reported_not_raised(monkeypatch, url):
+    monkeypatch.setenv("STDTEL_LOKI", url)
+
+    def down(ids, since):
+        raise ConnectionRefusedError()
+    c = coverage.native_coverage(states=lambda: [s("x")], observed=down, retention=lambda: None, now=NOW)
+    assert c.outcome == "unknown" and ":p@" not in c.detail
+    assert c.detail.startswith("cannot read Loki"), "the Loki failure is named, not lost to the outer guard"
+
+
+def test_an_ipv6_loki_url_is_shown_bracketed(monkeypatch):
+    monkeypatch.setenv("STDTEL_LOKI", "http://user:pw@[::1]:3100")
+    assert coverage._loki_shown() == "http://[::1]:3100"
+
+
+def test_a_start_time_localtime_rejects_still_names_the_session(monkeypatch):
+    def boom(_):
+        raise OverflowError("timestamp out of range for platform time_t")
+    monkeypatch.setattr(coverage.time, "localtime", boom)
+    c = judge([s("dead")])
+    assert c.outcome == "fail" and "dead" in c.detail
+
+
+def test_anything_the_judge_raises_is_unknown(monkeypatch):
+    monkeypatch.setattr(coverage, "judge", lambda *a, **kw: 1 / 0)
+    c = coverage.native_coverage(states=lambda: [s("x")], observed=lambda i, t: {"x"}, retention=lambda: None, now=NOW)
+    assert c.outcome == "unknown" and "ZeroDivisionError" in c.detail and c.remedy
+
+
+@pytest.mark.parametrize("raw", [
+    {"resource": False, "started_at": 1.0, "first_turn_at": 2.0},
+    {"resource": {"std.harness": False}, "started_at": 1.0, "first_turn_at": 2.0},
+    {"resource": {"std.repo": False}, "started_at": 1.0, "first_turn_at": 2.0},
+    {"resource": {}, "started_at": False, "first_turn_at": 2.0},
+    {"resource": {}, "started_at": 1.0, "first_turn_at": False},
+])
+def test_a_false_value_is_malformed_not_a_default(tmp_path, monkeypatch, raw):
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path))
+    (tmp_path / "bad.json").write_text(json.dumps(raw))
+    assert coverage.read_states() == []
+
+
+def test_nobody_to_judge_reads_no_loki_at_all():
+    def boom():
+        raise AssertionError("read Loki's config with nothing to judge")
+    c = coverage.native_coverage(states=lambda: [], observed=lambda i, t: set(), retention=boom, now=NOW)
+    assert c.outcome == "pending"
