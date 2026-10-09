@@ -88,7 +88,7 @@ class Runner:
         if verb in self.fail:
             return 1
         if verb in ("print", "is-active"):
-            return 0 if self.loaded else 3
+            return 0 if self.loaded else (113 if argv[0] == "launchctl" else 3)
         if verb in ("bootstrap", "enable"):
             self.loaded = True
         if verb in ("bootout", "disable"):
@@ -299,3 +299,53 @@ def test_a_retried_activation_does_not_rewrite_a_current_definition(env, tmp_pat
     before = [f.stat().st_ino for f in sch.paths("linux", tmp_path)]
     sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=Runner())
     assert [f.stat().st_ino for f in sch.paths("linux", tmp_path)] == before
+
+
+# --- council round 2 on #177 ------------------------------------------------------------------
+
+@pytest.mark.parametrize("platform,rc,want", [("darwin", 0, True), ("darwin", 113, False), ("darwin", 5, None),
+                                              ("linux", 0, True), ("linux", 3, False), ("linux", 4, False),
+                                              ("linux", 1, None)])
+def test_a_probe_distinguishes_not_loaded_from_could_not_ask(platform, rc, want):
+    assert sch._loaded(platform, lambda argv: rc) is want
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_uninstall_when_the_scheduler_cannot_be_asked_keeps_files_unless_stopping_works(env, tmp_path, platform):
+    sch.install(platform=platform, home=tmp_path, binary=BIN, interval=900, run=Runner())
+    stop = "bootout" if platform == "darwin" else "disable"
+    probe = "print" if platform == "darwin" else "is-active"
+
+    def unreachable(argv):
+        verb = argv[1] if argv[0] == "launchctl" else argv[2]
+        return 5 if verb in (probe, stop) else 0
+    assert sch.uninstall(platform=platform, home=tmp_path, run=unreachable) == 1
+    assert all(f.exists() for f in sch.paths(platform, tmp_path))
+
+
+def test_a_stale_temporary_file_never_blocks_a_write(env, tmp_path, monkeypatch):
+    f = sch.paths("linux", tmp_path)[0]
+    f.parent.mkdir(parents=True)
+    import os
+    for pid in (os.getpid(), 1, 99999):
+        (f.parent / f".{f.name}.tmp{pid}").write_text("stale")
+    sch._write_private(f, b"new")
+    assert f.read_bytes() == b"new"
+
+
+@pytest.mark.parametrize("seconds,cal", [(86400, "daily"), (3 * 86400, "daily"), (23 * 3600, "*-*-* 0/23:00:00")])
+def test_a_day_or_more_is_daily_not_an_invalid_hour_step(seconds, cal):
+    assert sch.on_calendar(seconds) == cal
+
+
+def test_the_launchd_log_is_private(env, tmp_path):
+    sch.install(platform="darwin", home=tmp_path, binary=BIN, interval=900, run=Runner())
+    log = tmp_path / ".stdtel" / "loader.log"
+    assert log.exists() and stat.S_IMODE(log.stat().st_mode) == 0o600
+
+
+def test_the_bootout_before_a_fresh_bootstrap_is_quiet(capsys, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 113, "", "Boot-out failed: 3: No such process"))
+    sch._runner()(["launchctl", "bootout", "gui/501/x"])
+    assert capsys.readouterr().err == ""

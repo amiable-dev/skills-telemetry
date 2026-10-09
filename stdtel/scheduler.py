@@ -70,6 +70,8 @@ def render_launchd(binary: str, env: dict, interval: int, log: Path) -> bytes:
 def on_calendar(seconds: int) -> str:
     """A calendar step for the interval: whole minutes under an hour, whole hours above."""
     minutes = max(1, int(seconds) // 60)
+    if minutes >= 24 * 60:
+        return "daily"                            # an hour step past 23 is not a valid calendar
     return f"*:0/{minutes}" if minutes < 60 else f"*-*-* 0/{minutes // 60}:00:00"
 
 
@@ -111,6 +113,8 @@ def paths(platform: str, home: Path) -> list[Path]:
 
 
 _PROBES = ("print", "is-active")
+#: Expected to fail on a job that is not loaded yet; its stderr is noise, not news.
+_QUIET = (*_PROBES, "bootout")
 
 
 def _verb(argv: list[str]) -> str:
@@ -121,7 +125,7 @@ def _runner():
     """Runs a scheduler command; a failing one (not a probe) shows its own stderr."""
     def run(argv):
         r = subprocess.run(argv, capture_output=True, text=True)
-        if r.returncode and _verb(argv) not in _PROBES and r.stderr.strip():
+        if r.returncode and _verb(argv) not in _QUIET and r.stderr.strip():
             print(r.stderr.strip()[-500:], file=sys.stderr)
         return r.returncode
     return run
@@ -130,13 +134,13 @@ def _runner():
 def _write_private(path: Path, data: bytes) -> None:
     """A new 0600 file renamed over the old one: the DSN is never written into a
     file someone else can read, not even briefly, and a reader sees old or new."""
+    import tempfile
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")   # 0600, unique
+    tmp = Path(name)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        os.chmod(tmp, 0o600)                      # whatever the umask did
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -147,10 +151,15 @@ def _private(f: Path) -> bool:
     return (f.stat().st_mode & 0o777) == 0o600
 
 
-def _loaded(platform: str, run) -> bool:
+def _loaded(platform: str, run) -> bool | None:
+    """True loaded, False not loaded, None the scheduler could not be asked. Only
+    the codes that mean "no such job" read as not loaded: launchctl's 113, and
+    systemctl is-active's 3 (inactive) and 4 (no such unit)."""
     if platform == "darwin":
-        return run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"]) == 0
-    return run(["systemctl", "--user", "is-active", f"{UNIT}.timer"]) == 0
+        rc, absent = run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"]), (113,)
+    else:
+        rc, absent = run(["systemctl", "--user", "is-active", f"{UNIT}.timer"]), (3, 4)
+    return True if rc == 0 else False if rc in absent else None
 
 
 def _activate(platform: str, files: list[Path], run) -> list[list[str]]:
@@ -172,13 +181,15 @@ def install(platform: str, home: Path, binary: str, interval: int, run=None) -> 
     if platform == "darwin":
         log = Path(env.get("STDTEL_HOME") or home / ".stdtel") / "loader.log"
         log.parent.mkdir(parents=True, exist_ok=True)   # launchd will not create it
+        os.close(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
+        os.chmod(log, 0o600)                       # it can carry a loader's error text
         wanted = [render_launchd(binary, env, interval, log)]
         schedule = f"every {interval} s"
     else:
         wanted = [t.encode() for t in render_systemd(binary, env, interval)]
         schedule = f"OnCalendar={on_calendar(interval)}"
     current = all(f.exists() and f.read_bytes() == w and _private(f) for f, w in zip(files, wanted))
-    if current and _loaded(platform, run):
+    if current and _loaded(platform, run) is True:
         print(f"stdtel-install: loader already installed ({files[0]}), {schedule}")
         return 0
     if not current:
@@ -200,7 +211,7 @@ def uninstall(platform: str, home: Path, run=None) -> int:
     if not files:
         print("stdtel-install: no loader schedule installed")
         return 0
-    if _loaded(platform, run):
+    if _loaded(platform, run) is not False:      # loaded, or cannot tell: stop it to be sure
         stop = (["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"] if platform == "darwin"
                 else ["systemctl", "--user", "disable", "--now", f"{UNIT}.timer"])
         if run(stop) != 0:
