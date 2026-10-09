@@ -34,8 +34,13 @@ CREATE TABLE IF NOT EXISTS session_cost (           -- harness-native token metr
   session_id TEXT PRIMARY KEY, harness TEXT, model TEXT, branch_hash TEXT, team TEXT,
   input_tokens BIGINT, output_tokens BIGINT, cache_read_tokens BIGINT, cache_creation_tokens BIGINT,
   cost_usd NUMERIC(12,4), active_seconds INT, started_at TIMESTAMPTZ,
-  api_ms BIGINT, tool_ms BIGINT, duration_ms BIGINT   -- harness wall time, cumulative per session
+  api_ms BIGINT, tool_ms BIGINT, duration_ms BIGINT,  -- harness wall time, cumulative per session
+  observed_at TIMESTAMPTZ                            -- the Stop that sent this snapshot; newest wins
 );
+
+-- #172: session_cost is a running total re-sent at every Stop. The newest
+-- snapshot wins, ordered by the Stop that emitted it (the span's end).
+ALTER TABLE session_cost ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ticket (                  -- from Linear
   ticket_id TEXT PRIMARY KEY, team TEXT, story_points NUMERIC, created_at TIMESTAMPTZ,
