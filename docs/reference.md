@@ -156,19 +156,21 @@ and you can run it by hand. It needs the warehouse extras: `uv tool install 'std
 stdtel-load [--dsn DSN] [--tempo URL] [--loki URL]
 ```
 
-- **One run at a time.** A lock directory, `~/.stdtel/loader.lock`, holds the owner's PID and process
-  start time. An overlapping run exits `0` at once and writes no `loader_run` row; `loader liveness`
-  is what notices runs that never happen. A lock is reclaimed only when its PID is dead, or alive with
-  a different start time (a reused PID), never because it is old.
+- **One run at a time.** An OS lock (`flock`) on `~/.stdtel/loader.lock`. The kernel grants it
+  atomically and releases it when its holder exits, however it exits, so a dead run never blocks the
+  next and a live one is never displaced. An overlapping run exits `0` at once and writes nothing: no
+  log line, no `loader_run` row. `loader liveness` is what notices runs that never happen.
 - **The window reaches back to the watermark.** Each loader loads from its last successful
   `source_max_ts` plus 2 h of overlap, at least 24 h and at most 720 h. A fixed 24 h window could
   never repair an outage longer than a day. Overlapping windows cost nothing: inserts are idempotent.
 - **Delivery needs a repository.** Without `STDTEL_LOAD_REPO`, `load_delivery` is recorded as a failed
   run whose error names the setting, so `loader liveness` says what to set rather than staying silent.
-- **Output** goes to `~/.stdtel/loader.log`, kept to its last 1 MB. The terminal gets one summary line.
+- **Output** goes to `~/.stdtel/loader.log`, kept to its last 1 MB before and after each run. The
+  terminal gets one summary line.
 
-Exit codes: `0` every loader succeeded, or another run held the lock · `1` any loader failed (the
-others still ran; the log says which).
+Exit codes: `0` every loader succeeded, or another run held the lock · `1` any loader failed,
+including delivery without `STDTEL_LOAD_REPO` (the others still ran; the log says which) · `2` the
+warehouse extras are not installed (`uv tool install 'stdtel[warehouse]'`).
 
 ## `stdtel-doctor`
 

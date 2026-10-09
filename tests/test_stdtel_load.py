@@ -29,77 +29,79 @@ def home(tmp_path, monkeypatch):
 
 
 # --- the lock -------------------------------------------------------------------------------
+# An OS lock (flock) on ~/.stdtel/loader.lock. The kernel grants it atomically
+# and releases it when its holder exits, however it exits, so there is no
+# staleness to judge: a dead holder's lock is free, a live holder's never is,
+# and a reused PID cannot matter (#174 round 1).
+
+HOLDER = """
+import fcntl, sys, time
+f = open(sys.argv[1], "a")
+fcntl.flock(f, fcntl.LOCK_EX)
+print("held", flush=True)
+time.sleep(60)
+"""
+
+
+def _hold_in_another_process(home):
+    p = subprocess.Popen([sys.executable, "-c", HOLDER, str(home / "loader.lock")],
+                         stdout=subprocess.PIPE, text=True)
+    assert p.stdout.readline().strip() == "held"
+    return p
+
 
 def test_the_lock_is_taken_and_released(home):
     with load.lock() as held:
-        assert held and (home / "loader.lock").is_dir()
-        owner = json.loads((home / "loader.lock" / "owner").read_text())
-        assert owner["pid"] == os.getpid() and owner["start"] == load.process_start(os.getpid())
-    assert not (home / "loader.lock").exists()
+        assert held
+        assert json.loads((home / "loader.lock").read_text())["pid"] == os.getpid()
+    with load.lock() as again:
+        assert again, "released on exit"
 
 
 def test_an_overlapping_run_exits_under_the_lock(home):
-    with load.lock() as first:
-        with load.lock() as second:
-            assert first and not second
-    assert not (home / "loader.lock").exists()
-
-
-def _plant(home, pid, start):
-    d = home / "loader.lock"
-    d.mkdir()
-    (d / "owner").write_text(json.dumps({"pid": pid, "start": start}))
-
-
-def test_a_lock_whose_pid_is_dead_is_reclaimed(home):
-    p = subprocess.Popen([sys.executable, "-c", "pass"])
-    p.wait()
-    _plant(home, p.pid, "Thu Jan  1 00:00:00 1970")
-    with load.lock() as held:
-        assert held
-
-
-def test_a_lock_whose_pid_is_alive_is_never_reclaimed(home):
-    """However old: a long run is never doubled."""
-    _plant(home, os.getpid(), load.process_start(os.getpid()))
-    old = (home / "loader.lock").stat().st_mtime - 10 * 24 * 3600
-    os.utime(home / "loader.lock", (old, old))
-    with load.lock() as held:
-        assert not held
-    assert (home / "loader.lock").exists(), "someone else's live lock is left alone"
-
-
-def test_a_live_pid_with_a_different_start_time_is_a_reused_pid_and_is_reclaimed(home):
-    _plant(home, os.getpid(), "Thu Jan  1 00:00:00 1970")
-    with load.lock() as held:
-        assert held
-
-
-def test_an_unreadable_owner_is_treated_as_stale(home):
-    (home / "loader.lock").mkdir()
-    (home / "loader.lock" / "owner").write_text("{ half")
-    with load.lock() as held:
-        assert held
-
-
-def test_process_start_is_stable_and_differs_for_another_process():
-    me = load.process_start(os.getpid())
-    assert me and me == load.process_start(os.getpid())
-    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+    """Another process holds it: this one does not get it, however long it has been held."""
+    p = _hold_in_another_process(home)
     try:
-        assert load.process_start(p.pid) not in (None, "")
+        with load.lock() as held:
+            assert not held
     finally:
         p.kill()
         p.wait()
-    assert load.process_start(p.pid) is None, "a dead process has no start time"
+
+
+def test_a_lock_whose_holder_died_is_free(home):
+    """Killed without cleanup: the kernel released it."""
+    p = _hold_in_another_process(home)
+    p.kill()
+    p.wait()
+    with load.lock() as held:
+        assert held
+
+
+def test_a_live_holder_is_never_displaced_by_an_old_or_odd_lock_file(home):
+    p = _hold_in_another_process(home)
+    try:
+        old = (home / "loader.lock").stat().st_mtime - 10 * 24 * 3600
+        os.utime(home / "loader.lock", (old, old))
+        (home / "loader.lock").write_text("{ not json")
+        with load.lock() as held:
+            assert not held
+    finally:
+        p.kill()
+        p.wait()
 
 
 def test_a_skipped_run_writes_nothing(home, monkeypatch):
     ran = []
     monkeypatch.setattr(load, "run_all", lambda **kw: ran.append(1) or 0)
-    with load.lock():
+    monkeypatch.setattr(load, "_extras_missing", lambda: [])
+    p = _hold_in_another_process(home)
+    try:
         assert load.main([]) == 0
-    assert ran == [], "an overlapping run neither loads nor records a loader_run row"
+    finally:
+        p.kill()
+        p.wait()
+    assert ran == [] and not (home / "loader.log").exists(), "no loader_run row, no log line"
 
 
 # --- the log ---------------------------------------------------------------------------------
@@ -121,6 +123,8 @@ def test_a_short_log_is_left_alone(home):
 
 
 def test_main_writes_to_the_log(home, monkeypatch):
+    monkeypatch.setattr(load, "_extras_missing", lambda: [])
+
     def run_all(**kw):
         print("loaded 3 activation(s)")
         return 0
@@ -175,9 +179,19 @@ def test_without_a_repo_delivery_records_a_failed_run_naming_the_setting(monkeyp
     monkeypatch.setattr(load, "watermarks", lambda dsn: {})
     monkeypatch.setattr(load, "_run", lambda name, argv: 0)
     monkeypatch.setattr(load, "_record", lambda dsn, row: recorded.append(row) or True)
-    load.run_all(dsn="d", tempo="t", loki="l")
+    assert load.run_all(dsn="d", tempo="t", loki="l") == 1, "a failed run recorded is a failed run"
     (row,) = recorded
     assert row["loader"] == "load_delivery" and row["ok"] is False and "STDTEL_LOAD_REPO" in row["error"]
+
+
+@pytest.mark.parametrize("record", [lambda dsn, row: False,
+                                    lambda dsn, row: (_ for _ in ()).throw(ConnectionError("pg"))])
+def test_a_delivery_record_that_cannot_be_written_fails_the_run_and_never_raises(monkeypatch, record):
+    monkeypatch.delenv("STDTEL_LOAD_REPO", raising=False)
+    monkeypatch.setattr(load, "watermarks", lambda dsn: {})
+    monkeypatch.setattr(load, "_run", lambda name, argv: 0)
+    monkeypatch.setattr(load, "_record", record)
+    assert load.run_all(dsn="d", tempo="t", loki="l") == 1
 
 
 def test_a_failing_policy_fetch_still_loads_delivery(monkeypatch):
@@ -214,13 +228,32 @@ def test_the_loaders_ship_in_the_wheel_and_the_command_exists():
     assert cfg["project"]["scripts"]["stdtel-load"] == "stdtel.load:main"
 
 
-def test_a_lock_taken_over_meanwhile_is_not_released_by_the_old_owner(home):
-    """If this run's lock was reclaimed and another run holds it now, leaving
-    must not delete that run's lock."""
-    with load.lock() as held:
-        assert held
-        (home / "loader.lock" / "owner").write_text(json.dumps({"pid": 1, "start": "someone else"}))
-    assert (home / "loader.lock").exists()
+def test_the_log_is_trimmed_after_a_run_as_well(home, monkeypatch):
+    monkeypatch.setattr(load, "_extras_missing", lambda: [])
+
+    def run_all(**kw):
+        for _ in range(15_000):                     # ~1.5 MB of output in one run
+            print("y" * 100)
+        return 0
+    monkeypatch.setattr(load, "run_all", run_all)
+    assert load.main([]) == 0
+    assert (home / "loader.log").stat().st_size <= load.LOG_MAX_BYTES
+
+
+def test_without_the_warehouse_extras_it_refuses_with_the_install_remedy(home, monkeypatch, capsys):
+    monkeypatch.setattr(load, "_extras_missing", lambda: ["psycopg"])
+    monkeypatch.setattr(load, "run_all", lambda **kw: (_ for _ in ()).throw(AssertionError("ran")))
+    assert load.main([]) == 2
+    assert "stdtel[warehouse]" in capsys.readouterr().err
+
+
+def test_extras_missing_names_what_cannot_be_imported(monkeypatch):
+    import builtins
+    real = builtins.__import__
+    monkeypatch.setattr(builtins, "__import__",
+                        lambda name, *a, **k: (_ for _ in ()).throw(ImportError(name)) if name == "psycopg"
+                        else real(name, *a, **k))
+    assert load._extras_missing() == ["psycopg"]
 
 
 def test_the_log_bound_is_one_megabyte():

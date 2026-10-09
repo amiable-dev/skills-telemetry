@@ -1,14 +1,9 @@
 """`stdtel-load`: run every warehouse loader once, under a lock (ADR-015 decision 5).
 
 What a scheduler runs (`stdtel-install loader`, #171), and what a person can run
-by hand. One run at a time per machine:
-
-* the lock is a directory (`~/.stdtel/loader.lock`), created atomically, holding
-  the owner's PID and process start time;
-* an overlapping run exits at once and writes nothing, not even a loader_run row,
-  so `loader liveness` notices runs that never happen;
-* a lock is reclaimed only when its PID is dead, or alive with a different start
-  time (a reused PID), never on age alone, so a long but live run is never doubled.
+by hand. One run at a time per machine, by an OS lock on `~/.stdtel/loader.lock`
+(see `lock`). An overlapping run exits at once and writes nothing, not even a
+log line or a loader_run row, so `loader liveness` notices runs that never happen.
 
 Each loader's window reaches back to its last successful watermark plus an
 overlap, with a 24 h floor and a 720 h cap. A fixed 24 h window cannot repair an
@@ -23,8 +18,6 @@ import datetime as dt
 import json
 import math
 import os
-import shutil
-import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -42,51 +35,32 @@ def home() -> Path:
 
 # --- the lock --------------------------------------------------------------------------------
 
-def process_start(pid: int) -> str | None:
-    """The process's start time as `ps` prints it, or None when it is not running.
-    Together with the PID it names one process: a reused PID has a different start."""
-    try:
-        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
-    except Exception:                             # noqa: BLE001 - no ps: treat as unknown
-        return None
-    return r.stdout.strip() or None                # a dead PID prints nothing
-
-
-def _stale(owner_file: Path) -> bool:
-    try:
-        owner = json.loads(owner_file.read_text())
-        pid, start = int(owner["pid"]), owner["start"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return True                               # half-written or foreign: no live owner can be named
-    return process_start(pid) != start            # dead (None) or a reused PID
-
-
 @contextlib.contextmanager
 def lock():
-    """Yields True while this process holds the lock, or False when another live
-    run does; on False nothing should be done."""
-    d = home() / "loader.lock"
-    d.parent.mkdir(parents=True, exist_ok=True)
-    me = {"pid": os.getpid(), "start": process_start(os.getpid())}
-    held = False
-    for _ in range(2):
+    """Yields True while this process holds the machine's loader lock, False when
+    another process does; on False nothing should be done.
+
+    An OS lock (flock) on `~/.stdtel/loader.lock`: the kernel grants it atomically
+    and releases it when its holder exits, however it exits. So there is no
+    staleness to judge, a dead holder's lock is free, a live holder's never is,
+    and a reused PID cannot matter. The file's content (PID, time) is for a person
+    reading it; nothing decides on it. The same mechanism as session state
+    (`stdtel.state.locked`).
+    """
+    import fcntl
+    path = home() / "loader.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as f:
         try:
-            d.mkdir()
-        except FileExistsError:
-            if not _stale(d / "owner"):
-                break
-            shutil.rmtree(d, ignore_errors=True)  # reclaim, then try once more
-            continue
-        (d / "owner").write_text(json.dumps(me))
-        held = True
-        break
-    try:
-        yield held
-    finally:
-        if held:
-            with contextlib.suppress(OSError, ValueError):
-                if json.loads((d / "owner").read_text()) == me:
-                    shutil.rmtree(d, ignore_errors=True)
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        f.seek(0)
+        f.truncate()
+        f.write(json.dumps({"pid": os.getpid(), "since": _now().isoformat(timespec="seconds")}))
+        f.flush()
+        yield True                                # closing the file releases the lock
 
 
 # --- the log ---------------------------------------------------------------------------------
@@ -164,11 +138,20 @@ def run_all(dsn: str, tempo: str, loki: str) -> int:
         _run("fetch_policy_results", ["--repo", repo, "--out", artefact])
         rcs.append(_run("load_delivery", ["--repo", repo, "--dsn", dsn, "--policy-results", artefact]))
     else:
+        # a failed run, recorded so `loader liveness` names the setting, and counted
         t = _now()
-        _record(dsn, {"run_id": uuid.uuid4().hex, "loader": "load_delivery", "started_at": t,
-                      "finished_at": t, "rows_loaded": 0, "ok": False,
-                      "error": "STDTEL_LOAD_REPO not set: delivery data is not loaded. Set it to "
-                               "owner/name in the environment stdtel-load runs in"})
+        try:
+            written = _record(dsn, {"run_id": uuid.uuid4().hex, "loader": "load_delivery", "started_at": t,
+                                    "finished_at": t, "rows_loaded": 0, "ok": False,
+                                    "error": "STDTEL_LOAD_REPO not set: delivery data is not loaded. Set it "
+                                             "to owner/name in the environment stdtel-load runs in"})
+        except Exception as e:                    # noqa: BLE001
+            written = False
+            print(f"load_delivery: could not record its run: {type(e).__name__}", file=sys.stderr)
+        if not written:
+            print("load_delivery: STDTEL_LOAD_REPO is not set and the run could not be recorded",
+                  file=sys.stderr)
+        rcs.append(1)
     return 1 if any(rcs) else 0
 
 
@@ -179,20 +162,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tempo", default=os.environ.get("STDTEL_TEMPO") or "http://localhost:3200")
     ap.add_argument("--loki", default=os.environ.get("STDTEL_LOKI") or "http://localhost:11010")
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
+    missing = _extras_missing()
+    if missing:
+        print(f"stdtel-load: {', '.join(missing)} not installed; the loaders need the warehouse extras: "
+              "uv tool install 'stdtel[warehouse]'", file=sys.stderr)
+        return 2
     log = home() / "loader.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    trim_log(log)
-    with lock() as held, log.open("a") as out:
-        stamp = _now().isoformat(timespec="seconds")
-        if not held:
-            print(f"{stamp} another stdtel-load holds the lock; skipped", file=out)
+    with lock() as held:
+        if not held:                              # nothing written: no log line, no loader_run row
+            print("stdtel-load: another run holds the lock; skipped", file=sys.stderr)
             return 0
-        print(f"{stamp} stdtel-load starting", file=out, flush=True)
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            rc = run_all(dsn=a.dsn, tempo=a.tempo, loki=a.loki)
-        print(f"{_now().isoformat(timespec='seconds')} stdtel-load finished, exit {rc}", file=out)
+        trim_log(log)                             # only the lock holder touches the log
+        with log.open("a") as out:
+            print(f"{_now().isoformat(timespec='seconds')} stdtel-load starting", file=out, flush=True)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                rc = run_all(dsn=a.dsn, tempo=a.tempo, loki=a.loki)
+            print(f"{_now().isoformat(timespec='seconds')} stdtel-load finished, exit {rc}", file=out)
+        trim_log(log)                             # and a verbose run does not leave it over the bound
     print(f"stdtel-load: exit {rc}; see {log}")
     return rc
+
+
+def _extras_missing() -> list[str]:
+    """The warehouse extras this command needs and cannot import."""
+    out = []
+    for mod in ("psycopg", "requests"):
+        try:
+            __import__(mod)
+        except ImportError:
+            out.append(mod)
+    return out
 
 
 if __name__ == "__main__":
