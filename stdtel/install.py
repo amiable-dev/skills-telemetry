@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -275,8 +276,16 @@ def main(argv: list[str] | None = None) -> int:
     p_dv.add_argument("--path", type=Path, default=Path.home() / ".claude" / "settings.json")
     p_dv.add_argument("--collector-confirmed", action="store_true",
                       help="the collector is not local, and you know it applies this repo's privacy rules")
+    p_load = sub.add_parser("loader", help="run stdtel-load on a schedule (launchd agent / systemd user timer)")
+    p_load.add_argument("--uninstall", action="store_true", help="remove the schedule")
+    p_load.add_argument("--interval", type=int, default=None,
+                        help="seconds between runs (default STDTEL_LOAD_INTERVAL, else 900)")
+    p_load.add_argument("--home", type=Path, default=Path.home(), help=argparse.SUPPRESS)   # tests
+
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
+    if args.cmd == "loader":
+        return _loader(args)
     if args.cmd == "copilot":
         return _copilot(args.vscode_settings)
     if args.cmd == "settings" and args.native_only:
@@ -318,6 +327,31 @@ def main(argv: list[str] | None = None) -> int:
                           "collector drops native metrics anyway (ADR-014 decision 4)")
             print(RESTART_NOTICE)
     return 0
+
+
+def _loader(args) -> int:
+    """ADR-015 decision 5: refuse rather than schedule a job that would fail every interval."""
+    from stdtel import scheduler
+    from stdtel.load import _extras_missing
+    platform = scheduler.current_platform()
+    if args.uninstall:
+        return scheduler.uninstall(platform, args.home, run=scheduler._runner())
+    missing = _extras_missing()
+    if missing:
+        print(f"stdtel-install: {', '.join(missing)} not installed beside stdtel; the scheduled loader "
+              "would fail every run. Install the warehouse extras first: "
+              "uv tool install 'stdtel[warehouse]'", file=sys.stderr)
+        return 1
+    try:
+        interval = args.interval or int(os.environ.get("STDTEL_LOAD_INTERVAL") or 900)
+        binary = scheduler.load_binary()
+    except (ValueError, FileNotFoundError) as e:
+        print(f"stdtel-install: {e}", file=sys.stderr)
+        return 1
+    if interval <= 0:
+        print("stdtel-install: the interval must be a positive number of seconds", file=sys.stderr)
+        return 1
+    return scheduler.install(platform, args.home, binary, interval, run=scheduler._runner())
 
 
 def _native_env_for(target: Path, replace_endpoint: bool) -> tuple[dict, str | None]:
