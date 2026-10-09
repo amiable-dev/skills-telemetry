@@ -38,7 +38,7 @@ class Check:
     """One check's result. `outcome` takes one of OUTCOMES, or a bool for pass/fail,
     which is what every check written before ADR-015 returns."""
     name: str
-    outcome: str
+    outcome: str | bool
     detail: str
     remedy: str = ""
     observed_at: str = field(default_factory=_now)
@@ -310,9 +310,9 @@ def recent_state() -> Check:
                      "no state file here belongs to a Claude Code transcript, so whose it is cannot be "
                      "told. Expected on a Copilot-only machine; otherwise start a Claude Code session "
                      "in this project and run this again")
-    elsewhere = next(o for o in owners.values() if o)
+    newest = next(f for f in files if owners[f])         # files are newest first
     return Check("hooks running", False,
-                 f"newest state {when(files[0])} came from {elsewhere.lstrip('-')}, "
+                 f"newest state {when(newest)} came from {owners[newest].lstrip('-')}, "
                  f"nothing from this project",
                  "hook configuration is read at session start, so a session already open when "
                  "stdtel was installed never picks it up — restart Claude Code in this project")
@@ -389,7 +389,13 @@ def artefacts_observed() -> Check:
 PROBE_SERVICE = "stdtel-probe"
 #: Content-shaped keys the probe carries the marker in: one Claude Code sends with
 #: OTEL_LOG_TOOL_DETAILS, one its commands arrive in, and the prompt.
-PROBE_CONTENT_KEYS = ("tool_input", "full_command", "prompt")
+PROBE_CONTENT_KEYS = ("tool_input", "full_command", "prompt", "response")
+#: Claude Code's settings that make it send content (#164). The first three put it
+#: in attributes the probe's keys stand for. Raw API bodies have no verified shape
+#: and can arrive as a record's body, which no attribute rule touches.
+CONTENT_FLAGS = ("OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_USER_PROMPTS", "OTEL_LOG_ASSISTANT_RESPONSES",
+                 "OTEL_LOG_RAW_API_BODIES")
+UNPROVABLE_FLAGS = ("OTEL_LOG_RAW_API_BODIES",)
 _CONTENT_REMEDY = ("content is reaching storage. Turn OTEL_LOG_TOOL_DETAILS off now, then restart the "
                    "collector with this repository's config (`make down && make up`) and run "
                    "`stdtel-doctor --content-check` again")
@@ -538,26 +544,34 @@ def probe_content(send=None, read_tempo=None, read_loki=None, attempts: int = 30
     return judge_content_probe(**seen)
 
 
-def _tool_details_enabled() -> bool:
-    """Is OTEL_LOG_TOOL_DETAILS on, in the environment or any of Claude Code's
-    settings files? Any one saying on is enough to warrant the probe."""
+def _content_flags_on() -> list[str]:
+    """Which of CONTENT_FLAGS are on, in the environment or any of Claude Code's
+    settings files? Any one place saying on is enough to warrant the probe."""
 
     def on(v) -> bool:
         return str(v or "").strip().lower() not in ("", "0", "false", "no", "off")
 
-    if on(os.environ.get("OTEL_LOG_TOOL_DETAILS")):
-        return True
-    return any(on(_settings_env(f).get("OTEL_LOG_TOOL_DETAILS")) for f in _claude_settings_files())
+    envs = [os.environ, *(_settings_env(f) for f in _claude_settings_files())]
+    return [k for k in CONTENT_FLAGS if any(on(e.get(k)) for e in envs)]
 
 
 @named("content dropped")
 def content_dropped() -> Check:
-    """Only worth proving when something could send content: the detailed view
-    is the one setting that makes Claude Code send it."""
-    if not _tool_details_enabled():
+    """Only worth proving when something could send content: one of Claude Code's
+    content settings is on. A raw-body flag fails outright, because no probe here
+    can prove its content dropped."""
+    flags = _content_flags_on()
+    if not flags:
         return Check("content dropped", True,
-                     "detailed view off (OTEL_LOG_TOOL_DETAILS unset), so nothing sends content; "
-                     "`--content-check` probes anyway")
+                     f"every content setting off ({', '.join(CONTENT_FLAGS)}), so Claude Code sends "
+                     "no content; `--content-check` probes anyway")
+    unprovable = [f for f in flags if f in UNPROVABLE_FLAGS]
+    if unprovable:
+        return Check("content dropped", False,
+                     f"{', '.join(unprovable)} is on, and nothing here can prove the collector drops "
+                     "what it sends",
+                     f"turn {', '.join(unprovable)} off and restart Claude Code: a raw body can arrive "
+                     "as a record's body, which the collector's attribute rules never touch")
     return probe_content(endpoint=claude_code_endpoint())
 
 

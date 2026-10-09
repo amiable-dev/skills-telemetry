@@ -18,6 +18,10 @@ version until this number changes — so bump it for anything a user would recei
   - An unreadable state directory, a hook probe that could not run, a content probe that never
     arrived or could not be sent, and a check that raised are each `unknown`. The detailed view
     still refuses to turn on unless the content probe passes.
+- **`content dropped` looks at every Claude Code content setting, not just the detailed view** (#164).
+  `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES` on now runs the probe, which also carries
+  `response`. `OTEL_LOG_RAW_API_BODIES` on fails outright: nothing can prove a raw body is dropped.
+  Before this, prompt logging on with the detailed view off passed as "nothing sends content".
 
 ## 0.9.1 — 2026-10-03
 

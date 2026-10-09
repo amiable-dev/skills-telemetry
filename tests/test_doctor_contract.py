@@ -57,7 +57,14 @@ def test_observed_at_is_utc_and_recent():
     assert abs((dt.datetime.now(dt.timezone.utc) - at).total_seconds()) < 60
 
 
-def test_every_outcome_but_pass_carries_a_remedy():
+def test_every_outcome_but_pass_carries_a_remedy(monkeypatch, tmp_path):
+    """Hermetic: nothing here reads the developer's machine or a live collector."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STDTEL_OTLP_ENDPOINT", "http://127.0.0.1:1")
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("STDTEL_SKILLS_ROOT", str(tmp_path))
+    monkeypatch.setattr(doctor, "_content_flags_on", lambda: [])
     for check in doctor.check_all():
         if check.outcome != "pass":
             assert check.remedy, f"{check.name} is {check.outcome} and says nothing to do"
@@ -340,3 +347,27 @@ def test_artefact_events_not_yet_seen_are_pending(monkeypatch, tmp_path, observe
     _events(monkeypatch, tmp_path, observed)
     c = doctor.artefacts_observed()
     assert c.outcome == "pending" and c.remedy
+
+
+def test_the_project_named_as_elsewhere_owns_the_newest_owned_state(monkeypatch, tmp_path):
+    """#164 council: the newest file can be unowned; the project named must be the
+    owner of the newest file that has one, and the time must be that file's."""
+    import os
+    sd = tmp_path / "state"
+    sd.mkdir()
+    for i, sid in enumerate(["old", "mid", "new"]):
+        f = sd / f"{sid}.json"
+        f.write_text("{}")
+        os.utime(f, (1_700_000_000 + i * 3600,) * 2)
+    for owner, sid in (("-older-project", "old"), ("-newer-project", "mid")):
+        p = tmp_path / ".claude" / "projects" / owner
+        p.mkdir(parents=True)
+        (p / f"{sid}.jsonl").write_text("")
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(sd))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    c = doctor.recent_state()
+    assert c.outcome == "fail" and "newer-project" in c.detail and "older-project" not in c.detail
+    mid = dt.datetime.fromtimestamp(1_700_000_000 + 3600)
+    assert f"{mid:%Y-%m-%d %H:%M}" in c.detail
