@@ -1,8 +1,11 @@
 """`stdtel-load`: run every warehouse loader once, under a lock (ADR-015 decision 5).
 
 What a scheduler runs (`stdtel-install loader`, #171), and what a person can run
-by hand. One run at a time per machine, by an OS lock on `~/.stdtel/loader.lock`
-(see `lock`). An overlapping run exits at once and writes nothing, not even a
+by hand. One run at a time per user (per `STDTEL_HOME`), by an OS lock on
+`~/.stdtel/loader.lock` (see `lock`), which is the scope of the per-user job
+that runs it. Runs from two users against one warehouse are safe together:
+every write is idempotent or newest-wins, so an overlap costs a repeated query,
+never a wrong row (ADR-015 decision 5 says the same of compose plus scheduler). An overlapping run exits at once and writes nothing, not even a
 log line or a loader_run row, so `loader liveness` notices runs that never happen.
 
 Each loader's window reaches back to its last successful watermark plus an
@@ -165,21 +168,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tempo", default=os.environ.get("STDTEL_TEMPO") or "http://localhost:3200")
     ap.add_argument("--loki", default=os.environ.get("STDTEL_LOKI") or "http://localhost:11010")
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
-    missing = _extras_missing()
-    if missing:
-        print(f"stdtel-load: {', '.join(missing)} not installed; the loaders need the warehouse extras: "
-              "uv tool install 'stdtel[warehouse]'", file=sys.stderr)
-        return 2
     log = home() / "loader.log"
     with lock() as held:
         if not held:                              # nothing written: no log line, no loader_run row
             print("stdtel-load: another run holds the lock; skipped", file=sys.stderr)
             return 0
+        missing = _extras_missing()
+        if missing:
+            print(f"stdtel-load: {', '.join(missing)} not installed; the loaders need the warehouse "
+                  "extras: uv tool install 'stdtel[warehouse]'", file=sys.stderr)
+            return 2
         trim_log(log)                             # only the lock holder touches the log
         with log.open("a") as out:
             print(f"{_now().isoformat(timespec='seconds')} stdtel-load starting", file=out, flush=True)
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                rc = run_all(dsn=a.dsn, tempo=a.tempo, loki=a.loki)
+                try:
+                    rc = run_all(dsn=a.dsn, tempo=a.tempo, loki=a.loki)
+                except Exception as e:            # noqa: BLE001 - the log still says how it ended
+                    print(f"stdtel-load failed: {type(e).__name__}: {e}")
+                    rc = 1
             print(f"{_now().isoformat(timespec='seconds')} stdtel-load finished, exit {rc}", file=out)
         trim_log(log)                             # and a verbose run does not leave it over the bound
     print(f"stdtel-load: exit {rc}; see {log}")
@@ -192,7 +199,7 @@ def _extras_missing() -> list[str]:
     for mod in ("psycopg", "requests"):
         try:
             __import__(mod)
-        except ImportError:
+        except Exception:                         # noqa: BLE001 - installed but unusable is missing too
             out.append(mod)
     return out
 

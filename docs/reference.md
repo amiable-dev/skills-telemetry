@@ -156,7 +156,7 @@ and you can run it by hand. It needs the warehouse extras: `uv tool install 'std
 stdtel-load [--dsn DSN] [--tempo URL] [--loki URL]
 ```
 
-- **One run at a time.** An OS lock (`flock`) on `~/.stdtel/loader.lock`. The kernel grants it
+- **One run at a time per user.** An OS lock (`flock`) on `~/.stdtel/loader.lock` (under `STDTEL_HOME`), the scope of the per-user job that runs it. Two users' runs against one warehouse are safe together: every write is idempotent or newest-wins. The kernel grants it
   atomically and releases it when its holder exits, however it exits, so a dead run never blocks the
   next and a live one is never displaced. An overlapping run exits `0` at once and writes nothing: no
   log line, no `loader_run` row. `loader liveness` is what notices runs that never happen.

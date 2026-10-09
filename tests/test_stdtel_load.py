@@ -310,3 +310,32 @@ def test_a_fetch_that_fails_after_writing_part_of_its_file_is_not_loaded(home, m
     monkeypatch.setenv("STDTEL_LOAD_REPO", "a/b")
     load.run_all(dsn="d", tempo="t", loki="l")
     assert "--policy-results" not in seen["args"]
+
+
+# --- council round 3 on #174 -----------------------------------------------------------------
+
+def test_an_unexpected_failure_still_logs_finished_and_fails(home, monkeypatch):
+    monkeypatch.setattr(load, "_extras_missing", lambda: [])
+    monkeypatch.setattr(load, "run_all", lambda **kw: 1 / 0)
+    assert load.main([]) == 1
+    log = (home / "loader.log").read_text()
+    assert "ZeroDivisionError" in log and "finished, exit 1" in log
+
+
+def test_an_overlapping_run_skips_before_anything_else(home, monkeypatch):
+    """Even without the extras: the lock is the first thing asked."""
+    monkeypatch.setattr(load, "_extras_missing", lambda: ["psycopg"])
+    p = _hold_in_another_process(home)
+    try:
+        assert load.main([]) == 0
+    finally:
+        p.kill()
+        p.wait()
+
+
+def test_the_lock_is_per_stdtel_home_and_says_so():
+    """The scheduler is a per-user job; the claim matches the mechanism. Runs from
+    two homes against one warehouse are safe: every write is idempotent or
+    newest-wins (#172), so overlap costs a repeated query, never a wrong row."""
+    assert "per machine" not in (load.__doc__ or "")
+    assert "per user" in load.__doc__
