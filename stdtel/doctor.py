@@ -5,27 +5,71 @@ that a broken install looks exactly like a working one: no spans and a healthy
 session are indistinguishable from the outside. Four install-time failures in
 this project's history were found by a person using it, none by its tests.
 
-Every check reports a verdict, what was observed, and **the remedy** — the part a
+Every check reports an outcome, what was observed, and **the remedy** — the part a
 diagnostic usually leaves out.
+
+ADR-015 decision 1: an outcome is `pass`, `fail`, `pending` (too early to tell)
+or `unknown` (the evidence could not be read), and only `pass` is a pass. Exit
+codes: 0 all pass, 1 any fail, 2 none failed but some pending or unknown.
+`--json` is the contract the status line, the analyst and the health page read.
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 TIMEOUT_S = 3
 
+PASS, FAIL, PENDING, UNKNOWN = "pass", "fail", "pending", "unknown"
+OUTCOMES = (PASS, FAIL, PENDING, UNKNOWN)
+
+
+def _now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
 
 @dataclass
 class Check:
+    """One check's result. `outcome` takes one of OUTCOMES, or a bool for pass/fail,
+    which is what every check written before ADR-015 returns."""
     name: str
-    ok: bool
+    outcome: str
     detail: str
     remedy: str = ""
+    observed_at: str = field(default_factory=_now)
+
+    def __post_init__(self):
+        if isinstance(self.outcome, bool):
+            self.outcome = PASS if self.outcome else FAIL
+        if self.outcome not in OUTCOMES:
+            raise ValueError(f"{self.name}: outcome {self.outcome!r} is not one of {OUTCOMES}")
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == PASS
+
+    def as_json(self) -> dict:
+        return {"name": self.name, "outcome": self.outcome, "observed": self.detail,
+                "remedy": self.remedy, "observed_at": self.observed_at}
+
+
+def named(name: str):
+    """The name a check reports under, also when it raises (#150): it is an identifier now."""
+    def mark(fn):
+        fn.check_name = name
+        return fn
+    return mark
+
+
+def _state_files() -> list[Path]:
+    """Session state files, newest first. Raises when the directory cannot be read."""
+    from stdtel.state import state_dir
+    return sorted(state_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def _git_branch() -> str:
@@ -38,6 +82,7 @@ def _git_branch() -> str:
         return ""
 
 
+@named("hook resolvable")
 def hook_resolvable() -> Check:
     """Can a hook actually run `stdtel-hook`?
 
@@ -53,7 +98,7 @@ def hook_resolvable() -> Check:
                            capture_output=True, text=True, timeout=TIMEOUT_S)
         found = r.stdout.strip()
     except Exception as e:                        # noqa: BLE001 - diagnostics must not raise
-        return Check("hook resolvable", False, f"could not probe: {e}",
+        return Check("hook resolvable", UNKNOWN, f"could not probe: {e}",
                      "check that `sh` is available")
     if found:
         return Check("hook resolvable", True, f"sh -c finds {found}")
@@ -64,6 +109,7 @@ def hook_resolvable() -> Check:
                  "uv tool install stdtel, then `stdtel-install settings` to write an absolute path")
 
 
+@named("hooks registered")
 def hooks_registered() -> Check:
     """Registered once, in exactly one place.
 
@@ -97,6 +143,7 @@ def hooks_registered() -> Check:
                  "run `stdtel-install settings`, or install the plugin")
 
 
+@named("branch identity")
 def branch_identity() -> Check:
     """Can this work be joined to a change request? (ADR-013)
 
@@ -119,6 +166,7 @@ def branch_identity() -> Check:
     return Check("branch identity", bool(branch_hash(repo, branch)), f"{branch} in {repo}{note}")
 
 
+@named("skill catalogue")
 def catalogue_ok() -> Check:
     """Can the catalogue be found, and does it contain anything?
 
@@ -149,6 +197,7 @@ def catalogue_ok() -> Check:
     return Check("skill catalogue", True, detail)
 
 
+@named("scope declarations")
 def scope_adoption() -> Check:
     """How much of the catalogue declares a unit of work, and how much we guessed.
 
@@ -184,6 +233,7 @@ def scope_adoption() -> Check:
     return Check("scope declarations", True, detail)
 
 
+@named("collector reachable")
 def collector_ok() -> Check:
     """Is anything listening where spans are being sent?
 
@@ -224,6 +274,7 @@ def _owning_project(session_id: str) -> str | None:
     return None
 
 
+@named("hooks running")
 def recent_state() -> Check:
     """Has a hook run recently *for this project*? Registration proves nothing.
 
@@ -237,13 +288,10 @@ def recent_state() -> Check:
     That is the single most common reason for an empty dashboard, and it is
     invisible unless the check knows whose data it found.
     """
-    import datetime as dt
-
-    from stdtel.state import state_dir
     try:
-        files = sorted(state_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = _state_files()
     except Exception as e:                        # noqa: BLE001
-        return Check("hooks running", False, f"cannot read state dir: {e}", "check STDTEL_STATE_DIR")
+        return Check("hooks running", UNKNOWN, f"cannot read state dir: {e}", "check STDTEL_STATE_DIR")
     if not files:
         return Check("hooks running", False, "no session state has ever been written",
                      "the hooks are registered but not firing; run `stdtel-install where` and "
@@ -257,8 +305,11 @@ def recent_state() -> Check:
         return Check("hooks running", True, f"last session state {when(mine[0])}, from this project")
     if all(o is None for o in owners.values()):
         # Copilot writes no Claude transcript, so ownership can be unknowable.
-        # Unknown is not wrong — but it must not be reported as "from here".
-        return Check("hooks running", True, f"last session state {when(files[0])}, project unknown")
+        # Unknown is not wrong, but it is not a pass either (ADR-015 decision 1).
+        return Check("hooks running", UNKNOWN, f"last session state {when(files[0])}, project unknown",
+                     "no state file here belongs to a Claude Code transcript, so whose it is cannot be "
+                     "told. Expected on a Copilot-only machine; otherwise start a Claude Code session "
+                     "in this project and run this again")
     elsewhere = next(o for o in owners.values() if o)
     return Check("hooks running", False,
                  f"newest state {when(files[0])} came from {elsewhere.lstrip('-')}, "
@@ -267,6 +318,7 @@ def recent_state() -> Check:
                  "stdtel was installed never picks it up — restart Claude Code in this project")
 
 
+@named("plugin in step")
 def plugin_in_step() -> Check:
     """Plugin and package are two installs, and neither updates the other.
 
@@ -291,6 +343,7 @@ def plugin_in_step() -> Check:
                  notice.split("run: ", 1)[1] if "run: " in notice else notice)
 
 
+@named("artefact events")
 def artefacts_observed() -> Check:
     """Which ADR-009 events have actually fired on this machine?
 
@@ -303,14 +356,12 @@ def artefacts_observed() -> Check:
     """
     import json
 
-    from stdtel.state import state_dir
-
     wanted = {"subagent-start", "subagent-stop", "post-compact"}
     seen: set[str] = set()
     try:
-        files = sorted(state_dir().glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+        files = _state_files()
     except Exception as e:                        # noqa: BLE001
-        return Check("artefact events", False, f"cannot read state dir: {e}", "check STDTEL_STATE_DIR")
+        return Check("artefact events", UNKNOWN, f"cannot read state dir: {e}", "check STDTEL_STATE_DIR")
     for f in files[:50]:
         try:
             seen |= set(json.loads(f.read_text()).get("observed_events") or [])
@@ -320,9 +371,11 @@ def artefacts_observed() -> Check:
     if not missing:
         return Check("artefact events", True, "sub-agent and compaction capture both observed")
     if not files:
-        return Check("artefact events", False, "no session state written yet",
+        return Check("artefact events", PENDING, "no session state written yet",
                      "start a session with the hooks installed")
-    return Check("artefact events", False,
+    # Too early to tell, not a fault: these fire only when a session spawns a
+    # sub-agent or compacts. As a fail it failed healthy machines indefinitely.
+    return Check("artefact events", PENDING,
                  f"not yet observed: {', '.join(missing)}",
                  "expected until a session runs with these hooks registered AND spawns a "
                  "sub-agent or compacts. Re-run `stdtel-install settings`, restart Claude Code, "
@@ -354,7 +407,7 @@ def judge_content_probe(tempo: tuple[bool, bool], loki: tuple[bool, bool]) -> Ch
         return Check(name, False, f"the probe's content reached {' and '.join(leaked)}", _CONTENT_REMEDY)
     missing = [s for s, (control, _) in (("Tempo", tempo), ("Loki", loki)) if not control]
     if missing:
-        return Check(name, False,
+        return Check(name, UNKNOWN,
                      f"could not confirm: the probe never arrived in {' or '.join(missing)}, so an "
                      "absent marker proves nothing",
                      "start the stack with `make up` (Tempo on STDTEL_TEMPO, Loki on STDTEL_LOKI) and "
@@ -465,7 +518,7 @@ def probe_content(send=None, read_tempo=None, read_loki=None, attempts: int = 30
         for path, body in _probe_bodies(probe_id, marker).items():
             send(path, body)
     except Exception as e:                        # noqa: BLE001
-        return Check("content dropped", False, f"could not send the probe: {type(e).__name__}: {e}",
+        return Check("content dropped", UNKNOWN, f"could not send the probe: {type(e).__name__}: {e}",
                      "start the collector (`make up`) and keep OTEL_LOG_TOOL_DETAILS off until this passes")
 
     seen = {"tempo": (False, False), "loki": (False, False)}
@@ -497,6 +550,7 @@ def _tool_details_enabled() -> bool:
     return any(on(_settings_env(f).get("OTEL_LOG_TOOL_DETAILS")) for f in _claude_settings_files())
 
 
+@named("content dropped")
 def content_dropped() -> Check:
     """Only worth proving when something could send content: the detailed view
     is the one setting that makes Claude Code send it."""
@@ -517,31 +571,49 @@ def check_all() -> list[Check]:
         try:
             out.append(fn())
         except Exception as e:                    # noqa: BLE001 - a diagnostic must never crash
-            out.append(Check(fn.__name__, False, f"check itself failed: {e}",
+            out.append(Check(getattr(fn, "check_name", fn.__name__), UNKNOWN, f"check itself failed: {e}",
                              "this is a bug in stdtel doctor"))
     return out
+
+
+def exit_code(checks: list[Check]) -> int:
+    """0 all pass; 1 any fail; 2 none failed but some pending or unknown. No
+    checks at all is 2: nothing was shown to be well."""
+    outcomes = {c.outcome for c in checks}
+    if FAIL in outcomes:
+        return 1
+    return 0 if outcomes == {PASS} else 2
+
+
+_MARK = {PASS: "ok  ", FAIL: "FAIL", PENDING: "WAIT", UNKNOWN: "????"}
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(prog="stdtel-doctor", description=__doc__.splitlines()[0])
-    ap.add_argument("--quiet", "-q", action="store_true", help="only show problems")
+    ap.add_argument("--quiet", "-q", action="store_true", help="only show what did not pass")
+    ap.add_argument("--json", action="store_true",
+                    help="print one JSON object per check (name, outcome, observed, remedy, "
+                         "observed_at) and nothing else; --quiet is ignored")
     ap.add_argument("--content-check", action="store_true",
                     help="only prove the collector drops content: send a probe and read Tempo and "
                          "Loki back (ADR-014 decision 13; run before enabling OTEL_LOG_TOOL_DETAILS)")
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
 
     checks = [probe_content(endpoint=claude_code_endpoint())] if a.content_check else check_all()
-    failed = [c for c in checks if not c.ok]
+    if a.json:
+        import json
+        print(json.dumps([c.as_json() for c in checks], indent=2))
+        return exit_code(checks)
     for c in checks:
         if c.ok and a.quiet:
             continue
-        mark = "ok  " if c.ok else "FAIL"
-        print(f"  {mark}  {c.name:<20} {c.detail}")
+        print(f"  {_MARK[c.outcome]}  {c.name:<20} {c.detail}")
         if not c.ok and c.remedy:
             print(f"        -> {c.remedy}")
-    print(f"\n{len(checks) - len(failed)} passed, {len(failed)} failed")
-    return 1 if failed else 0
+    n = {o: sum(c.outcome == o for c in checks) for o in OUTCOMES}
+    print(f"\n{n[PASS]} passed, {n[FAIL]} failed, {n[PENDING]} pending, {n[UNKNOWN]} unknown")
+    return exit_code(checks)
 
 
 if __name__ == "__main__":

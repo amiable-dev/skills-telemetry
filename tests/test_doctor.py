@@ -250,12 +250,12 @@ def test_no_state_at_all_is_distinct_from_state_elsewhere(monkeypatch, tmp_path)
 def test_state_whose_project_cannot_be_told_is_not_reported_as_this_project(monkeypatch, tmp_path):
     """Copilot writes no Claude transcript, so ownership is sometimes unknowable.
 
-    Unknown is not the same as wrong: it passes, but it must not claim the state
-    came from here.
+    Unknown is not the same as wrong, so it does not fail; nor is it a pass
+    (ADR-015 decision 1, #150). And it must not claim the state came from here.
     """
     cwd = tmp_path / "work" / "mine"
     check = _recent_state(monkeypatch, tmp_path, cwd, [("sess-4", None)])
-    assert check.ok
+    assert check.outcome == "unknown"
     assert "this project" not in check.detail
 
 
