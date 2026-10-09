@@ -18,6 +18,7 @@ stdtel-install where
 stdtel-install hooks    [--harness claude-code|copilot-vscode|copilot-cli] [--exec-form]
 stdtel-install settings [--path PATH] [--exec-form] [--dry-run] [--no-native | --native-only] [--replace-endpoint]
 stdtel-install copilot  [--vscode-settings PATH]
+stdtel-install loader   [--interval SECONDS] [--uninstall]
 stdtel-install detailed-view on|off [--path PATH] [--collector-confirmed]
 ```
 

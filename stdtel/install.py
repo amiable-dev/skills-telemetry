@@ -343,7 +343,8 @@ def _loader(args) -> int:
               "uv tool install 'stdtel[warehouse]'", file=sys.stderr)
         return 1
     try:
-        interval = args.interval or int(os.environ.get("STDTEL_LOAD_INTERVAL") or 900)
+        interval = (args.interval if args.interval is not None
+                    else int(os.environ.get("STDTEL_LOAD_INTERVAL") or 900))
         binary = scheduler.load_binary()
     except (ValueError, FileNotFoundError) as e:
         print(f"stdtel-install: {e}", file=sys.stderr)

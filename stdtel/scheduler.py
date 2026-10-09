@@ -73,16 +73,25 @@ def on_calendar(seconds: int) -> str:
     return f"*:0/{minutes}" if minutes < 60 else f"*-*-* 0/{minutes // 60}:00:00"
 
 
+def _unit_safe(name: str, value: str) -> str:
+    """A value inside a double-quoted unit setting: `%` escaped (systemd specifiers),
+    and a quote, backslash or line break refused, since each could end the setting."""
+    if any(c in value for c in '"\\\n\r'):
+        raise ValueError(f"{name} holds a character a systemd unit cannot carry safely")
+    return value.replace("%", "%%")
+
+
 def _quoted(key: str, value: str) -> str:
-    if any(c in value for c in '"\\\n\r') or any(c in key for c in '"= \n'):
-        raise ValueError(f"{key} holds a character a systemd unit cannot carry safely")
-    return f'Environment="{key}={value}"'
+    if any(c in key for c in '"= \n%'):
+        raise ValueError(f"{key} is not a variable name a systemd unit can carry")
+    return f'Environment="{key}={_unit_safe(key, value)}"'
 
 
 def render_systemd(binary: str, env: dict, interval: int) -> tuple[str, str]:
     service = "\n".join([
         "[Unit]", "Description=stdtel: load the warehouse (stdtel-load)", "",
-        "[Service]", "Type=oneshot", *(_quoted(k, v) for k, v in env.items()), f"ExecStart={binary}", ""])
+        "[Service]", "Type=oneshot", *(_quoted(k, v) for k, v in env.items()),
+        f'ExecStart="{_unit_safe("the stdtel-load path", binary)}"', ""])
     timer = "\n".join([
         "[Unit]", "Description=stdtel: run stdtel-load on a schedule", "",
         "[Timer]", f"OnCalendar={on_calendar(interval)}", "Persistent=true", f"Unit={UNIT}.service", "",
@@ -101,16 +110,47 @@ def paths(platform: str, home: Path) -> list[Path]:
     return []
 
 
+_PROBES = ("print", "is-active")
+
+
+def _verb(argv: list[str]) -> str:
+    return argv[1] if argv[0] == "launchctl" else argv[2]
+
+
 def _runner():
-    return lambda argv: subprocess.run(argv, capture_output=True).returncode
+    """Runs a scheduler command; a failing one (not a probe) shows its own stderr."""
+    def run(argv):
+        r = subprocess.run(argv, capture_output=True, text=True)
+        if r.returncode and _verb(argv) not in _PROBES and r.stderr.strip():
+            print(r.stderr.strip()[-500:], file=sys.stderr)
+        return r.returncode
+    return run
 
 
 def _write_private(path: Path, data: bytes) -> None:
+    """A new 0600 file renamed over the old one: the DSN is never written into a
+    file someone else can read, not even briefly, and a reader sees old or new."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-    os.chmod(path, 0o600)                         # an existing file keeps its mode through O_CREAT
+    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o600)                      # whatever the umask did
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _private(f: Path) -> bool:
+    return (f.stat().st_mode & 0o777) == 0o600
+
+
+def _loaded(platform: str, run) -> bool:
+    if platform == "darwin":
+        return run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"]) == 0
+    return run(["systemctl", "--user", "is-active", f"{UNIT}.timer"]) == 0
 
 
 def _activate(platform: str, files: list[Path], run) -> list[list[str]]:
@@ -130,21 +170,26 @@ def install(platform: str, home: Path, binary: str, interval: int, run=None) -> 
         return 1
     env = job_env()
     if platform == "darwin":
-        wanted = [render_launchd(binary, env, interval, Path(env.get("STDTEL_HOME") or home / ".stdtel")
-                                 / "loader.log")]
+        log = Path(env.get("STDTEL_HOME") or home / ".stdtel") / "loader.log"
+        log.parent.mkdir(parents=True, exist_ok=True)   # launchd will not create it
+        wanted = [render_launchd(binary, env, interval, log)]
+        schedule = f"every {interval} s"
     else:
         wanted = [t.encode() for t in render_systemd(binary, env, interval)]
-    if all(f.exists() and f.read_bytes() == w for f, w in zip(files, wanted)):
-        print(f"stdtel-install: loader already installed ({files[0]}), every {interval} s")
+        schedule = f"OnCalendar={on_calendar(interval)}"
+    current = all(f.exists() and f.read_bytes() == w and _private(f) for f, w in zip(files, wanted))
+    if current and _loaded(platform, run):
+        print(f"stdtel-install: loader already installed ({files[0]}), {schedule}")
         return 0
-    for f, w in zip(files, wanted):
-        _write_private(f, w)
+    if not current:
+        for f, w in zip(files, wanted):
+            _write_private(f, w)
     for argv in _activate(platform, files, run):
         if run(argv) != 0:
             print(f"stdtel-install: `{' '.join(argv[:3])} …` failed; the definition is written at "
-                  f"{files[0]}", file=sys.stderr)
+                  f"{files[0]} and the next `stdtel-install loader` retries", file=sys.stderr)
             return 1
-    print(f"stdtel-install: loader scheduled every {interval} s ({files[0]}, mode 0600). "
+    print(f"stdtel-install: loader scheduled, {schedule} ({files[0]}, mode 0600). "
           f"Settings carried: {', '.join(k for k in env if k != 'PATH') or 'none'}; values are not shown.")
     return 0
 
@@ -155,10 +200,13 @@ def uninstall(platform: str, home: Path, run=None) -> int:
     if not files:
         print("stdtel-install: no loader schedule installed")
         return 0
-    if platform == "darwin":
-        run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"])
-    else:
-        run(["systemctl", "--user", "disable", "--now", f"{UNIT}.timer"])
+    if _loaded(platform, run):
+        stop = (["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"] if platform == "darwin"
+                else ["systemctl", "--user", "disable", "--now", f"{UNIT}.timer"])
+        if run(stop) != 0:
+            print(f"stdtel-install: could not stop the loader job; it is still scheduled, and "
+                  f"{files[0]} is kept so a retry can find it", file=sys.stderr)
+            return 1
     for f in files:
         f.unlink()
     if not platform == "darwin":
