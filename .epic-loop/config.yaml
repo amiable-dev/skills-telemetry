@@ -1,0 +1,25 @@
+# epic-loop bindings for this repo (schema: epic-loop skill references/config-schema.md).
+version: 1
+project:
+  name: skills-telemetry
+  short_name: stdtel
+  repo: amiable-dev/skills-telemetry
+# Every PR runs the full suite first. It includes the docker collector tests, which skip
+# cleanly where docker is absent, so no gate depends on docker being present.
+pre_push_gates:
+  - name: tests
+    command: mise run test
+language_test_guards: []
+gui_paths: []
+quality_signals:
+  enabled: false
+# Copilot does not review PRs in this repo (none of #141, #143, #145 had a Copilot review),
+# so the B0-B3 wait ladder would only burn ~21 minutes per PR. Council is the merge gate.
+review: none
+council:
+  default_tier: balanced
+  confidence_threshold: 0.7
+  on_budget_exceeded: end_loop
+cadence_floor:
+  max_merges_per_hour: 2
+  scope: closes_clause
