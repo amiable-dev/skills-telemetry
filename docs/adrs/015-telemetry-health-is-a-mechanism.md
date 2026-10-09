@@ -106,7 +106,12 @@ So a session can know, from inside, whether it started with Claude Code's own te
      - It also fails when no attempt has been made within twice the interval.
      - A recent failure is therefore reported even when an older success still makes the data look
        fresh.
-   - Each check is `unknown` when Postgres or the source cannot be read.
+   - **`unknown` is scoped per check.**
+     - `warehouse freshness` is `unknown` when either Postgres or the source cannot be read, and when
+       the loader has never had an `ok = true` run, so it has no watermark yet.
+     - `loader liveness` needs only Postgres. A source outage never hides a failed latest attempt.
+   - Rows loaded by a partial (`ok = false`) run do not advance the watermark. So freshness can fail
+     even though some newer rows landed. That is the conservative choice, and it is deliberate.
 
 4. **The session warns about itself, on every turn.**
    - At SessionStart the hook records in the session's state whether `CLAUDE_CODE_ENABLE_TELEMETRY` is
@@ -145,6 +150,8 @@ So a session can know, from inside, whether it started with Claude Code's own te
      - An overlapping run exits immediately.
      - A lock is reclaimed only when its PID is no longer alive, never on age alone, so a long but live
        run is never doubled.
+     - The lock also records the owner's start time. A PID reused by an unrelated process is treated
+       as dead, so a stale lock cannot become permanent.
      - A skipped run writes nothing; `loader liveness` (decision 3) notices runs that never happen.
    - The compose `loader` profile (#121) remains the container option. Running both is detected by
      doctor and reported as one finding. They are not unsafe together: every insert is
@@ -189,7 +196,10 @@ Each work item lists its acceptance tests.
   - a successful run that loaded nothing while the source moved on: freshness fails;
   - a recent partial run after an older success: liveness fails and names the error;
   - no attempt within twice the interval: liveness fails;
-  - Postgres down gives unknown for both.
+  - Postgres down gives unknown for both;
+  - the source unreadable while Postgres is readable and the latest attempt failed: freshness unknown,
+    liveness fails and names the error;
+  - a loader with no successful run yet: freshness unknown.
 - **W4. The session warns about itself.** Covers decision 4. Tests:
   - a session started without the variable while settings enable it warns;
   - settings that disable telemetry, at user, project or local level, persist `opted-out` and show
@@ -266,3 +276,11 @@ This third draft:
 - reclaims the lock only by PID liveness;
 - states that the loaded rows are the checkpoint;
 - keeps `span_id` as the key, with the collision arithmetic stated in decision 5.
+
+Council on the third draft (2 of 4 models): **approved, confidence 0.72.** Both blockers were resolved.
+Its conditions are now applied:
+- source unreadability scopes to freshness only, with the source-down, latest-failed test added;
+- a never-loaded loader is `unknown` for freshness;
+- PID reuse is handled by recording the owner's start time;
+- the partial-run watermark asymmetry is stated.
+
