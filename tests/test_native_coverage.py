@@ -260,3 +260,67 @@ def test_a_session_already_past_its_first_turn_gets_it_at_its_next_stop(tmp_path
     t.write_text(_user("2026-10-09T11:00:00.000Z", "p9") + "\n" + _assistant("2026-10-09T11:00:01.000Z") + "\n")
     hooks.stop({"session_id": "ft-2", "cwd": str(tmp_path), "transcript_path": str(t)}, exporter=InMemorySpanExporter())
     assert SessionState.load("ft-2").first_turn_at == pytest.approx(1791543600.0)
+
+
+# --- council round 1 on #166: one bad file never sinks the check ----------------------------
+
+@pytest.mark.parametrize("raw", [
+    {"resource": [], "started_at": 1.0, "first_turn_at": 2.0},                 # resource not an object
+    {"resource": {}, "started_at": "soon", "first_turn_at": 2.0},              # started_at not a number
+    {"resource": {}, "started_at": 1.0, "first_turn_at": "yesterday"},         # first_turn_at not a number
+    {"resource": {}, "started_at": 1.0, "first_turn_at": float("nan")},
+    {"resource": {}, "started_at": float("inf"), "first_turn_at": 2.0},
+    {"resource": {}, "started_at": 1e300, "first_turn_at": 2.0},               # localtime() would raise
+    {"resource": {"std.repo": 7}, "started_at": 1.0, "first_turn_at": 2.0},
+    [1, 2],                                                                     # not an object at all
+])
+def test_a_state_file_with_a_malformed_field_is_skipped_alone(tmp_path, monkeypatch, raw):
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path))
+    (tmp_path / "bad.json").write_text(json.dumps(raw))
+    (tmp_path / "good.json").write_text(json.dumps({"resource": {}, "started_at": 1.0, "first_turn_at": 2.0}))
+    assert [x.session_id for x in coverage.read_states()] == ["good"]
+
+
+def test_a_session_id_that_is_not_id_shaped_is_never_put_in_a_query(tmp_path, monkeypatch):
+    """Ids reach LogQL inside a quoted regex. A file named with a quote or a
+    backslash is not a Claude Code session, and must not shape the query."""
+    monkeypatch.setenv("STDTEL_STATE_DIR", str(tmp_path))
+    for name in ('we"ird', "back\\slash", "ok-1_a.b"):
+        (tmp_path / f"{name}.json").write_text(json.dumps({"resource": {}, "started_at": 1.0, "first_turn_at": 2.0}))
+    assert [x.session_id for x in coverage.read_states()] == ["ok-1_a.b"]
+    with pytest.raises(ValueError):
+        coverage.observed_query(['x"y'], 60)
+
+
+def test_ids_are_queried_in_bounded_batches(monkeypatch):
+    calls = []
+
+    def fetch(query):
+        calls.append(query)
+        return {"status": "success", "data": {"result": []}}
+    ids = [f"s{i:04d}" for i in range(coverage.BATCH * 2 + 1)]
+    assert coverage.read_observed(ids, since=0, fetch=fetch, now=10_000) == set()
+    assert coverage.BATCH <= 100, "a batch must stay well inside a URL"
+    assert len(calls) == 3 and all(q.count("s0") <= coverage.BATCH for q in calls)
+
+
+def test_credentials_in_the_loki_url_never_reach_the_output(monkeypatch):
+    monkeypatch.setenv("STDTEL_LOKI", "http://user:s3cret@loki.example:3100")
+
+    def down(ids, since):
+        raise ConnectionRefusedError()
+    c = coverage.native_coverage(states=lambda: [s("x")], observed=down, retention=lambda: None, now=NOW)
+    assert c.outcome == "unknown" and "s3cret" not in c.detail and "loki.example:3100" in c.detail
+
+
+def test_a_shorter_stream_retention_is_the_one_that_counts():
+    cfg = {"compactor": {"retention_enabled": True},
+           "limits_config": {"retention_period": "30d",
+                             "retention_stream": [{"selector": '{service_name="claude-code"}', "period": "12h"}]}}
+    assert coverage.retention_from_config(cfg) == 12 * 3600
+
+
+@pytest.mark.parametrize("text", ["1h1h", "1m1h", "1s1ms1s"])
+def test_units_must_appear_once_largest_first(text):
+    with pytest.raises(ValueError):
+        coverage.duration_s(text)

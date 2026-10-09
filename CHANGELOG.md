@@ -25,6 +25,9 @@ version until this number changes — so bump it for anything a user would recei
   and names each silent session with its repository and start time. Session state gains
   `first_turn_at`, set once at Stop. A session judges from its first Stop after upgrading, so until
   then this check reads `pending`.
+  Malformed state files are skipped one at a time, session ids are queried in batches of 50, and the
+  Loki URL is shown without credentials. The shortest enforced retention counts, including any
+  `retention_stream` rule.
 - **`content dropped` looks at every Claude Code content setting, not just the detailed view** (#164).
   `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES` on now runs the probe, which also carries
   `response`. `OTEL_LOG_RAW_API_BODIES` on fails outright: nothing can prove a raw body is dropped.
