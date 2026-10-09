@@ -26,11 +26,6 @@ H = dt.timedelta(hours=1)
 M = dt.timedelta(minutes=1)
 
 
-def runs(**by_loader):
-    """loader -> (latest attempt, watermark, has a successful run)."""
-    return {k: v for k, v in by_loader.items()}
-
-
 def fresh_all(**over):
     base = {name: wh.LoaderState(latest=Run(NOW - 5 * M, True, None), watermark=NOW - 10 * M, any_ok=True)
             for name in wh.LOADERS}
@@ -111,7 +106,7 @@ def test_source_unreadable_with_postgres_up_and_a_failed_attempt():
         raise ConnectionRefusedError("Loki down")
     f = wh.warehouse_freshness(read_state=lambda: state, newer=newer, now=NOW)
     l_ = wh.loader_liveness(read_state=lambda: state, now=NOW)
-    assert f.outcome == "unknown" and "load_requests" in f.detail
+    assert f.outcome == "unknown" and "load_requests" in f.detail and "Loki unreadable" in f.detail
     assert l_.outcome == "fail" and "ConnectError: loki" in l_.detail
 
 
@@ -284,3 +279,107 @@ def test_read_state_takes_the_latest_attempt_and_the_highest_ok_watermark(pg):
     assert got["wtest-a"] == wh.LoaderState(Run(NOW - H, False, "boom"), NOW - 4 * H, True)
     assert got["wtest-b"] == wh.LoaderState(Run(NOW - H, False, "never ok"), None, False)
     assert got["wtest-c"] == wh.LoaderState(None, None, False)
+
+
+
+# --- council round 1 on #169: a negative answer must be one the source could give -----------
+
+def _never(url):
+    raise AssertionError(f"queried a source for the future: {url}")
+
+
+@pytest.mark.parametrize("has_newer", [wh.tempo_has_newer, wh.loki_has_newer])
+def test_a_cutoff_in_the_future_is_answered_without_a_query(has_newer):
+    """A healthy recent watermark plus the allowance lies past now: nothing can be newer."""
+    assert has_newer(NOW + 5 * M, now=NOW, get=_never) is False
+
+
+def test_an_empty_tempo_search_over_a_clamped_window_cannot_tell():
+    """Tempo searches at most 168 h. Nothing found in the last 168 h says nothing
+    about the stretch between an older cutoff and the window."""
+    empty = lambda url: {"traces": []}                     # noqa: E731
+    found = lambda url: {"traces": [{"traceID": "a"}]}     # noqa: E731
+    assert wh.tempo_has_newer(NOW - 30 * 24 * H, now=NOW, get=empty) is None
+    assert wh.tempo_has_newer(NOW - 30 * 24 * H, now=NOW, get=found) is True
+    assert wh.tempo_has_newer(NOW - H, now=NOW, get=empty) is False
+    assert wh.tempo_has_newer(None, now=NOW, get=empty) is None
+
+
+def test_an_empty_loki_query_over_a_clamped_window_cannot_tell():
+    empty = lambda url: {"status": "success", "data": {"result": []}}   # noqa: E731
+    assert wh.loki_has_newer(NOW - 30 * 24 * H, now=NOW, get=empty) is None
+    assert wh.loki_has_newer(None, now=NOW, get=empty) is None
+    assert wh.loki_has_newer(NOW - H, now=NOW, get=empty) is False
+
+
+def test_cannot_tell_is_unknown():
+    c = freshness(fresh_all(), {**NONE_NEWER, "load_traces": None})
+    assert c.outcome == "unknown" and "load_traces" in c.detail
+
+
+@pytest.mark.parametrize("answer", [None, "yes", 0, 1, object()])
+def test_only_an_exact_bool_is_an_answer(answer):
+    """Truthiness would read a missing or malformed answer as "nothing newer", a false pass."""
+    c = freshness(fresh_all(), {**NONE_NEWER, "load_requests": answer})
+    assert c.outcome == "unknown"
+
+
+def test_a_missing_answer_is_unknown_not_a_pass():
+    c = freshness(fresh_all(), {"load_traces": False})
+    assert c.outcome == "unknown" and "load_requests" in c.detail
+
+
+@pytest.mark.parametrize("body", [{}, {"traces": None}, {"error": "bad query"}, []])
+def test_a_tempo_response_without_a_trace_list_raises(body):
+    with pytest.raises(RuntimeError):
+        wh.tempo_has_newer(NOW - H, now=NOW, get=lambda url: body)
+
+
+def test_the_real_url_builders_never_send_start_after_end():
+    import urllib.parse
+    for since in (NOW - H, NOW - 30 * 24 * H, None):
+        for has_newer in (wh.tempo_has_newer, wh.loki_has_newer):
+            seen = []
+
+            def get(url):
+                seen.append(url)
+                return {"traces": [], "status": "success", "data": {"result": []}}
+            has_newer(since, now=NOW, get=get)
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(seen[0]).query)
+            assert int(q["start"][0]) < int(q["end"][0])
+
+
+def test_loki_start_is_exact_to_the_nanosecond():
+    seen = []
+    since = dt.datetime(2026, 10, 9, 11, 0, 0, 123456, tzinfo=dt.timezone.utc)
+    wh.loki_has_newer(since, now=NOW, get=lambda u: seen.append(u) or {"status": "success", "data": {"result": []}})
+    import urllib.parse
+    q = urllib.parse.parse_qs(urllib.parse.urlsplit(seen[0]).query)
+    assert int(q["start"][0]) == 1791543600_123456000 + 1
+
+
+@pytest.mark.parametrize("bad", [0, -60])
+def test_an_explicit_bad_interval_is_unknown(bad):
+    c = wh.warehouse_freshness(read_state=lambda: fresh_all(), newer=lambda l, s: False, now=NOW, interval_s=bad)
+    assert c.outcome == "unknown"
+
+
+def test_ties_on_start_time_resolve_by_run_id(pg):
+    for rid, ok in (("wtest-t1", True), ("wtest-t2", False)):
+        pg.execute("INSERT INTO loader_run (run_id, started_at, loader, ok) VALUES (%s, %s, 'wtest-tie', %s)",
+                   (rid, NOW, ok))
+    assert wh.read_state(DSN, loaders=("wtest-tie",))["wtest-tie"].latest.ok is False
+
+
+def test_a_loki_stream_with_no_values_is_not_an_event():
+    body = {"status": "success", "data": {"result": [{"stream": {"service_name": "claude-code"}, "values": []}]}}
+    assert wh.loki_has_newer(NOW - H, now=NOW, get=lambda u: body) is False
+
+
+def test_tempo_start_rounds_down_so_the_window_can_only_widen():
+    import urllib.parse
+    seen = []
+    since = NOW - H + dt.timedelta(milliseconds=500)
+    wh.tempo_has_newer(since, now=NOW, get=lambda u: seen.append(u) or {"traces": []})
+    q = urllib.parse.parse_qs(urllib.parse.urlsplit(seen[0]).query)
+    assert int(q["start"][0]) == int((NOW - H).timestamp())

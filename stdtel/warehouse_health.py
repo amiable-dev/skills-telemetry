@@ -38,6 +38,7 @@ ERROR_SHOWN = 200                                   # characters of a run's erro
 TEMPO_SPAN_NAMES = ("std.artefact.activation", "std.skill.invocation", "std.session.cost")
 LOKI_QUERY = '{service_name="claude-code"} | event_name="api_request"'
 TEMPO_MAX_WINDOW_S = 168 * 3600                     # query_frontend.search.max_duration
+LOKI_WINDOW_S = 168 * 3600                          # how far back Loki is asked; bounds the query
 _RUN_REMEDY = "run `make load` (or `make load-watch`), then check again"
 
 
@@ -73,10 +74,11 @@ def _dsn() -> str:
 def read_state(dsn: str | None = None, loaders=LOADERS) -> dict[str, LoaderState]:
     """Latest attempt and watermark per loader, in two queries."""
     import psycopg
-    with psycopg.connect(dsn or _dsn(), connect_timeout=TIMEOUT_S) as conn:
+    with psycopg.connect(dsn or _dsn(), connect_timeout=TIMEOUT_S,
+                         options=f"-c statement_timeout={TIMEOUT_S * 1000}") as conn:
         latest = {r[0]: Run(r[1], bool(r[2]), r[3]) for r in conn.execute(
             "SELECT DISTINCT ON (loader) loader, started_at, ok, error FROM loader_run "
-            "WHERE loader = ANY(%s) ORDER BY loader, started_at DESC", (list(loaders),))}
+            "WHERE loader = ANY(%s) ORDER BY loader, started_at DESC, run_id DESC", (list(loaders),))}
         ok = {r[0]: r[1] for r in conn.execute(
             "SELECT loader, max(source_max_ts) FROM loader_run WHERE ok AND loader = ANY(%s) "
             "GROUP BY loader", (list(loaders),))}
@@ -91,36 +93,65 @@ def _get_json(url: str, headers: dict | None = None) -> dict:
         return json.loads(r.read().decode())
 
 
-def tempo_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool:
-    """Any stdtel span in Tempo starting after `since`? One search, clamped to
-    Tempo's maximum window; `since` None means anything in that window."""
+def _ns(t: dt.datetime) -> int:
+    """Exact nanoseconds since the epoch; float timestamps lose the microseconds."""
+    return (t - dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)) // dt.timedelta(microseconds=1) * 1000
+
+
+def _window(since: dt.datetime | None, now: dt.datetime, max_s: int) -> tuple[int, int, bool] | None:
+    """(start_ns, end_ns, clamped) to ask a source over, or None when `since` is
+    not in the past and nothing can be newer. `clamped` means the window starts
+    later than `since`, so finding nothing in it proves nothing."""
+    end = _ns(now)
+    if since is not None and _ns(since) >= end:
+        return None
+    floor = end - max_s * 10**9
+    start = floor if since is None else max(_ns(since) + 1, floor)
+    return start, end, since is None or _ns(since) + 1 < floor
+
+
+def tempo_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool | None:
+    """Any stdtel span in Tempo starting after `since`? True, False, or None when
+    the answer is not knowable (nothing found, but the search had to be clamped).
+    One search with limit 1, never wider than Tempo's maximum window."""
+    w = _window(since, now, TEMPO_MAX_WINDOW_S)
+    if w is None:
+        return False
+    start_ns, end_ns, clamped = w
     get = get or _get_json
     base = os.environ.get("STDTEL_TEMPO", "http://localhost:3200").rstrip("/")
-    end = int(now.timestamp())
-    start = max(int(since.timestamp()) + 1 if since else 0, end - TEMPO_MAX_WINDOW_S)
     q = " || ".join(f'name = "{n}"' for n in TEMPO_SPAN_NAMES)
-    params = urllib.parse.urlencode({"q": f"{{ {q} }}", "start": start, "end": end, "limit": 1})
-    return bool(get(f"{base}/api/search?{params}").get("traces"))
+    # Tempo takes whole seconds: the start rounds down, which can only widen the window
+    params = urllib.parse.urlencode({"q": f"{{ {q} }}", "start": start_ns // 10**9,
+                                     "end": -(-end_ns // 10**9), "limit": 1})
+    body = get(f"{base}/api/search?{params}")
+    if not isinstance(body, dict) or not isinstance(body.get("traces"), list):
+        raise RuntimeError("Tempo search returned no trace list")
+    return True if body["traces"] else (None if clamped else False)
 
 
-def loki_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool:
-    """Any Claude Code api_request in Loki after `since`?"""
+def loki_has_newer(since: dt.datetime | None, now: dt.datetime, get=None) -> bool | None:
+    """Any Claude Code api_request in Loki after `since`? As tempo_has_newer."""
+    w = _window(since, now, LOKI_WINDOW_S)
+    if w is None:
+        return False
+    start_ns, end_ns, clamped = w
     get = get or _get_json
     base = os.environ.get("STDTEL_LOKI", "http://localhost:11010").rstrip("/")
-    end = int(now.timestamp() * 1e9)
-    start = int(since.timestamp() * 1e9) + 1 if since else end - TEMPO_MAX_WINDOW_S * 10**9
-    params = urllib.parse.urlencode({"query": LOKI_QUERY, "start": start, "end": end, "limit": 1})
+    params = urllib.parse.urlencode({"query": LOKI_QUERY, "start": start_ns, "end": end_ns, "limit": 1})
     body = get(f"{base}/loki/api/v1/query_range?{params}")
-    if body.get("status") != "success":
-        raise RuntimeError(f"Loki query failed: {body.get('error') or body.get('status')}")
-    return any(s.get("values") for s in body["data"]["result"])
+    if not isinstance(body, dict) or body.get("status") != "success":
+        raise RuntimeError(f"Loki query failed: {(body or {}).get('error') or (body or {}).get('status')}")
+    if any(st.get("values") for st in body["data"]["result"]):
+        return True
+    return None if clamped else False
 
 
 _NEWER = {"load_traces": tempo_has_newer, "load_requests": loki_has_newer}
 _SOURCE = {"load_traces": "Tempo", "load_requests": "Loki"}
 
 
-def source_has_newer(loader: str, since: dt.datetime | None) -> bool:
+def source_has_newer(loader: str, since: dt.datetime | None) -> bool | None:
     return _NEWER[loader](since, dt.datetime.now(dt.timezone.utc))
 
 
@@ -152,19 +183,24 @@ def judge_liveness(state: dict[str, LoaderState], now: dt.datetime, interval_s: 
     return Check(LIVENESS, PASS, f"every loader ran within {2 * interval_s // 60} min, and the latest run of each succeeded")
 
 
-def judge_freshness(state: dict[str, LoaderState], newer: dict[str, bool | Exception], now: dt.datetime,
+def judge_freshness(state: dict[str, LoaderState], newer: dict, now: dt.datetime,
                     interval_s: int) -> Check:
     """`newer[loader]` answers "does the source hold anything past the watermark
-    plus the allowance?", or holds the exception that stopped it being asked.
+    plus the allowance?": exactly True or False, or the exception that stopped it
+    being asked. Anything else, including None (not knowable) or no answer at
+    all, is unknown: a missing answer must never read as "nothing newer".
     Precedence: any stale fails; else any unknown; else pass."""
     stale, unknown, fine = [], [], []
     for name in SOURCES:
-        s = state[name]
+        s, answer = state[name], newer.get(name)
         if not s.any_ok:
             unknown.append(f"{name} has no successful run, so no watermark")
-        elif isinstance(newer.get(name), Exception):
-            unknown.append(f"{name}: {_SOURCE[name]} unreadable ({type(newer[name]).__name__})")
-        elif newer.get(name):
+        elif isinstance(answer, Exception):
+            unknown.append(f"{name}: {_SOURCE[name]} unreadable ({type(answer).__name__})")
+        elif answer is not True and answer is not False:
+            unknown.append(f"{name}: {_SOURCE[name]} could not say whether it holds anything newer "
+                           f"(its search window does not reach back to the watermark)")
+        elif answer:
             at = f"loaded up to {_age(now, s.watermark)} ago" if s.watermark else "has never loaded a row"
             stale.append(f"{name} {at}, and {_SOURCE[name]} holds newer events past the "
                          f"{2 * interval_s // 60}-minute allowance")
@@ -217,7 +253,9 @@ def warehouse_freshness(read_state=read_state, newer=source_has_newer, now: dt.d
     try:
         now = now or dt.datetime.now(dt.timezone.utc)
         try:
-            every = interval_s or load_interval_s()
+            every = load_interval_s() if interval_s is None else interval_s
+            if isinstance(every, bool) or not isinstance(every, int) or every <= 0:
+                raise ValueError(f"interval {every!r} is not a positive number of seconds")
         except ValueError as e:
             return Check(FRESHNESS, UNKNOWN, str(e), "set STDTEL_LOAD_INTERVAL to the loader's interval in seconds")
         state, why = _read(read_state)
