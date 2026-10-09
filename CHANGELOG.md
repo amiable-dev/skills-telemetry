@@ -4,6 +4,25 @@ Versions are shared by the Python package and the plugin manifests, and a test a
 **A version bump is what makes clients pick up a new copy** — both marketplaces serve the cached
 version until this number changes — so bump it for anything a user would receive.
 
+## Unreleased
+
+### Changed
+- **`stdtel-doctor` checks have four outcomes: `pass`, `fail`, `pending` and `unknown`** (ADR-015
+  decision 1, #150). Only `pass` is a pass. New `--json` prints one object per check (`name`,
+  `outcome`, `observed`, `remedy`, `observed_at`) and nothing else. The exit code is `0` when every
+  check passed, `1` when any failed, and `2` when none failed but some are pending or unknown. That
+  is a change for anyone gating on `1`: a check that used to fail can now exit `2`.
+  - `artefact events` not yet seen is `pending`, not a failure, so a healthy machine no longer fails
+    until it happens to spawn a sub-agent.
+  - `hooks running` with state no Claude Code transcript owns is `unknown`; it used to pass.
+  - An unreadable state directory, a hook probe that could not run, a content probe that never
+    arrived or could not be sent, and a check that raised are each `unknown`. The detailed view
+    still refuses to turn on unless the content probe passes.
+- **`content dropped` looks at every Claude Code content setting, not just the detailed view** (#164).
+  `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES` on now runs the probe, which also carries
+  `response`. `OTEL_LOG_RAW_API_BODIES` on fails outright: nothing can prove a raw body is dropped.
+  Before this, prompt logging on with the detailed view off passed as "nothing sends content".
+
 ## 0.9.1 — 2026-10-03
 
 Fixes found watching a live session: usage on the dashboard, MCP and skill names through the collector, and

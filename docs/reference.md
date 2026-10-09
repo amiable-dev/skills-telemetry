@@ -153,10 +153,19 @@ quiet by design — hooks exit 0 so telemetry never blocks you — so a broken i
 a working one.
 
 ```
-stdtel-doctor [--quiet] [--content-check]
+stdtel-doctor [--quiet] [--json] [--content-check]
 ```
 
-| check | failing means |
+Each check has one of four outcomes (ADR-015 decision 1), and only `pass` is a pass:
+
+| outcome | mark | means |
+|---|---|---|
+| `pass` | `ok` | checked, and well |
+| `fail` | `FAIL` | checked, and broken; the remedy says what to do |
+| `pending` | `WAIT` | too early to tell, such as an event that has not had a chance to fire |
+| `unknown` | `????` | the evidence could not be read, or the check itself raised. Never read as a pass |
+
+| check | not passing means |
 |---|---|
 | hook resolvable | a hook cannot run `stdtel-hook`; probed under `/bin/sh -c`, not your interactive shell |
 | hooks registered | not registered, or registered **twice** (settings *and* plugin), which double-counts every skill window |
@@ -164,21 +173,36 @@ stdtel-doctor [--quiet] [--content-check]
 | branch identity | no branch readable, or no remote: this work cannot join a change request (ADR-013). Any branch name joins; `main`/`master` passes with a note that work committed straight to it has no change request |
 | skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
 | collector reachable | spans are being dropped right now |
-| content dropped | the collector let content through to Tempo or Loki, **or** the check could not prove it didn't. Only probes when `OTEL_LOG_TOOL_DETAILS` is on (environment, `~/.claude/settings.json`, or the project's `.claude/settings.json` / `settings.local.json`); otherwise it passes with "detailed view off" |
-| hooks running | registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up |
-| artefact events | `SubagentStart`, `SubagentStop` or `PostCompact` has never fired on this machine, so sub-agent and compaction capture is unproven here. Failing is *expected* until a session runs with those hooks registered **and** spawns a sub-agent or compacts. Until then those kinds are read from the session directory instead and marked `std.artefact.source=transcript` |
+| content dropped | `fail`: the collector let content through to Tempo or Loki. `unknown`: the check could not prove it didn't (the probe never arrived, or could not be sent). Probes when any of Claude Code's content settings is on: `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES`, in the environment, `~/.claude/settings.json`, or the project's `.claude/settings.json` / `settings.local.json`. `OTEL_LOG_RAW_API_BODIES` on is a `fail` without a probe: a raw body can arrive as a record's body, which no collector attribute rule touches, so nothing here can prove it dropped. With every one off it passes |
+| hooks running | `fail`: registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up. `unknown`: state exists but no Claude Code transcript owns it, so whose it is cannot be told (expected on a Copilot-only machine) |
+| artefact events | `SubagentStart`, `SubagentStop` or `PostCompact` has never fired on this machine, so sub-agent and compaction capture is unproven here. This is `pending`, not `fail`, until a session runs with those hooks registered **and** spawns a sub-agent or compacts. Until then those kinds are read from the session directory instead and marked `std.artefact.source=transcript` |
 
 `--content-check` runs only the content probe, whatever the settings say. It is ADR-014 decision 13:
 before the detailed view is switched on, prove on *this* machine that the collector drops content.
 It sends one span and one event under `service.name=stdtel-probe`, each holding a random marker in
-`tool_input`, `full_command` and `prompt`, plus a control id (`stdtel.probe.id`) that must arrive.
+`tool_input`, `full_command`, `prompt` and `response`, plus a control id (`stdtel.probe.id`) that must arrive.
 It then reads Tempo (`STDTEL_TEMPO`, default `http://localhost:3200`) and Loki (`STDTEL_LOKI`,
 default `http://localhost:11010`) for up to 30 seconds. It passes only when the control is found
 and the marker is not, in both stores. A missing control fails as inconclusive: an empty store
-proves nothing. The loaders skip `stdtel-probe`, so a probe never becomes a row.
+proves nothing, so the outcome is `unknown`. The loaders skip `stdtel-probe`, so a probe never becomes a row.
 
-`--quiet` shows only problems. Exit `0` when everything passes, `1` otherwise, so it can gate
-onboarding.
+`--quiet` hides passes. `--json` prints a JSON array, one object per check, and nothing else on
+stdout; it ignores `--quiet`, so a reader always sees every check. This is the contract the status
+line, the analyst agent and the health page read:
+
+```json
+{"name": "artefact events", "outcome": "pending", "observed": "not yet observed: post-compact",
+ "remedy": "expected until a session ...", "observed_at": "2026-10-09T09:06:39+00:00"}
+```
+
+| exit | when |
+|---|---|
+| `0` | every check passed |
+| `1` | any check failed |
+| `2` | none failed, but some are `pending` or `unknown`, or no check ran |
+
+A script gating onboarding on "nothing is broken" accepts `0` and `2`; one gating on "everything is
+proven" accepts only `0`.
 
 The branch-identity and catalogue checks matter most early: both are **only fixable while the work is
 happening**. A branch renamed tomorrow does not retroactively attribute today's PRs.

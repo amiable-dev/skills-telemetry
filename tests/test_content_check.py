@@ -101,32 +101,59 @@ def test_a_collector_that_is_down_fails_rather_than_passing():
 
 # --- when it runs ------------------------------------------------------------------------------
 
-def test_with_the_detailed_view_off_there_is_nothing_to_prove(monkeypatch):
-    monkeypatch.setattr(doctor, "_tool_details_enabled", lambda: False)
+def test_with_every_content_flag_off_there_is_nothing_to_prove(monkeypatch):
+    monkeypatch.setattr(doctor, "_content_flags_on", lambda: [])
     c = doctor.content_dropped()
     assert c.ok and "off" in c.detail
 
 
-def test_with_the_detailed_view_on_the_probe_runs(monkeypatch):
-    monkeypatch.setattr(doctor, "_tool_details_enabled", lambda: True)
-    monkeypatch.setattr(doctor, "probe_content", lambda **kw: doctor.Check("content dropped", False, "probe ran"))
+@pytest.mark.parametrize("flag", ["OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_USER_PROMPTS", "OTEL_LOG_ASSISTANT_RESPONSES"])
+def test_any_content_flag_on_runs_the_probe(monkeypatch, flag):
+    """#164 council: the detailed view is not the only setting that sends content.
+    Prompt logging and assistant responses do too, and a pass that only looked at
+    one of them was a false privacy assurance."""
+    monkeypatch.setattr(doctor, "_content_flags_on", lambda: [flag])
+    monkeypatch.setattr(doctor, "probe_content", lambda **kw: doctor.Check("content dropped", False, "probe ran", "r"))
     assert doctor.content_dropped().detail == "probe ran"
 
 
-def test_the_setting_is_read_from_claude_codes_own_settings(tmp_path, monkeypatch):
+def test_raw_api_bodies_fail_without_a_probe(monkeypatch):
+    """A raw body can arrive as the record body, which the collector's attribute
+    rules never touch, and nothing here has verified its shape. No probe can prove
+    it dropped, so it fails rather than passing on a probe that tested other keys."""
+    monkeypatch.setattr(doctor, "_content_flags_on", lambda: ["OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_RAW_API_BODIES"])
+    monkeypatch.setattr(doctor, "probe_content", lambda **kw: doctor.Check("content dropped", True, "probe passed"))
+    c = doctor.content_dropped()
+    assert c.outcome == "fail" and "OTEL_LOG_RAW_API_BODIES" in c.detail and "OTEL_LOG_RAW_API_BODIES" in c.remedy
+
+
+def test_the_probe_carries_the_assistant_response_key():
+    assert "response" in doctor.PROBE_CONTENT_KEYS
+
+
+def test_the_content_flags_are_the_ones_install_refuses_to_write():
+    from tests.test_native_install import CONTENT_FLAGS
+    assert set(doctor.CONTENT_FLAGS) == set(CONTENT_FLAGS)
+
+
+@pytest.mark.parametrize("flag", ["OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_USER_PROMPTS"])
+def test_the_flags_are_read_from_claude_codes_own_settings(tmp_path, monkeypatch, flag):
     from pathlib import Path
     home = Path.home()                               # conftest's throwaway HOME
     (home / ".claude").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.delenv("OTEL_LOG_TOOL_DETAILS", raising=False)
-    assert doctor._tool_details_enabled() is False
-    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {"OTEL_LOG_TOOL_DETAILS": "1"}}))
-    assert doctor._tool_details_enabled() is True
-    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {"OTEL_LOG_TOOL_DETAILS": "0"}}))
-    assert doctor._tool_details_enabled() is False
+    for f in doctor.CONTENT_FLAGS:
+        monkeypatch.delenv(f, raising=False)
+    assert doctor._content_flags_on() == []
+    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {flag: "1"}}))
+    assert doctor._content_flags_on() == [flag]
+    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {flag: "0"}}))
+    assert doctor._content_flags_on() == []
     (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude" / "settings.local.json").write_text(json.dumps({"env": {"OTEL_LOG_TOOL_DETAILS": "true"}}))
-    assert doctor._tool_details_enabled() is True, "a project's local settings turn it on too"
+    (tmp_path / ".claude" / "settings.local.json").write_text(json.dumps({"env": {flag: "true"}}))
+    assert doctor._content_flags_on() == [flag], "a project's local settings turn it on too"
+    monkeypatch.setenv("OTEL_LOG_ASSISTANT_RESPONSES", "1")
+    assert set(doctor._content_flags_on()) == {flag, "OTEL_LOG_ASSISTANT_RESPONSES"}
 
 
 def test_it_is_one_of_the_doctors_checks_and_has_a_flag():
