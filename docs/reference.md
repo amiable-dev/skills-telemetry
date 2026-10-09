@@ -1,6 +1,6 @@
 # CLI reference
 
-Five console scripts. `stdtel-hook` is invoked by the harness one process per event; its only
+The console scripts below. `stdtel-hook` is invoked by the harness one process per event; its only
 subcommand meant for a human or a skill is `scope-close`. The other three scripts are yours.
 
 All of them read the [environment variables](#environment-variables) below.
@@ -145,6 +145,30 @@ A policy that cannot be evaluated is written as `passed: false` with the reason 
 omitted, because an absent row and a failing row must not look alike.
 
 ---
+
+## `stdtel-load`
+
+Runs every warehouse loader once: `load_traces`, `load_requests`, then (with `STDTEL_LOAD_REPO`)
+`fetch_policy_results` and `load_delivery`. It is what a scheduler runs (`stdtel-install loader`),
+and you can run it by hand. It needs the warehouse extras: `uv tool install 'stdtel[warehouse]'`.
+
+```
+stdtel-load [--dsn DSN] [--tempo URL] [--loki URL]
+```
+
+- **One run at a time.** A lock directory, `~/.stdtel/loader.lock`, holds the owner's PID and process
+  start time. An overlapping run exits `0` at once and writes no `loader_run` row; `loader liveness`
+  is what notices runs that never happen. A lock is reclaimed only when its PID is dead, or alive with
+  a different start time (a reused PID), never because it is old.
+- **The window reaches back to the watermark.** Each loader loads from its last successful
+  `source_max_ts` plus 2 h of overlap, at least 24 h and at most 720 h. A fixed 24 h window could
+  never repair an outage longer than a day. Overlapping windows cost nothing: inserts are idempotent.
+- **Delivery needs a repository.** Without `STDTEL_LOAD_REPO`, `load_delivery` is recorded as a failed
+  run whose error names the setting, so `loader liveness` says what to set rather than staying silent.
+- **Output** goes to `~/.stdtel/loader.log`, kept to its last 1 MB. The terminal gets one summary line.
+
+Exit codes: `0` every loader succeeded, or another run held the lock · `1` any loader failed (the
+others still ran; the log says which).
 
 ## `stdtel-doctor`
 
@@ -364,6 +388,8 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_REPO` | *(git)* | enrich | overrides remote detection |
 | `STDTEL_TEMPO` | `http://localhost:3200` | doctor, `make load` | Tempo's query API, read by `stdtel-doctor --content-check` and the trace loader |
 | `STDTEL_LOKI` | `http://localhost:11010` | doctor, `make load` | Loki's query API, read by `stdtel-doctor --content-check` and by `warehouse.load_requests`, which also takes `STDTEL_DSN` from the environment |
+| `STDTEL_LOAD_REPO` | unset | `stdtel-load`, `make load` | `owner/name` whose pull requests and CI policy results `load_delivery` loads. Unset: delivery is recorded as a failed run naming this setting |
+| `STDTEL_HOME` | `~/.stdtel` | `stdtel-load` | where `loader.lock` and `loader.log` live |
 | `STDTEL_LOAD_INTERVAL` | `900` | doctor | seconds between scheduled loads. `warehouse freshness` allows a source to run ahead of the warehouse by twice this, and `loader liveness` fails when a loader has not run within twice this. Not a positive integer: both checks are `unknown` |
 | `STDTEL_DSN` | `postgresql://postgres:stdtel@localhost:5432/stdtel` | doctor, `make load` | the warehouse. `stdtel-doctor` reads `loader_run` from it for `warehouse freshness` and `loader liveness` (needs `stdtel[warehouse]`); the loaders take it as `--dsn` |
 | `STDTEL_BIND` | `127.0.0.1` | local stack | interface the compose stack publishes its ports on. `0.0.0.0` exposes an anonymous-admin Grafana and the warehouse Postgres to your network — only on one you trust |
