@@ -582,8 +582,23 @@ def native_coverage() -> Check:
     return judge()
 
 
+@named("warehouse freshness")
+def warehouse_freshness() -> Check:
+    """Is the warehouse behind its sources? (ADR-015 decision 3); see stdtel/warehouse_health.py."""
+    from stdtel.warehouse_health import warehouse_freshness as judge
+    return judge()
+
+
+@named("loader liveness")
+def loader_liveness() -> Check:
+    """Did the latest load run, and succeed? (ADR-015 decision 3)"""
+    from stdtel.warehouse_health import loader_liveness as judge
+    return judge()
+
+
 CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, branch_identity, catalogue_ok,
-          scope_adoption, collector_ok, content_dropped, recent_state, artefacts_observed, native_coverage)
+          scope_adoption, collector_ok, content_dropped, recent_state, artefacts_observed, native_coverage,
+          warehouse_freshness, loader_liveness)
 
 
 def check_all() -> list[Check]:
