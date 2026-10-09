@@ -189,7 +189,11 @@ Code strips `OTEL_*` from every subprocess it spawns. Use `STDTEL_OTLP_ENDPOINT`
 ### The loader loads zero rows
 
 Almost always ingestion lag (above). It is also worth checking you are looking at the right window —
-`--since 24h` bounds the Tempo search.
+`--since 24h` bounds the Tempo search. A window wider than Tempo's search maximum
+(`query_frontend.search.max_duration`, 168 h in this stack, read from `/status/config`) is split
+into half-open chunks, oldest first, each written as it loads. If a chunk fails, the others still
+load and the run is recorded with `ok = false` and the failing chunk in `error`, so it never
+advances `warehouse freshness`'s watermark. Spans seen in two chunks are written once.
 
 ## Resetting
 

@@ -17,7 +17,7 @@ as such.
 Requires: psycopg[binary], requests.
 """
 from __future__ import annotations
-import argparse, base64, binascii, datetime as dt, json, sys, uuid
+import argparse, base64, binascii, collections, datetime as dt, json, sys, uuid
 
 SPAN_NAME = "std.artefact.activation"
 LEGACY_SKILL_SPAN_NAME = "std.skill.invocation"   # pre-ADR-009 rows still in Tempo
@@ -476,10 +476,103 @@ def parse_args(argv=None) -> argparse.Namespace:
     return a
 
 
+#: Tempo refuses a search window wider than query_frontend.search.max_duration.
+DEFAULT_TEMPO_MAX_WINDOW_S = 168 * 3600
+
+
+def chunks(start: int, end: int, max_s: int | None) -> list[tuple[int, int]]:
+    """Half-open [start, end) pieces of at most `max_s` seconds, oldest first.
+    None means Tempo sets no maximum: one chunk."""
+    if not max_s:
+        return [(start, end)]
+    return [(s, min(s + max_s, end)) for s in range(start, end, max_s)]
+
+
+def tempo_max_window_s(base: str, get_text=None) -> int | None:
+    """Tempo's own search maximum, from /status/config; `0` means none (None).
+    Anything unreadable falls back to 168 h, the value this stack ships."""
+    import yaml
+
+    from stdtel.coverage import duration_s
+    try:
+        if get_text is None:
+            import requests
+            get_text = lambda url: requests.get(url, timeout=10).text      # noqa: E731
+        cfg = yaml.safe_load(get_text(f"{base.rstrip('/')}/status/config"))
+        raw = cfg["query_frontend"]["search"]["max_duration"]
+        return int(duration_s(str(raw))) or None
+    except Exception:                           # noqa: BLE001 - a fallback, not a failure
+        return DEFAULT_TEMPO_MAX_WINDOW_S
+
+
+def _tempo_io(base: str):
+    """(search(query, start, end) -> trace stubs, fetch(trace_id) -> OTLP JSON) over HTTP."""
+    import requests
+
+    def search(query, start, end):
+        # Tempo returns nothing at all without start/end — it looks like a dead pipeline
+        r = requests.get(f"{base}/api/search", params={"q": query, "start": start, "end": end, "limit": 1000})
+        r.raise_for_status()
+        return r.json().get("traces", [])
+    return search, lambda tid: requests.get(f"{base}/api/traces/{tid}").json()
+
+
+def _now_s() -> int:
+    return int(dt.datetime.now().timestamp())
+
+
+class ChunkResult:
+    """What a run of chunks loaded. A plain class, not a dataclass: tests load this
+    module from its path, outside sys.modules, where a dataclass cannot resolve."""
+
+    def __init__(self, errors: list | None = None):
+        self.rows_loaded = self.activations = self.skills = self.sessions = 0
+        self.source_max_ts: dt.datetime | None = None
+        self.errors: list[str] = errors or []
+        self.unknown = collections.Counter()
+
+
+def load_chunks(windows: list[tuple[int, int]], search, fetch, write_chunk) -> ChunkResult:
+    """Load each window in turn, writing it before the next starts, so a later
+    failure never takes earlier rows with it. A failing chunk is recorded and the
+    rest still load. A trace seen in two chunks (it straddles the boundary) is
+    fetched and written once; the inserts are idempotent besides."""
+    out, seen = ChunkResult(), set()
+    for start, end in windows:
+        try:
+            traces = {}
+            for span_name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME):
+                traces.update({t["traceID"]: t for t in search(f'{{ name = "{span_name}" }}', start, end)
+                               if t["traceID"] not in seen})
+            mcp_calls: list[dict] = []
+            evidence: list[dict] = []
+            unknown = collections.Counter()
+            activations, rows, session_rows = collect(traces, fetch, unknown=unknown,
+                                                      mcp_calls=mcp_calls, evidence=evidence)
+            out.rows_loaded += write_chunk([
+                ("artefact_activation", ACTIVATION_COLS, activations, "span_id"),
+                ("skill_invocation", COLS, rows, "span_id"),
+                ("session_cost", SESSION_COLS, session_rows, "session_id"),
+                ("mcp_tool_call", MCP_CALL_COLS, mcp_calls, "tool_use_id"),
+                ("commit_evidence", EVIDENCE_COLS, evidence, "patch_id, activation_span_id"),
+            ])
+        except Exception as e:                  # noqa: BLE001 - one chunk, not the run
+            out.errors.append(f"chunk [{start}, {end}): {type(e).__name__}: {e}")
+            continue
+        seen |= set(traces)
+        out.unknown.update(unknown)
+        out.activations += len(activations)
+        out.skills += len(rows)
+        out.sessions += len(session_rows)
+        newest = max((r["started_at"] for r in activations + session_rows), default=None)
+        if newest and (out.source_max_ts is None or newest > out.source_max_ts):
+            out.source_max_ts = newest
+    return out
+
+
 def main(argv=None) -> int:
     a = parse_args(argv)
-    import requests
-    hours = int(a.since.rstrip("h")); end = int(dt.datetime.now().timestamp()); start = end - hours * 3600
+    hours = int(a.since.rstrip("h")); end = _now_s(); start = end - hours * 3600
     if hours < MIN_SAFE_WINDOW_HOURS:
         print(f"stdtel: --since {a.since} is narrower than Tempo's flush delay. A span whose "
               f"timestamp is in the past — every sub-agent activation is, because it carries the "
@@ -491,52 +584,33 @@ def main(argv=None) -> int:
            "started_at": dt.datetime.now(dt.timezone.utc), "finished_at": None,
            "rows_loaded": 0, "source_max_ts": None, "ok": False, "error": None,
            "unknown_attrs": None, "unknown_attr_keys": None}
-    import collections
-    unknown = collections.Counter()
-    mcp_calls: list[dict] = []
-    evidence: list[dict] = []
-
-    def search(query):
-        # Tempo returns nothing at all without start/end — it looks like a dead pipeline
-        r = requests.get(f"{a.tempo}/api/search",
-                         params={"q": query, "start": start, "end": end, "limit": 1000})
-        r.raise_for_status()
-        return r.json().get("traces", [])
-
     try:
-        traces = {}
-        for span_name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME):
-            traces.update({t["traceID"]: t for t in search(f'{{ name = "{span_name}" }}')})
-        activations, rows, session_rows = collect(
-            traces, lambda tid: requests.get(f"{a.tempo}/api/traces/{tid}").json(), unknown=unknown,
-            mcp_calls=mcp_calls, evidence=evidence)
-        run["unknown_attrs"] = sum(unknown.values())
-        run["unknown_attr_keys"] = sorted(unknown) or None
-        run["source_max_ts"] = max((r["started_at"] for r in activations + session_rows),
-                                  default=None)
-        run["rows_loaded"] = write(a.dsn, [
-            ("artefact_activation", ACTIVATION_COLS, activations, "span_id"),
-            ("skill_invocation", COLS, rows, "span_id"),
-            ("session_cost", SESSION_COLS, session_rows, "session_id"),
-            ("mcp_tool_call", MCP_CALL_COLS, mcp_calls, "tool_use_id"),
-            ("commit_evidence", EVIDENCE_COLS, evidence, "patch_id, activation_span_id"),
-        ])
-        run["ok"] = True
+        windows = chunks(start, end, tempo_max_window_s(a.tempo))
+        search, fetch = _tempo_io(a.tempo)
+        r = load_chunks(windows, search, fetch, lambda batches: write(a.dsn, batches))
     except Exception as e:                      # noqa: BLE001 - every run writes a row
-        run["error"] = f"{type(e).__name__}: {e}"[:2000]
-        run["finished_at"] = dt.datetime.now(dt.timezone.utc)
-        record_run(a.dsn, run)
-        print(f"load failed: {run['error']}", file=sys.stderr)
-        return 1
+        r = ChunkResult(errors=[f"{type(e).__name__}: {e}"])
+    run["rows_loaded"] = r.rows_loaded
+    run["unknown_attrs"] = sum(r.unknown.values())
+    run["unknown_attr_keys"] = sorted(r.unknown) or None
+    # a partial run's newest timestamp is recorded, but ok = false keeps it from
+    # becoming the freshness watermark (ADR-015 decision 3)
+    run["source_max_ts"] = r.source_max_ts
+    run["ok"] = not r.errors
+    run["error"] = "; ".join(r.errors)[:2000] if r.errors else None
     run["finished_at"] = dt.datetime.now(dt.timezone.utc)
     record_run(a.dsn, run)
-    print(f"loaded {len(activations)} activation(s) "
-          f"({len(rows)} of kind skill, also written to skill_invocation), "
-          f"{len(session_rows)} session cost row(s)")
-    if unknown:
+    if r.errors:
+        print(f"load failed, {len(r.errors)} chunk(s); any other chunks loaded: {run['error']}",
+              file=sys.stderr)
+        return 1
+    print(f"loaded {r.activations} activation(s) "
+          f"({r.skills} of kind skill, also written to skill_invocation), "
+          f"{r.sessions} session cost row(s)")
+    if r.unknown:
         # Loud on purpose. Each of these is a column of NULLs somebody will
         # otherwise find weeks later with no way to date it.
-        detail = ", ".join(f"{k} ({n})" for k, n in unknown.most_common())
+        detail = ", ".join(f"{k} ({n})" for k, n in r.unknown.most_common())
         print(f"stdtel: external spans carried attribute(s) this loader does not read, kept in "
               f"Tempo but absent from the warehouse: {detail}. A renamed attribute looks exactly "
               f"like this — check the emitter against `stdtel-conform --print-contract`.",

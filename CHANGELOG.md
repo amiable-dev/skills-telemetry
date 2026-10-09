@@ -18,6 +18,10 @@ version until this number changes — so bump it for anything a user would recei
   - An unreadable state directory, a hook probe that could not run, a content probe that never
     arrived or could not be sent, and a check that raised are each `unknown`. The detailed view
     still refuses to turn on unless the content probe passes.
+- **`load_traces` catches up after a week away** (ADR-015 decision 5, #153). A window wider than
+  Tempo's search maximum (168 h here, read from `/status/config`) used to fail with HTTP 400. It is
+  now split into chunks, each written as it loads. A failing chunk leaves the others loaded and records
+  the run as `ok = false`, naming the chunk.
 - **`stdtel-doctor` says how far the warehouse is behind, and whether the loader runs** (`warehouse
   freshness` and `loader liveness`, ADR-015 decision 3, #152). Freshness compares each loader's watermark
   (the newest source timestamp a successful run loaded) with whether Tempo or Loki now holds anything
