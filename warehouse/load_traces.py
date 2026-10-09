@@ -460,6 +460,13 @@ def record_run(dsn: str, row: dict) -> bool:
         return False
 
 
+def _hours(text: str) -> str:
+    import re
+    if not re.fullmatch(r"[1-9]\d*h", text):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a positive number of hours, like 24h")
+    return text
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     """--tempo and --dsn fall back to STDTEL_TEMPO and STDTEL_DSN, which is all
     the compose loader sets. Both were required flags it never passed, so the
@@ -468,7 +475,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="load_traces")
     ap.add_argument("--tempo", default=os.environ.get("STDTEL_TEMPO") or None)
     ap.add_argument("--dsn", default=os.environ.get("STDTEL_DSN") or None)
-    ap.add_argument("--since", default="24h")
+    ap.add_argument("--since", default="24h", type=_hours,
+                    help="how far back to load, in whole hours: `24h`, `192h`")
     a = ap.parse_args(argv)
     for flag, env in (("tempo", "STDTEL_TEMPO"), ("dsn", "STDTEL_DSN")):
         if not getattr(a, flag):
@@ -491,10 +499,10 @@ def chunks(start: int, end: int, max_s: int | None) -> list[tuple[int, int]]:
 def tempo_max_window_s(base: str, get_text=None) -> int | None:
     """Tempo's own search maximum, from /status/config; `0` means none (None).
     Anything unreadable falls back to 168 h, the value this stack ships."""
-    import yaml
-
-    from stdtel.coverage import duration_s
     try:
+        import yaml
+
+        from stdtel.coverage import duration_s
         if get_text is None:
             import requests
             get_text = lambda url: requests.get(url, timeout=10).text      # noqa: E731
@@ -505,16 +513,48 @@ def tempo_max_window_s(base: str, get_text=None) -> int | None:
         return DEFAULT_TEMPO_MAX_WINDOW_S
 
 
+#: Tempo returns at most this many traces per search and does not say there were more.
+SEARCH_LIMIT = 1000
+#: A window this narrow that still fills the limit fails the chunk rather than lose traces.
+MIN_SPLIT_S = 60
+HTTP_TIMEOUT_S = 30
+
+
 def _tempo_io(base: str):
-    """(search(query, start, end) -> trace stubs, fetch(trace_id) -> OTLP JSON) over HTTP."""
+    """(search(query, start, end) -> trace stubs, fetch(trace_id) -> OTLP JSON) over HTTP.
+    Every call has a timeout and checks its status: an error body is never data."""
     import requests
+    base = base.rstrip("/")
 
     def search(query, start, end):
         # Tempo returns nothing at all without start/end — it looks like a dead pipeline
-        r = requests.get(f"{base}/api/search", params={"q": query, "start": start, "end": end, "limit": 1000})
+        r = requests.get(f"{base}/api/search", timeout=HTTP_TIMEOUT_S,
+                         params={"q": query, "start": start, "end": end, "limit": SEARCH_LIMIT})
         r.raise_for_status()
         return r.json().get("traces", [])
-    return search, lambda tid: requests.get(f"{base}/api/traces/{tid}").json()
+
+    def fetch(trace_id):
+        r = requests.get(f"{base}/api/traces/{trace_id}", timeout=HTTP_TIMEOUT_S)
+        r.raise_for_status()
+        return r.json()
+    return search, fetch
+
+
+def search_all(search, query: str, start: int, end: int, limit: int | None = None) -> list[dict]:
+    """Every trace `search` finds in [start, end). A result that fills the limit
+    may be truncated, so its window is halved and each half searched, down to
+    MIN_SPLIT_S; a window that small still full raises instead of losing traces."""
+    limit = limit or SEARCH_LIMIT
+    hits = search(query, start, end)
+    if len(hits) < limit:
+        return hits
+    if end - start <= MIN_SPLIT_S:
+        raise RuntimeError(f"[{start}, {end}) still returns Tempo's search limit ({limit}) "
+                           f"at {MIN_SPLIT_S} s; traces would be lost")
+    mid = (start + end) // 2
+    out = {t["traceID"]: t for t in search_all(search, query, start, mid, limit)}
+    out.update({t["traceID"]: t for t in search_all(search, query, mid, end, limit)})
+    return list(out.values())
 
 
 def _now_s() -> int:
@@ -542,7 +582,7 @@ def load_chunks(windows: list[tuple[int, int]], search, fetch, write_chunk) -> C
         try:
             traces = {}
             for span_name in (SPAN_NAME, LEGACY_SKILL_SPAN_NAME, SESSION_SPAN_NAME):
-                traces.update({t["traceID"]: t for t in search(f'{{ name = "{span_name}" }}', start, end)
+                traces.update({t["traceID"]: t for t in search_all(search, f'{{ name = "{span_name}" }}', start, end)
                                if t["traceID"] not in seen})
             mcp_calls: list[dict] = []
             evidence: list[dict] = []

@@ -22,6 +22,9 @@ version until this number changes — so bump it for anything a user would recei
   Tempo's search maximum (168 h here, read from `/status/config`) used to fail with HTTP 400. It is
   now split into chunks, each written as it loads. A failing chunk leaves the others loaded and records
   the run as `ok = false`, naming the chunk.
+  A search that fills Tempo's 1,000-trace limit is split in half until it doesn't, and fails the chunk
+  rather than lose traces. Every Tempo call now has a timeout and checks its HTTP status, and
+  `--since` must be whole hours, such as `24h`.
 - **`stdtel-doctor` says how far the warehouse is behind, and whether the loader runs** (`warehouse
   freshness` and `loader liveness`, ADR-015 decision 3, #152). Freshness compares each loader's watermark
   (the newest source timestamp a successful run loaded) with whether Tempo or Loki now holds anything

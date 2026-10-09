@@ -181,3 +181,98 @@ def test_the_newest_timestamp_is_the_newest_span_not_the_last_chunks(monkeypatch
     search, fetch, write_chunk, _ = fake()
     r = lt.load_chunks(lt.chunks(T0, T0 + 400 * H, 168 * H), search, fetch, write_chunk)
     assert r.source_max_ts == dt.datetime.fromtimestamp(T0 + 200 * H, dt.timezone.utc)
+
+
+# --- council round 1 on #172: nothing is lost silently ----------------------------------------
+
+def test_a_search_that_hits_the_limit_splits_its_window_until_it_does_not():
+    """Tempo returns at most `limit` traces and does not say there were more."""
+    traces = {f"t{i}": T0 + i * 60 for i in range(25)}     # one a minute
+    calls = []
+
+    def search(query, start, end):
+        calls.append((start, end))
+        hits = [{"traceID": t} for t, at in traces.items() if start <= at < end]
+        return hits[:10]                                      # a limit of 10
+    got = lt.search_all(search, "q", T0, T0 + 25 * 60, limit=10)
+    assert {t["traceID"] for t in got} == set(traces)
+    assert all(e - s <= 25 * 60 for s, e in calls)
+
+
+def test_a_window_still_full_at_the_smallest_split_fails_loudly():
+    def search(query, start, end):
+        return [{"traceID": f"t{start}-{i}"} for i in range(10)]   # always full
+    with pytest.raises(RuntimeError, match="limit"):
+        lt.search_all(search, "q", T0, T0 + 3600, limit=10)
+
+
+class _Resp:
+    def __init__(self, status, payload):
+        self.status_code, self._payload = status, payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+def test_a_trace_fetch_that_errors_raises_rather_than_reading_as_empty(monkeypatch):
+    import requests
+    seen = {}
+
+    def get(url, params=None, timeout=None, **kw):
+        seen.setdefault("timeouts", []).append(timeout)
+        if "/api/search" in url:
+            return _Resp(200, {"traces": [{"traceID": "x"}]})
+        return _Resp(500, {"error": "boom"})
+    monkeypatch.setattr(requests, "get", get)
+    search, fetch = lt._tempo_io("http://t/")
+    assert search("q", T0, T0 + 60) == [{"traceID": "x"}]
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        fetch("x")
+    assert all(t for t in seen["timeouts"]), "every Tempo call has a timeout"
+
+
+def test_the_base_url_trailing_slash_is_normalised(monkeypatch):
+    import requests
+    urls = []
+    monkeypatch.setattr(requests, "get", lambda url, **kw: urls.append(url) or _Resp(200, {"traces": []}))
+    search, _ = lt._tempo_io("http://t/")
+    search("q", T0, T0 + 60)
+    assert urls == ["http://t/api/search"]
+
+
+@pytest.mark.parametrize("since", ["2hh", "-5h", "0h", "24", "1d", "h"])
+def test_a_malformed_since_is_a_usage_error(since):
+    with pytest.raises(SystemExit):
+        lt.parse_args(["--tempo", "http://t", "--dsn", "x", "--since", since])
+
+
+def test_a_good_since_is_hours():
+    assert lt.parse_args(["--tempo", "http://t", "--dsn", "x", "--since", "192h"]).since == "192h"
+
+
+def test_the_maximum_falls_back_even_if_yaml_is_missing(monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_yaml(name, *a, **k):
+        if name == "yaml":
+            raise ImportError("no yaml")
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_yaml)
+    assert lt.tempo_max_window_s("http://t", get_text=lambda u: "") == 168 * H
+
+
+def test_load_chunks_searches_through_the_splitting_search(monkeypatch):
+    """A chunk whose search fills the limit loses nothing: load_chunks splits it."""
+    monkeypatch.setattr(lt, "SEARCH_LIMIT", 2)
+    monkeypatch.setitem(TRACES, "extra", (T0 + 20 * H, turn("wtest-extra", T0 + 20 * H, "extra")))
+    search, fetch, write_chunk, calls = fake()
+
+    def capped(query, start, end):
+        return search(query, start, end)[:2]
+    lt.load_chunks([(T0, T0 + 168 * H), (T0 + 168 * H, T0 + 336 * H)], capped, fetch, write_chunk)
+    assert sorted(span_ids_written(calls)) == ["wtest-edge", "wtest-extra", "wtest-mid", "wtest-old"]
