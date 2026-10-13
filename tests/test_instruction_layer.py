@@ -55,6 +55,7 @@ def test_a_non_pass_freshness_is_stated_with_how_stale(path):
     assert "warehouse freshness" in text
     assert re.search(r"not `?pass`?", text), "any outcome but pass, not just fail"
     assert "how stale" in text
+    assert "cannot be told" in text, "unknown has no age to quote: say so instead"
 
 
 @pytest.mark.parametrize("path", [QUERY, ANALYST], ids=lambda p: p.name)

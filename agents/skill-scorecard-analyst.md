@@ -27,7 +27,8 @@ stdtel-doctor --json     # one JSON object per check; exit 0 only when every che
 Read two of the checks before anything else:
 
 - **`warehouse freshness`.** If it is anything but `pass` (that is, not `pass`: `fail`, `pending` or
-  `unknown`), say so **before** the first number, and say how stale. Its `observed` field gives the age,
+  `unknown`), say so **before** the first number, and say how stale, or, when it is `unknown`, that how stale
+  cannot be told and why. Its `observed` field gives the age,
   for example "load_traces loaded up to 4.4 days ago, and Tempo holds newer events". A figure from
   a stale warehouse is a figure about the past, and the reader must know which past.
 - **`loader liveness`.** If it fails, the loader is not running, or its latest run failed and
