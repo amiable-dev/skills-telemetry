@@ -3,7 +3,7 @@ name: stdtel-setup
 description: Set up standards telemetry with the user, for Claude Code and GitHub Copilot — installs the hooks, switches on each harness's own telemetry without content, and offers Claude Code's detailed view (OTEL_LOG_TOOL_DETAILS) only with the user's informed consent and after the collector has proven it drops content. Use when installing or re-installing stdtel, when the user asks to enable Copilot telemetry, or when third-party skills show up as "third-party" in cost data.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -112,12 +112,31 @@ not set `OTEL_LOG_TOOL_DETAILS` by hand.
 
 To turn it off later: `stdtel-install detailed-view off`.
 
-## 5. Finish
+## 5. Keep the warehouse loaded
+
+The Grafana dashboards read Tempo, Loki and Prometheus directly. Everything per skill, per change
+request and per PR reads the warehouse, and the warehouse is only as current as the last load.
+Offer the scheduled loader:
+
+```bash
+stdtel-install loader             # launchd agent (macOS) or systemd user timer (Linux) running stdtel-load
+stdtel-install loader --uninstall # the one command that undoes it
+```
+
+Tell them what it writes: a job definition (mode 0600) that carries their `STDTEL_*` settings,
+including the warehouse DSN, and a PATH. It runs every `STDTEL_LOAD_INTERVAL` seconds (900 by
+default). It refuses without the warehouse extras (`uv tool install 'stdtel[warehouse]'`). Set
+`STDTEL_LOAD_REPO=owner/name` first if they want delivery data; without it, `loader liveness` fails
+and names the setting. Install it only on their yes.
+
+## 6. Finish
 
 1. **Restart.** Each harness reads its configuration at startup, so a session that is already open,
    including this one, records nothing new.
-2. After the restart, run `stdtel-doctor`. It re-runs the content check whenever the detailed view is
-   on.
+2. After the restart, run `stdtel-doctor --json`. It re-runs the content check whenever the detailed
+   view is on, and it says whether the loader is running (`loader liveness`) and whether the
+   warehouse is current (`warehouse freshness`). Read every check that is not `pass` back to them,
+   with its remedy.
 3. Report what was configured, what was left off and why, and the one command that undoes each part.
 4. For what is collected, and every way to switch it off, point them to
    [docs/for-developers.md](../../docs/for-developers.md). `STDTEL_DISABLED=1` stops stdtel's hooks,
