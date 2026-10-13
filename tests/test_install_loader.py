@@ -327,7 +327,8 @@ def test_a_retried_activation_does_not_rewrite_a_current_definition(env, tmp_pat
 # --- council round 2 on #177 ------------------------------------------------------------------
 
 @pytest.mark.parametrize("enabled,active,want", [(0, 0, "on"), (1, 3, "off"), (1, 4, "off"), (0, 3, "partial"),
-                                                  (1, 0, "partial"), (0, 1, None), (5, 0, None)])
+                                                  (1, 0, "partial"), (0, 1, None), (5, 0, None),
+                                                  (2, 3, None)])
 def test_systemd_state_is_enabled_and_active(enabled, active, want):
     codes = {"is-enabled": enabled, "is-active": active}
     assert sch._state("linux", lambda argv: codes[argv[2]]) == want
@@ -454,3 +455,45 @@ def test_detailed_view_off_without_a_settings_file_writes_nothing(tmp_path, caps
     target = tmp_path / "missing" / "settings.json"
     assert install.detailed_view("off", target) == 0
     assert not target.exists()
+
+
+# --- advisor review on #177 (standing in for Council, OpenRouter 402) -----------------------
+
+def test_an_enabled_but_inactive_timer_is_started_by_install(env, tmp_path):
+    run = Runner()
+    sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run)
+    run.active = False
+    assert sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run) == 0
+    assert run.enabled and run.active
+
+
+def test_an_active_but_disabled_timer_is_stopped_by_uninstall(env, tmp_path):
+    run = Runner()
+    sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run)
+    run.enabled = False
+    assert sch.uninstall(platform="linux", home=tmp_path, run=run) == 0
+    assert not run.active
+
+
+def test_install_reactivates_when_the_scheduler_cannot_be_asked(env, tmp_path):
+    run = Runner()
+    sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run)
+
+    def unsure(argv):
+        return 2 if argv[2] == "is-enabled" else run(argv)
+    run.calls.clear()
+    assert sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=unsure) == 0
+    assert ["systemctl", "--user", "enable", "--now", f"{sch.UNIT}.timer"] in run.calls
+
+
+def test_a_setting_systemd_cannot_carry_is_refused_without_a_traceback(env, tmp_path, monkeypatch, capsys):
+    from stdtel import install
+    monkeypatch.setenv("STDTEL_DSN", 'postgresql://u:pa"ss@h/db')
+    monkeypatch.setattr("stdtel.load._extras_missing", lambda: [])
+    monkeypatch.setattr(sch, "current_platform", lambda: "linux")
+    monkeypatch.setattr(sch, "load_binary", lambda: BIN)
+    monkeypatch.setattr(sch, "_runner", lambda: Runner())
+    assert install.main(["loader", "--home", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "STDTEL_DSN" in err and "pa\"ss" not in err
+    assert not any(f.exists() for f in sch.paths("linux", tmp_path))

@@ -355,7 +355,11 @@ def _loader(args) -> int:
     if interval <= 0:
         print("stdtel-install: the interval must be a positive number of seconds", file=sys.stderr)
         return 1
-    return scheduler.install(platform, args.home, binary, interval, run=scheduler._runner())
+    try:
+        return scheduler.install(platform, args.home, binary, interval, run=scheduler._runner())
+    except ValueError as e:                       # a setting the unit cannot carry; names the key only
+        print(f"stdtel-install: {e}", file=sys.stderr)
+        return 1
 
 
 def _native_env_for(target: Path, replace_endpoint: bool) -> tuple[dict, str | None]:

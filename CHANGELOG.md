@@ -21,7 +21,9 @@ version until this number changes — so bump it for anything a user would recei
 - **`stdtel-install loader` keeps the warehouse current** (ADR-015 decision 5, #171). It schedules
   `stdtel-load` as a launchd agent on macOS or a systemd user timer on Linux. The job definition
   carries your STDTEL_* settings and a PATH, is mode 0600, and is never printed. It refuses without
-  the warehouse extras. `loader liveness` now points at it.
+  the warehouse extras, and refuses (naming the setting, never its value) a setting a systemd unit
+  cannot carry. `loader liveness` now points at it. `stdtel-install detailed-view off` with no
+  settings file now says it is already off instead of creating one.
 - **`stdtel-load` runs every loader once, under a lock** (ADR-015 decision 5, #170). One command for a
   scheduler, or for you. Each loader's window reaches back to its last successful watermark (24 h at
   least, 720 h at most), so an outage longer than a day is repaired. Only one run at a time, by an
