@@ -208,7 +208,7 @@ docker exec deploy-postgres-1 psql -U postgres -d stdtel -c 'SELECT * FROM skill
 { "statusLine": { "type": "command", "command": "stdtel-statusline" } }
 ```
 
-It shows only faults you can act on — `no branch identity`, `N unversioned`, `spans dropping` — and
+It shows only faults you can act on — `no branch identity`, `N unversioned`, `spans dropping`, and `usage not exported` for a session started before telemetry was turned on — and
 otherwise shows your branch name, which never leaves your machine. **It shows no cost or token total**, by design: see the note in
 [reference.md](reference.md#stdtel-statusline). `STDTEL_STATUSLINE=off` turns it off without turning
 telemetry off.

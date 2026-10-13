@@ -204,6 +204,12 @@ def session_start(p: dict) -> None:
     # would split one run in two and make each half look separate and cheaper.
     if str(p.get("source") or "") in ("startup", "clear", "fork") and st.scope_name:
         st.close_scope()
+    # ADR-015 decision 4: a session reads its settings when it starts, so one
+    # started before telemetry was turned on never exports. Recorded on every
+    # start, so a restart (resume included) clears the warning.
+    from stdtel.doctor import TELEMETRY_VAR, _on, telemetry_setting
+    st.telemetry_env = _on(os.environ.get(TELEMETRY_VAR))
+    st.telemetry_settings = telemetry_setting(os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd"))
     st.save()
     # Once per session, on the only event whose output the developer sees. The
     # plugin and the package are separate installs and neither updates the

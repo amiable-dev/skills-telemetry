@@ -7,6 +7,12 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **The status line warns a session that will not export** (ADR-015 decision 4, #154). SessionStart
+  records whether `CLAUDE_CODE_ENABLE_TELEMETRY` is on in the session's environment and what the
+  settings resolve it to (`enabled`, `opted-out` or `unknown`). Settings on with the variable absent
+  shows `usage not exported: started before telemetry was on; restart to fix`, and a restart clears
+  it. Opted out or unreadable settings show nothing. New doctor check `claude settings` names a
+  settings file that is not valid JSON.
 - **`stdtel-doctor` checks have four outcomes: `pass`, `fail`, `pending` and `unknown`** (ADR-015
   decision 1, #150). Only `pass` is a pass. New `--json` prints one object per check (`name`,
   `outcome`, `observed`, `remedy`, `observed_at`) and nothing else. The exit code is `0` when every
