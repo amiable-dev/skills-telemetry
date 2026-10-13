@@ -201,6 +201,7 @@ Each check has one of four outcomes (ADR-015 decision 1), and only `pass` is a p
 | branch identity | no branch readable, or no remote: this work cannot join a change request (ADR-013). Any branch name joins; `main`/`master` passes with a note that work committed straight to it has no change request |
 | skill catalogue | skills will record as `unversioned`, with no `standard_id` or `policy_ids` |
 | collector reachable | spans are being dropped right now |
+| claude settings | `fail`: one of Claude Code's settings files (`.claude/settings.local.json`, `.claude/settings.json`, `~/.claude/settings.json`) exists but is not valid JSON, so neither Claude Code nor stdtel can tell what it sets. The file is named. A session started with it records its telemetry setting as `unknown` and the status line stays quiet rather than guess (ADR-015 decision 4) |
 | content dropped | `fail`: the collector let content through to Tempo or Loki. `unknown`: the check could not prove it didn't (the probe never arrived, or could not be sent). Probes when any of Claude Code's content settings is on: `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_ASSISTANT_RESPONSES`, in the environment, `~/.claude/settings.json`, or the project's `.claude/settings.json` / `settings.local.json`. `OTEL_LOG_RAW_API_BODIES` on is a `fail` without a probe: a raw body can arrive as a record's body, which no collector attribute rule touches, so nothing here can prove it dropped. With every one off it passes |
 | hooks running | `fail`: registered but never fired, or only firing in other projects — hook config is read at session start, so a session open before the install never picks it up. `unknown`: state exists but no Claude Code transcript owns it, so whose it is cannot be told (expected on a Copilot-only machine) |
 | artefact events | `SubagentStart`, `SubagentStop` or `PostCompact` has never fired on this machine, so sub-agent and compaction capture is unproven here. This is `pending`, not `fail`, until a session runs with those hooks registered **and** spawns a sub-agent or compacts. Until then those kinds are read from the session directory instead and marked `std.artefact.source=transcript` |
@@ -254,9 +255,19 @@ stdtel fix/media-hardening-233         everything fine: the local branch name
 stdtel ⚠ no branch identity            not a git checkout, or no remote: work here cannot join a PR
 stdtel ⚠ 1 unversioned                 a skill is not in the catalogue
 stdtel ⚠ spans dropping                 the last export failed
+stdtel ⚠ usage not exported: started before telemetry was on; restart to fix
+                                       settings turn CLAUDE_CODE_ENABLE_TELEMETRY on, but this
+                                       session started without it, so it exports no usage
 ```
 
 Silent when there is nothing worth saying, and when `STDTEL_DISABLED=1` or `STDTEL_STATUSLINE=off`.
+
+The telemetry warning comes from what SessionStart recorded (ADR-015 decision 4): whether the
+variable is on in the session's environment, and what the settings resolve it to, project local over
+project over user. Settings that turn it off are a choice, so nothing is shown. An unreadable settings
+file shows nothing either, since the warning might be wrong every turn; `stdtel-doctor` names the file
+(`claude settings`). A session that started before this release has no record and shows nothing;
+`native coverage` is what names it.
 
 **It shows no cost and no token total, deliberately.** The payload offers both. This project commits
 to per-skill analysis rather than individual measurement, and a live running total of your own spend

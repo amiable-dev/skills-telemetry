@@ -77,6 +77,10 @@ def render(payload: dict) -> str:
         faults.append(f"{n} unversioned")
     if getattr(state, "last_export_ok", None) is False:
         faults.append("spans dropping")
+    # ADR-015 decision 4: only when both facts are recorded. opted-out is a
+    # choice, and unknown might be wrong every turn; doctor names that file.
+    if getattr(state, "telemetry_settings", "") == "enabled" and getattr(state, "telemetry_env", None) is False:
+        faults.append("usage not exported: started before telemetry was on; restart to fix")
 
     if faults:
         return f"{PREFIX} ⚠ " + " · ".join(faults)

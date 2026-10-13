@@ -450,11 +450,57 @@ def _http_json(url: str, body: dict | None = None) -> str:
         return r.read().decode()
 
 
-def _claude_settings_files(user: Path | None = None) -> list[Path]:
+def _claude_settings_files(user: Path | None = None, project: str | Path | None = None) -> list[Path]:
     """Claude Code's settings, highest precedence first: project local, project, user."""
-    project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()) / ".claude"
-    return [project / "settings.local.json", project / "settings.json",
+    d = Path(project or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()) / ".claude"
+    return [d / "settings.local.json", d / "settings.json",
             user or Path.home() / ".claude" / "settings.json"]
+
+
+def _on(v) -> bool:
+    """A Claude Code flag's value read as on: anything but empty, 0, false, no or off."""
+    return str(v or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_UNREADABLE = object()
+
+
+def _read_settings(f: Path):
+    """A settings file's `env`: a dict (empty when the file is absent or has
+    none), or _UNREADABLE when it exists but cannot be read or parsed. Unlike
+    `_settings_env`, which folds the two together, this keeps them apart."""
+    import json
+    try:
+        doc = json.loads(f.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return _UNREADABLE
+    env = doc.get("env") if isinstance(doc, dict) else _UNREADABLE
+    return env if isinstance(env, dict) else {} if env is None else _UNREADABLE
+
+
+TELEMETRY_VAR = "CLAUDE_CODE_ENABLE_TELEMETRY"
+
+
+def telemetry_setting(project: str | Path | None = None) -> str:
+    """What Claude Code's settings resolve CLAUDE_CODE_ENABLE_TELEMETRY to
+    (ADR-015 decision 4): "enabled", "opted-out" (off, or set nowhere), or
+    "unknown" (a file consulted before the setter could not be read).
+
+    Resolved as the harness does: the highest-precedence file that sets it wins,
+    so an unreadable file below the setter does not matter. Never raises: it
+    runs inside a hook."""
+    try:
+        for f in _claude_settings_files(project=project):
+            env = _read_settings(f)
+            if env is _UNREADABLE:
+                return "unknown"
+            if TELEMETRY_VAR in env:
+                return "enabled" if _on(env[TELEMETRY_VAR]) else "opted-out"
+        return "opted-out"
+    except Exception:                             # noqa: BLE001
+        return "unknown"
 
 
 def _settings_env(f: Path) -> dict:
@@ -548,11 +594,21 @@ def _content_flags_on() -> list[str]:
     """Which of CONTENT_FLAGS are on, in the environment or any of Claude Code's
     settings files? Any one place saying on is enough to warrant the probe."""
 
-    def on(v) -> bool:
-        return str(v or "").strip().lower() not in ("", "0", "false", "no", "off")
-
     envs = [os.environ, *(_settings_env(f) for f in _claude_settings_files())]
-    return [k for k in CONTENT_FLAGS if any(on(e.get(k)) for e in envs)]
+    return [k for k in CONTENT_FLAGS if any(_on(e.get(k)) for e in envs)]
+
+
+@named("claude settings")
+def claude_settings() -> Check:
+    """A settings file Claude Code cannot read hides what it says. The session
+    records `unknown` and stays quiet (ADR-015 decision 4); this is where the
+    file is named."""
+    bad = [f for f in _claude_settings_files() if _read_settings(f) is _UNREADABLE]
+    if bad:
+        return Check("claude settings", FAIL, "unreadable: " + ", ".join(map(str, bad)),
+                     "fix the JSON in the file named (Claude Code cannot read it either), "
+                     "then restart the session")
+    return Check("claude settings", PASS, "every settings file that exists parses")
 
 
 @named("content dropped")
@@ -597,7 +653,7 @@ def loader_liveness() -> Check:
 
 
 CHECKS = (hook_resolvable, hooks_registered, plugin_in_step, branch_identity, catalogue_ok,
-          scope_adoption, collector_ok, content_dropped, recent_state, artefacts_observed, native_coverage,
+          scope_adoption, collector_ok, claude_settings, content_dropped, recent_state, artefacts_observed, native_coverage,
           warehouse_freshness, loader_liveness)
 
 

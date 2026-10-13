@@ -161,6 +161,12 @@ class SessionState:
     # reports "not yet observed" rather than implying capture works because the
     # settings file mentions it.
     observed_events: list = field(default_factory=list)
+    # ADR-015 decision 4, recorded at SessionStart. `telemetry_env`: is
+    # CLAUDE_CODE_ENABLE_TELEMETRY on in this session's environment, i.e. will it
+    # export (None: no record, a session older than this field). `telemetry_settings`:
+    # what the settings resolve it to, "enabled" / "opted-out" / "unknown" ("" no record).
+    telemetry_env: bool | None = None
+    telemetry_settings: str = ""
 
     @property
     def path(self) -> Path:
@@ -204,6 +210,8 @@ class SessionState:
         st.first_turn_at = raw.get("first_turn_at")
         st.turns_at_last_compaction = raw.get("turns_at_last_compaction", 0)
         st.observed_events = list(raw.get("observed_events") or [])
+        st.telemetry_env = raw.get("telemetry_env")
+        st.telemetry_settings = raw.get("telemetry_settings", "")
         for f in ("scope_name", "scope_unit", "scope_key", "scope_id", "scope_source",
                   "branch", "last_head"):
             setattr(st, f, raw.get(f, ""))
@@ -308,6 +316,7 @@ class SessionState:
             "last_head": self.last_head,
             "pending_patch_ids": self.pending_patch_ids,
             "observed_events": self.observed_events,
+            "telemetry_env": self.telemetry_env, "telemetry_settings": self.telemetry_settings,
         }, indent=1)
         if lock:
             with locked(self.session_id):
