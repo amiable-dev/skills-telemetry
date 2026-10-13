@@ -192,11 +192,12 @@ connectors:
       - { name: std.artefact.kind }
       - { name: std.artefact.name }
       - { name: std.artefact.source }
-      # ADR-010 containment. name is the scoping artefact and key is the unit
-      # instance (a branch hash, ADR-013), both bounded. std.scope.id is NOT
-      # here: it is unique per container instance, which is #42 again.
+      # ADR-010 containment. name is the scoping artefact, bounded by the
+      # catalogue. std.scope.id is NOT here: it is unique per container instance,
+      # which is #42 again. Nor is std.scope.key (ADR-016 decision 2): a branch
+      # hash (ADR-013), bounded per branch but unbounded over time. Per-key
+      # figures read the warehouse.
       - { name: std.scope.name }
-      - { name: std.scope.key }
       - { name: std.scope.source }
       - { name: std.subagent.type }
       - { name: std.skill.name }
@@ -207,6 +208,11 @@ connectors:
       - { name: gen_ai.request.model }
       - { name: std.team }
     metrics_flush_interval: 30s
+    # ADR-016 decision 2: a series not seen for a day leaves the connector's
+    # memory. When it returns it starts at a new start time, which Prometheus's
+    # start-timestamp ingestion counts (decision 1). dimensions_cache_size stays
+    # at its default, 1000.
+    metrics_expiration: 24h
     # The connector keeps one cumulative counter per distinct resource. A stdtel
     # resource carries std.branch.hash, std.repo, std.user.hash and the SDK version:
     # none are metric labels, all of them change (a branch switch, another

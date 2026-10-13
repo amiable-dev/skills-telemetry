@@ -200,17 +200,19 @@ def test_each_artefact_kind_is_visible_somewhere(kind):
     assert f'"{kind}"' in blob, f"no panel shows kind={kind}"
 
 
-def test_scope_id_is_never_a_metrics_dimension():
-    """ADR-010. `std.scope.id` is unique per container instance, so a dimension
-    on it opens a new time series per loop iteration — #42 one layer up, and the
-    same reasoning that keeps `std.prompt.id` out. `name` and `key` are bounded
-    and are the two you actually group by."""
+@pytest.mark.parametrize("label", ["std_scope_id", "std_scope_key"])
+def test_unbounded_scope_labels_are_never_metrics_dimensions(label):
+    """ADR-010 kept `std.scope.id` out: it is unique per container instance, so a
+    dimension on it opens a new time series per loop iteration (#42 one layer up).
+    ADR-016 decision 2 (#157) takes `std.scope.key` out for the same reason: it
+    is a branch hash (ADR-013), bounded per branch but unbounded over time.
+    `std.scope.name` stays, bounded by the catalogue. Per-key figures read the
+    warehouse."""
     labels = _dimension_labels()
-    assert "std_scope_id" not in labels
-    assert {"std_scope_name", "std_scope_key"} <= labels, \
-        "containment is unqueryable in Prometheus without name and key"
+    assert label not in labels
+    assert "std_scope_name" in labels, "containment by name stays queryable in Prometheus"
     for file, panel, expr in _exprs():
-        assert "std_scope_id" not in expr, f"{file}:{panel} groups by an unbounded id"
+        assert label not in expr, f"{file}:{panel} groups by an unbounded label"
 
 
 
@@ -254,3 +256,37 @@ def test_every_warehouse_panel_runs_against_the_schema(title, sql):
     with conn, conn.cursor() as cur:
         cur.execute((ROOT / "warehouse" / "schema.sql").read_text())
         cur.execute("SELECT * FROM (\n" + sql.rstrip().rstrip(";") + "\n) q LIMIT 0")
+
+
+# --- ADR-016 decision 2 (#157): cardinality is bounded and visible ---------------------------
+
+def test_spanmetrics_series_expire_after_a_day():
+    """A series not seen for a day leaves the connector's memory; when it returns
+    it starts at a new start time, which ADR-016 decision 1 counts."""
+    sm = COLLECTOR["connectors"]["spanmetrics"]
+    assert sm.get("metrics_expiration") == "24h"
+    assert sm.get("dimensions_cache_size", 1000) == 1000, "left at its default"
+
+
+def _active_series_panel():
+    board = json.loads((ROOT / "deploy" / "grafana" / "provisioning" / "dashboards"
+                        / "skill-scorecard.json").read_text())
+    found = [p for p in board["panels"] if p.get("title") == "Prometheus active series"]
+    assert len(found) == 1
+    return found[0]
+
+
+def test_the_operational_board_shows_prometheus_active_series():
+    panel = _active_series_panel()
+    assert [t["expr"] for t in panel["targets"]] == ["prometheus_tsdb_head_series"]
+    steps = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    assert any(s.get("value") == 10000 for s in steps), "the 10,000 line"
+
+
+def test_prometheus_scrapes_itself_so_the_panel_has_data():
+    """`prometheus_tsdb_head_series` is Prometheus's own metric. With no scrape
+    job it never enters the TSDB and the panel reads No data forever."""
+    prom = yaml.safe_load((ROOT / "deploy" / "prometheus.yml").read_text())
+    targets = [t for job in prom.get("scrape_configs") or []
+               for sc in job.get("static_configs") or [] for t in sc.get("targets") or []]
+    assert "localhost:9090" in targets

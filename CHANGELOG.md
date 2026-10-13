@@ -7,6 +7,11 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **`std.scope.key` is no longer a metrics label, and metric series expire after a day** (ADR-016
+  decision 2, #157). The key is a branch hash: bounded per branch, unbounded over time. Per-key
+  figures read the warehouse; `std.scope.name` stays. Spanmetrics sets `metrics_expiration: 24h`.
+  The operational board gains a "Prometheus active series" panel with a 10,000 line, and
+  Prometheus now scrapes itself so that panel has data.
 - **The skills and the analyst check the warehouse is current before quoting it** (ADR-015 decision 6,
   #155). `stdtel-query` (1.3.0) and the scorecard analyst (1.2.0) run `stdtel-doctor --json` first, and
   state a non-pass `warehouse freshness`, with how stale, before the first number. `stdtel-setup`
