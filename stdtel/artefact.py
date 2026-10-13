@@ -336,8 +336,8 @@ def compaction(reason: str, started_at: float, ended_at: float,
                source: str = SOURCE_HOOK) -> dict:
     """A context compaction.
 
-    The token figures are the harness's own estimates and are recorded as
-    received. Where the harness did not supply them they are omitted — a
+    The token figures are the harness's own counts, from its transcript's
+    `compact_boundary` entry (#156). Where there is none they are omitted — a
     compaction with `tokens_before = 0` would read as one that dropped nothing.
     """
     attrs = {"std.compaction.reason": reason or "unknown"}

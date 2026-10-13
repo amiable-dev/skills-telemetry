@@ -92,10 +92,8 @@ def test_the_hook_reads_only_fields_the_real_payload_has():
     assert 'p.get("compact_summary")' not in src and "p['compact_summary']" not in src
 
 
-def test_the_payloads_trigger_wins_over_the_transcripts():
+def test_the_payloads_trigger_wins_over_the_transcripts(tmp_path):
     """The hook is the observation; the boundary only fills what it lacks."""
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        (c,) = run(Path(d), "cc-8", [dict(REAL, trigger="auto")],
-                   [boundary("2026-10-08T10:00:02.000Z", "manual", 900, 100)])
+    (c,) = run(tmp_path, "cc-8", [dict(REAL, trigger="auto")],
+               [boundary("2026-10-08T10:00:02.000Z", "manual", 900, 100)])
     assert c["std.compaction.reason"] == "auto" and c["std.compaction.tokens_before"] == 900
