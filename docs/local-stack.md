@@ -22,10 +22,13 @@ Nobody does, reliably. Tempo once held four days of spans the warehouse had neve
 `policy-results` artefact in #21 had been produced on every CI run and ingested by nothing — in both
 cases every component reported success.
 
-Two ways to stop that, one for a laptop and one for a deployment:
+Three ways to stop that: a scheduled job for a laptop, a terminal loop, or a container for a
+deployment:
 
 ```bash
 export STDTEL_LOAD_REPO=owner/name                    # needed for the delivery half
+uv tool install 'stdtel[warehouse]'                   # the loaders and their dependencies
+stdtel-install loader                                 # launchd agent / systemd user timer running stdtel-load
 mise run load                                         # once
 mise run load-watch                                   # loop in a terminal, STDTEL_LOAD_INTERVAL seconds
 docker compose -f deploy/docker-compose.yml --profile loader up -d   # the same loop in a container
@@ -47,6 +50,13 @@ slim Python image does not carry.
 
 An artefact expires after 90 days, so a loader that has not run in that window loses those PRs'
 results permanently. The collector says how many expired rather than quietly returning fewer rows.
+
+`stdtel-install loader` is the one that survives a reboot and a closed terminal (ADR-015 decision 5).
+It writes the settings set in your shell now (`STDTEL_DSN`, `STDTEL_TEMPO`, `STDTEL_LOKI`,
+`STDTEL_LOAD_REPO`, `STDTEL_HOME`) and a PATH reaching `gh` and `git` into the job, because a
+scheduler inherits no shell profile. The file is mode 0600, since it can hold the DSN. Run it again
+after changing one; `--uninstall` removes the job. Running the compose `loader` profile at the same
+time is safe, because every write is idempotent or newest-wins, but it is redundant.
 
 Every run writes a `loader_run` row, so "when did this last work" is a query rather than a guess.
 

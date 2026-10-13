@@ -40,7 +40,7 @@ TEMPO_SPAN_NAMES = ("std.artefact.activation", "std.skill.invocation", "std.sess
 LOKI_QUERY = '{service_name="claude-code"} | event_name="api_request"'
 TEMPO_MAX_WINDOW_S = 168 * 3600                     # query_frontend.search.max_duration
 LOKI_WINDOW_S = 168 * 3600                          # how far back Loki is asked; bounds the query
-_RUN_REMEDY = "run `make load` (or `make load-watch`), then check again"
+_RUN_REMEDY = "run `stdtel-load` now, and `stdtel-install loader` to keep it running"
 
 
 @dataclass(frozen=True)
@@ -197,7 +197,7 @@ def judge_liveness(state: dict[str, LoaderState], now: dt.datetime, interval_s: 
     if bad:
         failed = any(state.get(n, _NEVER).latest and not state.get(n, _NEVER).latest.ok for n in LOADERS)
         return Check(LIVENESS, FAIL, "; ".join(bad),
-                     _RUN_REMEDY + ("; fix the error shown first" if failed else "; to keep it current, schedule it"))
+                     ("fix the error shown, then " if failed else "") + _RUN_REMEDY)
     return Check(LIVENESS, PASS, f"every loader ran within {2 * interval_s // 60} min, and the latest run of each succeeded")
 
 
