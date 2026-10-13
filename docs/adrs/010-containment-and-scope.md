@@ -112,7 +112,7 @@ harness exports, so that mistake fails loudly rather than producing rows that si
    | attribute | meaning | bounded? |
    |---|---|---|
    | `std.scope.name` | catalogue name of the scoping artefact | yes — safe as a metrics dimension |
-   | `std.scope.key` | the unit instance, normally the ticket | yes in practice — safe |
+   | `std.scope.key` | the unit instance, normally the ticket | ~~yes in practice — safe~~ no over time: superseded by ADR-016 decision 2, not a metrics dimension |
    | `std.scope.id` | unique per container instance | **no — never a metrics dimension** |
    | `std.scope.source` | `artefact` or `overlay` | yes — safe |
 
@@ -280,8 +280,9 @@ is still a heuristic split of a turn's tokens across the skills active in it, wh
 `tail_tokens_first_only` exists as a sensitivity check. A scope rollup inherits that uncertainty and
 must not be presented as measurement.
 
-**Cardinality is bounded by construction.** `std.scope.name` and `std.scope.key` may be spanmetrics
-dimensions; `std.scope.id` may not. The dashboard test that already forbids `std_prompt_id` in a
+**Cardinality is bounded by construction.** `std.scope.name` ~~and `std.scope.key`~~ may be spanmetrics
+dimensions; `std.scope.id` may not. (*Superseded in part by ADR-016 decision 2, #157:* the key is a
+branch hash since ADR-013, bounded per branch but unbounded over time, so it is not a dimension either.) The dashboard test that already forbids `std_prompt_id` in a
 PromQL expression extends to `std_scope_id`.
 
 **Cross-process attribution is unauthenticated.** Any process that can read the environment can claim

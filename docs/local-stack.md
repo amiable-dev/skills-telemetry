@@ -286,7 +286,9 @@ docker exec deploy-langfuse-clickhouse-1 clickhouse-client --password langfuse \
 - **Grafana dashboards**: two, from `deploy/grafana/provisioning/dashboards/`.
   **Skill scorecard** reads the warehouse — first-time policy pass rate with and without the skill,
   tokens per merged PR, and a data-quality panel. **Skill telemetry (operational)** reads Prometheus —
-  invocation rate, errors, duration. With no data yet, `make demo` gives both something to show.
+  invocation rate, errors, duration, and Prometheus's own active series (it scrapes itself for that
+  one panel; a line at 10,000 shows when a label has grown unbounded). With no data yet, `make demo`
+  gives both something to show.
 - **Grafana datasources**: Prometheus, Tempo and Warehouse (Postgres), each with a **pinned uid**.
   Unpinned, Grafana generates a random uid and committed dashboards resolve to nothing — rendering
   empty with no error.

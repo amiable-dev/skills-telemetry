@@ -562,6 +562,47 @@
           "legendFormat": "{{std_artefact_name}}"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Prometheus active series",
+      "description": "Series in Prometheus's head block, including about a thousand of Prometheus's own (it scrapes itself for this panel). Spanmetrics labels are bounded (ADR-016 decision 2); steady growth past the 10,000 line means an unbounded label has crept in. Find it with `topk(10, count by (__name__) ({__name__=~\".+\"}))`.",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "prometheus_tsdb_head_series",
+          "legendFormat": "active series"
+        }
+      ]
     }
   ],
   "description": "Invocation rate, errors, duration and token flow. The scorecard — first-time policy pass rate and the keep/refine/deprecate call — is on 'Skill scorecard'."
