@@ -111,6 +111,11 @@ warehouse nobody loads changes nothing.
 4. **Compaction gets a span each.** Install `PostCompact`. The span carries `compaction_reason`,
    `token_count_estimate_before` and `_after`, and the number of turns since the previous compaction.
    Where the estimates are absent (older harness) the attributes are omitted, never zero.
+   - *Correction (2026-10-13, #156):* that field list came from the documentation, not a payload. A real
+     `PostCompact` (Claude Code 2.1.296) carries `trigger` (`auto` / `manual`) and `compact_summary`
+     (content, never read), and no token counts, so every compaction recorded `reason=unknown`. The
+     reason now comes from `trigger`, and the counts from the transcript's `compact_boundary` entry
+     (`compactMetadata.preTokens` / `postTokens`), paired in order at Stop.
 5. **Turns get a span each, incrementally.** At Stop, one activation of kind `turn` per `prompt_id`
    observed in the transcript slice since the previous Stop, which is one turn in the ordinary case,
    so there is no batch to parse. Usage is summed from the slice's per-request `usage` blocks, which

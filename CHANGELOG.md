@@ -77,6 +77,14 @@ version until this number changes — so bump it for anything a user would recei
   `response`. `OTEL_LOG_RAW_API_BODIES` on fails outright: nothing can prove a raw body is dropped.
   Before this, prompt logging on with the detailed view off passed as "nothing sends content".
 
+### Fixed
+- **A compaction's reason and token counts are recorded** (#156). Every compaction said
+  `reason=unknown` with no tokens: the PostCompact hook read `compaction_reason` and
+  `token_count_estimate_*`, which came from the documentation and are not in a real payload. A real
+  one (Claude Code 2.1.296) is now in the replayed fixtures. The reason comes from its `trigger`, and
+  the counts from the transcript's `compact_boundary` entry. Its `compact_summary` is content and is
+  never read.
+
 ## 0.9.1 — 2026-10-03
 
 Fixes found watching a live session: usage on the dashboard, MCP and skill names through the collector, and

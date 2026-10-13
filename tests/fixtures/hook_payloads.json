@@ -1,4 +1,13 @@
 {
+  "PostCompact": {
+    "compact_summary": "<scrubbed: content, never read>",
+    "cwd": "/tmp/probe",
+    "hook_event_name": "PostCompact",
+    "prompt_id": "659581ee-46d8-4a9a-a74a-65bdd405efa6",
+    "session_id": "probe-session",
+    "transcript_path": "/tmp/probe/t.jsonl",
+    "trigger": "manual"
+  },
   "PostToolUse": {
     "cwd": "/tmp/probe",
     "duration_ms": 3,

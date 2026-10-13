@@ -249,10 +249,10 @@ def test_a_compaction_is_captured_from_the_hook(tmp_path):
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
     hooks.stop({"session_id": sid, "transcript_path": str(transcript)},
                exporter=InMemorySpanExporter())
-    hooks.post_compact({"session_id": sid, "compaction_reason": "auto",
-                        "token_count_estimate_before": 967334,
-                        "token_count_estimate_after": 13177})
+    hooks.post_compact({"session_id": sid, "trigger": "auto"})   # the real shape (#156)
     with transcript.open("a") as f:
+        f.write(_entry(type="system", subtype="compact_boundary", timestamp="2026-09-15T10:00:04.000Z",
+                       compactMetadata={"trigger": "auto", "preTokens": 967334, "postTokens": 13177}) + "\n")
         f.write(assistant("2026-09-15T10:00:05.000Z") + "\n")
     exp = InMemorySpanExporter()
     hooks.stop({"session_id": sid, "transcript_path": str(transcript)}, exporter=exp)
@@ -270,7 +270,7 @@ def test_a_compaction_without_estimates_reports_none_rather_than_zero(tmp_path):
     transcript = tmp_path / f"{sid}.jsonl"
     write_transcript(transcript, [assistant("2026-09-15T10:00:01.000Z")])
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
-    hooks.post_compact({"session_id": sid, "compaction_reason": "manual"})
+    hooks.post_compact({"session_id": sid, "trigger": "manual"})
     exp = InMemorySpanExporter()
     hooks.stop({"session_id": sid, "transcript_path": str(transcript)}, exporter=exp)
     c = kinds(exp)["compaction"][0].attributes
@@ -304,9 +304,7 @@ def test_the_transcript_fallback_stops_once_the_hook_has_fired(tmp_path):
                compactMetadata={"trigger": "auto", "preTokens": 900, "postTokens": 100}),
     ])
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
-    hooks.post_compact({"session_id": sid, "compaction_reason": "auto",
-                        "token_count_estimate_before": 900,
-                        "token_count_estimate_after": 100})
+    hooks.post_compact({"session_id": sid, "trigger": "auto"})
     exp = InMemorySpanExporter()
     hooks.stop({"session_id": sid, "transcript_path": str(transcript)}, exporter=exp)
     assert len(kinds(exp)["compaction"]) == 1
@@ -337,7 +335,7 @@ def test_the_sessions_real_cost_reaches_the_session_span(tmp_path):
 # ------------------------------------------------------- has been observed
 
 def test_the_documented_payloads_are_marked_as_not_captured():
-    """These three payloads were transcribed from documentation, not observed.
+    """These payloads were transcribed from documentation, not observed.
 
     `tests/fixtures/hook_payloads.json` is the file that holds real captures and
     it does not contain them. Conflating the two would let a documented field
@@ -345,7 +343,8 @@ def test_the_documented_payloads_are_marked_as_not_captured():
     """
     assert "NOT captured" in DOCUMENTED["_provenance"]
     real = json.loads((Path(__file__).parent / "fixtures" / "hook_payloads.json").read_text())
-    assert not ({"SubagentStart", "SubagentStop", "PostCompact"} & set(real))
+    assert not ({"SubagentStart", "SubagentStop"} & set(real))
+    assert "PostCompact" in real and "PostCompact" not in DOCUMENTED, "captured for real (#156)"
 
 
 def test_the_documented_payloads_drive_the_hooks_they_describe(tmp_path):
@@ -354,8 +353,6 @@ def test_the_documented_payloads_drive_the_hooks_they_describe(tmp_path):
     hooks.session_start({"session_id": sid, "cwd": str(tmp_path)})
     hooks.subagent_start(DOCUMENTED["SubagentStart"])
     hooks.subagent_stop(DOCUMENTED["SubagentStop"])
-    hooks.post_compact(DOCUMENTED["PostCompact"])
     st = SessionState.load(sid)
-    assert st.observed_events == ["subagent-start", "subagent-stop", "post-compact"]
-    assert st.compactions[0].tokens_before == 125000
+    assert st.observed_events == ["subagent-start", "subagent-stop"]
     assert [s.agent_type for s in st.subagents] == ["Explore"]
