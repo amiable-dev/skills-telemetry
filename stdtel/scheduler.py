@@ -41,7 +41,7 @@ def current_platform() -> str:
 def load_binary() -> str:
     """The stdtel-load beside this interpreter (the tool's own bin), else on PATH."""
     sibling = Path(sys.executable).parent / "stdtel-load"
-    if sibling.is_file():
+    if sibling.is_file() and os.access(sibling, os.X_OK):
         return str(sibling)
     found = shutil.which("stdtel-load")
     if found:
@@ -83,6 +83,13 @@ def _unit_safe(name: str, value: str) -> str:
     return value.replace("%", "%%")
 
 
+def _exec_safe(binary: str) -> str:
+    """systemd also expands $ in ExecStart (not in Environment=), so refuse it there."""
+    if "$" in binary:
+        raise ValueError("the stdtel-load path holds `$`, which systemd would expand in ExecStart")
+    return _unit_safe("the stdtel-load path", binary)
+
+
 def _quoted(key: str, value: str) -> str:
     if any(c in key for c in '"= \n%'):
         raise ValueError(f"{key} is not a variable name a systemd unit can carry")
@@ -93,7 +100,7 @@ def render_systemd(binary: str, env: dict, interval: int) -> tuple[str, str]:
     service = "\n".join([
         "[Unit]", "Description=stdtel: load the warehouse (stdtel-load)", "",
         "[Service]", "Type=oneshot", *(_quoted(k, v) for k, v in env.items()),
-        f'ExecStart="{_unit_safe("the stdtel-load path", binary)}"', ""])
+        f'ExecStart="{_exec_safe(binary)}"', ""])
     timer = "\n".join([
         "[Unit]", "Description=stdtel: run stdtel-load on a schedule", "",
         "[Timer]", f"OnCalendar={on_calendar(interval)}", "Persistent=true", f"Unit={UNIT}.service", "",
@@ -112,7 +119,7 @@ def paths(platform: str, home: Path) -> list[Path]:
     return []
 
 
-_PROBES = ("print", "is-active")
+_PROBES = ("print", "is-active", "is-enabled")
 #: Expected to fail on a job that is not loaded yet; its stderr is noise, not news.
 _QUIET = (*_PROBES, "bootout")
 
@@ -124,7 +131,17 @@ def _verb(argv: list[str]) -> str:
 def _runner():
     """Runs a scheduler command; a failing one (not a probe) shows its own stderr."""
     def run(argv):
-        r = subprocess.run(argv, capture_output=True, text=True)
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            print(f"stdtel-install: `{' '.join(argv[:3])}` did not answer within 30 s", file=sys.stderr)
+            return 124
+        except FileNotFoundError:
+            print(f"stdtel-install: `{argv[0]}` not found", file=sys.stderr)
+            return 127
+        except OSError as e:
+            print(f"stdtel-install: `{argv[0]}` could not run: {type(e).__name__}", file=sys.stderr)
+            return 126
         if r.returncode and _verb(argv) not in _QUIET and r.stderr.strip():
             print(r.stderr.strip()[-500:], file=sys.stderr)
         return r.returncode
@@ -151,15 +168,29 @@ def _private(f: Path) -> bool:
     return (f.stat().st_mode & 0o777) == 0o600
 
 
-def _loaded(platform: str, run) -> bool | None:
-    """True loaded, False not loaded, None the scheduler could not be asked. Only
-    the codes that mean "no such job" read as not loaded: launchctl's 113, and
-    systemctl is-active's 3 (inactive) and 4 (no such unit)."""
+def _state(platform: str, run) -> str | None:
+    """"on", "off", "partial", or None when the scheduler could not be asked.
+
+    launchd: bootstrapped (`launchctl print` 0) or not (113). An agent in
+    LaunchAgents is bootstrapped again at login, so loaded is on.
+    systemd: two facts, not one. Enabled (`is-enabled` 0, or 1 for disabled or
+    absent) decides whether the timer survives a logout or reboot; active
+    (`is-active` 0, or 3 inactive, 4 no such unit) whether it runs now. "on" is
+    both, "off" is neither, "partial" is one. Any other code is None."""
     if platform == "darwin":
-        rc, absent = run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"]), (113,)
-    else:
-        rc, absent = run(["systemctl", "--user", "is-active", f"{UNIT}.timer"]), (3, 4)
-    return True if rc == 0 else False if rc in absent else None
+        rc = run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"])
+        return "on" if rc == 0 else "off" if rc == 113 else None
+    e = run(["systemctl", "--user", "is-enabled", f"{UNIT}.timer"])
+    a = run(["systemctl", "--user", "is-active", f"{UNIT}.timer"])
+    if e not in (0, 1) or a not in (0, 3, 4):
+        return None
+    enabled, active = e == 0, a == 0
+    return "on" if enabled and active else "off" if not (enabled or active) else "partial"
+
+
+def _scheduler_missing(platform: str) -> str | None:
+    tool = "launchctl" if platform == "darwin" else "systemctl"
+    return None if _which(tool) else tool
 
 
 def _activate(platform: str, files: list[Path], run) -> list[list[str]]:
@@ -177,6 +208,12 @@ def install(platform: str, home: Path, binary: str, interval: int, run=None) -> 
         print(f"stdtel-install: no scheduler support for {platform}; run stdtel-load from your own "
               "scheduler instead", file=sys.stderr)
         return 1
+    missing = _scheduler_missing(platform)
+    if missing:                                   # before anything holding the DSN is written
+        print(f"stdtel-install: `{missing}` not found, so there is no scheduler to install into "
+              "(no systemd user session?). Run stdtel-load from your own scheduler instead",
+              file=sys.stderr)
+        return 1
     env = job_env()
     if platform == "darwin":
         log = Path(env.get("STDTEL_HOME") or home / ".stdtel") / "loader.log"
@@ -189,7 +226,7 @@ def install(platform: str, home: Path, binary: str, interval: int, run=None) -> 
         wanted = [t.encode() for t in render_systemd(binary, env, interval)]
         schedule = f"OnCalendar={on_calendar(interval)}"
     current = all(f.exists() and f.read_bytes() == w and _private(f) for f, w in zip(files, wanted))
-    if current and _loaded(platform, run) is True:
+    if current and _state(platform, run) == "on":
         print(f"stdtel-install: loader already installed ({files[0]}), {schedule}")
         return 0
     if not current:
@@ -208,16 +245,21 @@ def install(platform: str, home: Path, binary: str, interval: int, run=None) -> 
 def uninstall(platform: str, home: Path, run=None) -> int:
     run = run or _runner()
     files = [f for f in paths(platform, home) if f.exists()]
-    if not files:
+    state = _state(platform, run)                 # asked even with no files: a job can outlive them
+    if not files and state == "off":
         print("stdtel-install: no loader schedule installed")
         return 0
-    if _loaded(platform, run) is not False:      # loaded, or cannot tell: stop it to be sure
+    if state != "off":                            # on, partial, or cannot tell: stop it to be sure
         stop = (["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"] if platform == "darwin"
                 else ["systemctl", "--user", "disable", "--now", f"{UNIT}.timer"])
         if run(stop) != 0:
-            print(f"stdtel-install: could not stop the loader job; it is still scheduled, and "
-                  f"{files[0]} is kept so a retry can find it", file=sys.stderr)
+            kept = f", and {files[0]} is kept so a retry can find it" if files else ""
+            print(f"stdtel-install: could not stop the loader job; it may still be scheduled{kept}",
+                  file=sys.stderr)
             return 1
+    if not files:
+        print("stdtel-install: the loader job was still loaded with no definition; stopped it")
+        return 0
     for f in files:
         f.unlink()
     if not platform == "darwin":

@@ -200,6 +200,9 @@ def detailed_view(state: str, target: Path, collector_confirmed: bool = False) -
     --content-check` passes now, on this machine. The user's consent is the
     caller's to ask for — the stdtel-setup skill asks, then runs this.
     """
+    if state == "off" and not target.is_file():
+        print(f"detailed view already off: {target} does not exist.")
+        return 0
     current = json.loads(target.read_text() or "{}") if target.is_file() else {}
     env = current.setdefault("env", {})
     if state == "off":

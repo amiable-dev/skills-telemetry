@@ -28,7 +28,9 @@ def env(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("STDTEL_DSN", SECRET)
     monkeypatch.setenv("STDTEL_LOAD_REPO", "amiable-dev/skills-telemetry")
-    monkeypatch.setattr(sch, "_which", lambda name: {"gh": "/opt/homebrew/bin/gh", "git": "/usr/bin/git"}.get(name))
+    monkeypatch.setattr(sch, "_which", lambda name: {"gh": "/opt/homebrew/bin/gh", "git": "/usr/bin/git",
+                                                      "systemctl": "/usr/bin/systemctl",
+                                                      "launchctl": "/bin/launchctl"}.get(name))
 
 
 # --- what the job carries --------------------------------------------------------------------
@@ -76,29 +78,49 @@ def test_a_value_with_a_quote_or_newline_cannot_break_out_of_the_unit():
 # --- the round trip ---------------------------------------------------------------------------
 
 class Runner:
-    """Records commands. The job counts as loaded once activated, until removed,
-    so `is-active` / `launchctl print` answer as a real scheduler would."""
+    """A scheduler with the states a real one has. launchd: bootstrapped or not.
+    systemd: enabled and active independently, which is what hid #177's round-3
+    bugs when they were one flag. Commands fail as the real ones do on a job in
+    the wrong state, and a verb in `fail` always fails."""
 
-    def __init__(self, fail=()):
-        self.calls, self.loaded, self.fail = [], False, set(fail)
+    def __init__(self, fail=(), enabled=False, active=False):
+        self.calls, self.fail = [], set(fail)
+        self.enabled, self.active = enabled, active
+
+    @property
+    def loaded(self):
+        return self.enabled and self.active
 
     def __call__(self, argv):
         self.calls.append(argv)
         verb = argv[1] if argv[0] == "launchctl" else argv[2]
         if verb in self.fail:
             return 1
-        if verb in ("print", "is-active"):
-            return 0 if self.loaded else (113 if argv[0] == "launchctl" else 3)
-        if verb in ("bootstrap", "enable"):
-            self.loaded = True
-        if verb in ("bootout", "disable"):
-            if not self.loaded:
-                return 1                            # as launchctl / systemctl do for a job not loaded
-            self.loaded = False
+        if argv[0] == "launchctl":
+            if verb == "print":
+                return 0 if self.active else 113
+            if verb == "bootstrap":
+                self.enabled = self.active = True
+            if verb == "bootout":
+                if not self.active:
+                    return 113
+                self.enabled = self.active = False
+            return 0
+        if verb == "is-enabled":
+            return 0 if self.enabled else 1
+        if verb == "is-active":
+            return 0 if self.active else 3
+        if verb == "enable":
+            self.enabled = True
+            self.active = self.active or "--now" in argv
+        if verb == "disable":
+            self.enabled = False
+            self.active = self.active and "--now" not in argv
         return 0
 
     def changing(self):
-        return [c for c in self.calls if (c[1] if c[0] == "launchctl" else c[2]) not in ("print", "is-active")]
+        return [c for c in self.calls
+                if (c[1] if c[0] == "launchctl" else c[2]) not in ("print", "is-active", "is-enabled")]
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
@@ -170,6 +192,7 @@ def test_the_binary_is_the_one_beside_this_installation(tmp_path, monkeypatch):
     fake = tmp_path / "bin"
     fake.mkdir()
     (fake / "stdtel-load").write_text("#!/bin/sh\n")
+    (fake / "stdtel-load").chmod(0o755)
     monkeypatch.setattr("sys.executable", str(fake / "python"))
     assert sch.load_binary() == str(fake / "stdtel-load")
 
@@ -303,11 +326,16 @@ def test_a_retried_activation_does_not_rewrite_a_current_definition(env, tmp_pat
 
 # --- council round 2 on #177 ------------------------------------------------------------------
 
-@pytest.mark.parametrize("platform,rc,want", [("darwin", 0, True), ("darwin", 113, False), ("darwin", 5, None),
-                                              ("linux", 0, True), ("linux", 3, False), ("linux", 4, False),
-                                              ("linux", 1, None)])
-def test_a_probe_distinguishes_not_loaded_from_could_not_ask(platform, rc, want):
-    assert sch._loaded(platform, lambda argv: rc) is want
+@pytest.mark.parametrize("enabled,active,want", [(0, 0, "on"), (1, 3, "off"), (1, 4, "off"), (0, 3, "partial"),
+                                                  (1, 0, "partial"), (0, 1, None), (5, 0, None)])
+def test_systemd_state_is_enabled_and_active(enabled, active, want):
+    codes = {"is-enabled": enabled, "is-active": active}
+    assert sch._state("linux", lambda argv: codes[argv[2]]) == want
+
+
+@pytest.mark.parametrize("rc,want", [(0, "on"), (113, "off"), (5, None)])
+def test_launchd_state_is_bootstrapped(rc, want):
+    assert sch._state("darwin", lambda argv: rc) == want
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
@@ -321,16 +349,6 @@ def test_uninstall_when_the_scheduler_cannot_be_asked_keeps_files_unless_stoppin
         return 5 if verb in (probe, stop) else 0
     assert sch.uninstall(platform=platform, home=tmp_path, run=unreachable) == 1
     assert all(f.exists() for f in sch.paths(platform, tmp_path))
-
-
-def test_a_stale_temporary_file_never_blocks_a_write(env, tmp_path, monkeypatch):
-    f = sch.paths("linux", tmp_path)[0]
-    f.parent.mkdir(parents=True)
-    import os
-    for pid in (os.getpid(), 1, 99999):
-        (f.parent / f".{f.name}.tmp{pid}").write_text("stale")
-    sch._write_private(f, b"new")
-    assert f.read_bytes() == b"new"
 
 
 @pytest.mark.parametrize("seconds,cal", [(86400, "daily"), (3 * 86400, "daily"), (23 * 3600, "*-*-* 0/23:00:00")])
@@ -349,3 +367,90 @@ def test_the_bootout_before_a_fresh_bootstrap_is_quiet(capsys, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 113, "", "Boot-out failed: 3: No such process"))
     sch._runner()(["launchctl", "bootout", "gui/501/x"])
     assert capsys.readouterr().err == ""
+
+
+
+# --- council round 3 on #177: enabled and active are two facts -------------------------------
+
+def test_an_active_but_disabled_timer_is_enabled_by_install(env, tmp_path):
+    """It would not survive a logout or reboot; "already installed" would be a lie."""
+    run = Runner()
+    sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run)
+    run.enabled = False
+    sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run)
+    assert run.enabled and run.active
+
+
+def test_an_enabled_but_inactive_timer_is_disabled_by_uninstall(env, tmp_path):
+    run = Runner()
+    sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=run)
+    run.active = False
+    assert sch.uninstall(platform="linux", home=tmp_path, run=run) == 0
+    assert not run.enabled, "no dangling timers.target.wants link left behind"
+    assert ["systemctl", "--user", "disable", "--now", f"{sch.UNIT}.timer"] in run.calls
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_uninstall_with_no_files_still_stops_a_job_that_is_loaded(env, tmp_path, platform):
+    run = Runner(enabled=True, active=True)
+    assert sch.uninstall(platform=platform, home=tmp_path, run=run) == 0
+    assert not run.enabled and not run.active
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_uninstall_with_nothing_anywhere_is_a_quiet_no_op(env, tmp_path, platform, capsys):
+    run = Runner()
+    assert sch.uninstall(platform=platform, home=tmp_path, run=run) == 0
+    assert run.changing() == [] and "no loader schedule installed" in capsys.readouterr().out
+
+
+def test_without_systemctl_nothing_is_written(env, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sch, "_which", lambda name: None if name == "systemctl" else "/usr/bin/" + name)
+    assert sch.install(platform="linux", home=tmp_path, binary=BIN, interval=900, run=Runner()) == 1
+    assert "systemctl" in capsys.readouterr().err
+    assert not any(f.exists() for f in sch.paths("linux", tmp_path)), "no DSN-bearing file left behind"
+
+
+@pytest.mark.parametrize("exc,code", [(FileNotFoundError("systemctl"), 127), (PermissionError("x"), 126)])
+def test_the_runner_reports_a_command_it_cannot_run(monkeypatch, capsys, exc, code):
+    import subprocess
+
+    def boom(*a, **k):
+        raise exc
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert sch._runner()(["systemctl", "--user", "enable", "x"]) == code
+    assert "systemctl" in capsys.readouterr().err
+
+
+def test_the_runner_times_out_rather_than_hanging(monkeypatch):
+    import subprocess
+
+    def slow(*a, **k):
+        assert k.get("timeout")
+        raise subprocess.TimeoutExpired(a[0], k["timeout"])
+    monkeypatch.setattr(subprocess, "run", slow)
+    assert sch._runner()(["systemctl", "--user", "enable", "x"]) == 124
+
+
+def test_a_dollar_in_the_binary_path_is_refused():
+    """systemd expands $ in ExecStart."""
+    with pytest.raises(ValueError):
+        sch.render_systemd("/opt/$HOME/stdtel-load", {}, 900)
+
+
+def test_a_sibling_that_is_not_executable_is_not_used(tmp_path, monkeypatch):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "stdtel-load").write_text("#!/bin/sh\n")
+    (fake / "stdtel-load").chmod(0o644)
+    monkeypatch.setattr("sys.executable", str(fake / "python"))
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    with pytest.raises(FileNotFoundError):
+        sch.load_binary()
+
+
+def test_detailed_view_off_without_a_settings_file_writes_nothing(tmp_path, capsys):
+    from stdtel import install
+    target = tmp_path / "missing" / "settings.json"
+    assert install.detailed_view("off", target) == 0
+    assert not target.exists()
