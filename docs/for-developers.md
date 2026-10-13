@@ -37,7 +37,7 @@ Every kind carries only these fields:
 | duration | `3ms` | the harness |
 | sub-agent type and id | `Explore`, `subagent-456` | the agent's catalogue name; the id is opaque |
 | sub-agent depth and tool counts | `1`, `18 calls` | counts only |
-| compaction reason and size | `auto`, `before=967334 after=13177` | the harness's own estimates, recorded as received |
+| compaction reason and size | `auto`, `before=967334 after=13177` | the harness's own counts, from its transcript's compaction record; the summary it writes is never read |
 | hook latency, by hook | `cc-status: 40ms` | the **basename** of each hook the harness timed; the path is dropped |
 | sub-agent version and owner | `2.1.0`, `platform-observability` | the agent's own definition file, when it carries one |
 | the container a piece of work ran under | `epic-loop` | the name of a skill that declares a unit of work, and the branch hash that was active. Recorded only while such a skill is running; most work has none |

@@ -305,19 +305,16 @@ def subagent_stop(p: dict) -> None:
 def post_compact(p: dict) -> None:
     """Context was compacted. Queued for the next Stop to export.
 
-    The token figures are the harness's own estimates and reach the span
-    unchanged. Where a harness does not send them they are omitted: a
-    compaction recorded as dropping zero tokens is a fabricated measurement.
+    A real payload (2.1.296, tests/fixtures/hook_payloads.json) carries `trigger`
+    (`auto` / `manual`) and `compact_summary`, and no token counts. The summary
+    is content and is never read. The counts come from the transcript's
+    `compact_boundary` entry at Stop (#156).
     """
     from stdtel.state import SessionState
 
-    before = p.get("token_count_estimate_before")
-    after = p.get("token_count_estimate_after")
     with SessionState.mutate(p.get("session_id", "unknown")) as st:
         st.observe("post-compact")
-        st.record_compaction(reason=str(p.get("compaction_reason") or "unknown"),
-                             tokens_before=before if isinstance(before, int) else None,
-                             tokens_after=after if isinstance(after, int) else None)
+        st.record_compaction(reason=str(p.get("trigger") or "unknown"))
 
 
 def _agent_attrs(agents: dict, agent_type: str) -> dict:
@@ -426,10 +423,19 @@ def _compaction_activations(st, sl) -> list:
     from stdtel import artefact
 
     out = []
+    # The hook says a compaction happened and why; the transcript's boundary
+    # holds its token counts. Paired in order: each compaction appends one
+    # boundary (#156). A hook record with no boundary keeps no counts (ADR-005).
+    marks = iter(sl.compactions)
     for c in st.drain_compactions():
+        m = next(marks, None)
+        reason = c.reason if c.reason not in ("", "unknown") else (m.reason if m else c.reason)
+        before = c.tokens_before if c.tokens_before is not None else (m.tokens_before if m else None)
+        after = c.tokens_after if c.tokens_after is not None else (m.tokens_after if m else None)
         out.append(artefact.compaction(
-            reason=c.reason, started_at=c.at, ended_at=c.at,
-            tokens_before=c.tokens_before, tokens_after=c.tokens_after,
+            reason=reason, started_at=c.at, ended_at=c.at,
+            tokens_before=before if isinstance(before, int) else None,
+            tokens_after=after if isinstance(after, int) else None,
             turns_since_previous=c.turns_since_previous, source=artefact.SOURCE_HOOK))
     if "post-compact" in st.observed_events:
         return out

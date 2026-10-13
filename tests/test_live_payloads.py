@@ -19,7 +19,7 @@ PAYLOADS = json.loads((Path(__file__).parent / "fixtures" / "hook_payloads.json"
 
 
 def test_fixture_covers_the_lifecycle():
-    assert set(PAYLOADS) == {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
+    assert set(PAYLOADS) == {"SessionStart", "PreToolUse", "PostToolUse", "Stop", "PostCompact"}
 
 
 def test_skill_name_field_is_skill():
