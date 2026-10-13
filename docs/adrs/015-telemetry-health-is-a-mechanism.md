@@ -119,6 +119,10 @@ So a session can know, from inside, whether it started with Claude Code's own te
 4. **The session warns about itself, on every turn.**
    - At SessionStart the hook records in the session's state whether `CLAUDE_CODE_ENABLE_TELEMETRY` is
      in its environment (verified readable, Context).
+     - *Implementation note (#154):* recorded as **on** (the values the content flags use: anything
+       but empty, `0`, `false`, `no`, `off`), not merely present, because "will this session export"
+       is the fact the warning depends on. SessionStart also fires on compaction, so a session
+       already running when this lands gets an accurate record at its next compaction.
    - It also resolves the settings that apply to this session, as Claude Code resolves them: project
      local, then project, then user. This is the same resolution doctor already uses for the endpoint.
      It persists one of three outcomes:
