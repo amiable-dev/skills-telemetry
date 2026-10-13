@@ -142,6 +142,8 @@ The venv is seeded with pip on purpose: mise creates it with uv, which omits pip
 sends a bare `pip install` to the interpreter behind it instead.
 
 ## Reporting thresholds
+Before reporting from the warehouse, run `stdtel-doctor --json`, and state a non-pass `warehouse freshness`
+(with how stale) before the first number (ADR-015 decision 6).
 Phases are set by data volume, not elapsed time; the hard floor and the three phases live in README
 and are repeated verbatim in `agents/skill-scorecard-analyst.md` and `skills/stdtel-query`. The
 canonical sentence is `eval.power.HARD_FLOOR` and a test asserts it appears identically in all four

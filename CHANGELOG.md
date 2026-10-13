@@ -7,6 +7,11 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **The skills and the analyst check the warehouse is current before quoting it** (ADR-015 decision 6,
+  #155). `stdtel-query` (1.3.0) and the scorecard analyst (1.2.0) run `stdtel-doctor --json` first, and
+  state a non-pass `warehouse freshness`, with how stale, before the first number. `stdtel-setup`
+  (1.2.0) offers `stdtel-install loader` and ends with `stdtel-doctor --json`, reading back every
+  check that is not `pass`.
 - **The status line warns a session that will not export** (ADR-015 decision 4, #154). SessionStart
   records whether `CLAUDE_CODE_ENABLE_TELEMETRY` is on in the session's environment and what the
   settings resolve it to (`enabled`, `opted-out` or `unknown`). Settings on with the variable absent
