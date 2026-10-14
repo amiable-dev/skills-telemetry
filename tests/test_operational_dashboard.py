@@ -126,7 +126,7 @@ def test_every_loki_panel_query_runs(title, expr):
 # --- #142: which MCP servers, skills and tools ----------------------------------------------------
 
 WHICH = {"mcp calls by server and tool": ['event_name="tool_result"', 'tool_name="mcp_tool"', "mcp_server_name"],
-         "skills invoked": ['event_name="tool_result"', 'tool_name="Skill"', "skill_name"],
+         "skills invoked": ['event_name="skill_activated"', "skill_name", "invocation_trigger"],
          "tool calls by tool": ['event_name="tool_result"', "by (tool_name, success)"]}
 
 
@@ -144,6 +144,61 @@ def test_a_hidden_name_says_why_rather_than_reading_blank():
     for p, t in loki_targets(OPERATIONAL):
         if "mcp_server_name" in t["expr"] or 'tool_name="Skill"' in t["expr"]:
             assert "detailed view off" in t["expr"], p["title"]
+
+
+# --- ADR-016 decision 3 (#159): per-event tables ---------------------------------------------------
+
+def _panel(title: str) -> dict:
+    (p,) = [p for p in OPERATIONAL["panels"] if p["title"].lower().startswith(title)]
+    return p
+
+
+def test_skills_invoked_counts_every_activation_once():
+    """`skill_activated` fires for a typed /name and for a Skill tool call alike;
+    tool_result fires only for the tool call. Measured 2026-10-14 over six days:
+    16 Skill tool calls, 16 activations triggered claude-proactive or nested-skill,
+    and 30 user-slash activations with no tool call at all. Reading both would count
+    the 16 twice; reading tool_result alone missed the 30."""
+    (t,) = _panel("skills invoked")["targets"]
+    assert 'event_name="skill_activated"' in t["expr"]
+    assert 'event_name="tool_result"' not in t["expr"] and 'tool_name="Skill"' not in t["expr"]
+    assert "invocation_trigger" in t["expr"], "how it was invoked: typed, by Claude, or by another skill"
+
+
+def test_a_withheld_skill_name_says_so():
+    """Claude Code has sent a user's own skill as `custom_skill` (test_llm_request)."""
+    (t,) = _panel("skills invoked")["targets"]
+    assert '"custom_skill"' in t["expr"] and "withheld" in t["expr"]
+
+
+def test_skills_invoked_says_typed_skills_now_appear():
+    text = _panel("skills invoked")["description"]
+    assert "skill_activated" in text and "/name" in text
+
+
+SPEND_BY_SCOPE = "spend by scope"
+
+
+def test_spend_by_scope_reads_the_warehouse_view():
+    p = _panel(SPEND_BY_SCOPE)
+    assert p["datasource"]["uid"] == "Warehouse"
+    (t,) = p["targets"]
+    assert "FROM llm_request_scope" in t["rawSql"]
+    assert "ended_at >= $__timeFrom() AND ended_at < $__timeTo()" in t["rawSql"]
+
+
+def test_spend_by_scope_names_the_warehouse_age():
+    """Decision 3: the panel says how old its data is (ADR-015 warehouse freshness)."""
+    p = _panel(SPEND_BY_SCOPE)
+    sql = p["targets"][0]["rawSql"]
+    assert "loader_run" in sql and "'load_requests'" in sql and "WHERE ok" in sql
+    assert "stdtel-doctor" in p["description"] and "warehouse freshness" in p["description"]
+
+
+def test_spend_by_scope_keeps_the_unjoined_share_as_its_own_row():
+    sql = _panel(SPEND_BY_SCOPE)["targets"][0]["rawSql"]
+    assert "joins no stdtel turn" in sql and "(no scope)" in sql
+    assert "share" in sql, "each row's share of the spend in range"
 
 
 def test_tables_show_their_value_not_a_timestamp():

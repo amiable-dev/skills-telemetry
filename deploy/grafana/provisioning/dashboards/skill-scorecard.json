@@ -320,10 +320,10 @@
         "w": 12,
         "h": 8
       },
-      "description": "From Claude Code's own tool_result events in Loki (ADR-014). Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). MCP server and tool names, and the skill a Skill call loaded, arrive only with the detailed view on (`stdtel-install detailed-view on`, via the stdtel-setup skill); without it they read `(hidden: detailed view off)`. The collector keeps those names and drops everything else in the call (#142). Counts Skill tool calls in the range, so a long loop started earlier does not appear.",
+      "description": "From Claude Code's own skill_activated events in Loki (ADR-014, ADR-016 decision 3). One event per activation, however it was invoked: typed as /name (user-slash), chosen by Claude (claude-proactive), or loaded by another skill (nested-skill). A skill typed as /name makes no Skill tool call, so the earlier tool_result count missed it. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). Claude Code has sent a user's own skill as `custom_skill`; that row says the name was withheld. Counts activations in the range, so a long loop started earlier does not appear.",
       "targets": [
         {
-          "expr": "sum by (skill_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | tool_name=\"Skill\" | label_format skill_name=`{{ or .skill_name \"(hidden: detailed view off)\" }}` [$__range]))",
+          "expr": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"skill_activated\" | label_format skill_name=`{{ if eq .skill_name \"custom_skill\" }}(your own skill: name withheld by Claude Code){{ else }}{{ or .skill_name \"(no name sent)\" }}{{ end }}` [$__range]))",
           "queryType": "instant",
           "format": "table",
           "datasource": {
@@ -341,7 +341,8 @@
               "Time": true
             },
             "renameByName": {
-              "Value #A": "invocations"
+              "Value #A": "invocations",
+              "invocation_trigger": "invoked by"
             }
           }
         },
@@ -603,6 +604,73 @@
           "legendFormat": "active series"
         }
       ]
+    },
+    {
+      "type": "table",
+      "title": "Spend by scope (in range, warehouse)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "Warehouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Claude Code's request spend by the scope its prompt ran under (ADR-010), from the warehouse, the only store that joins requests to stdtel turns by prompt id (ADR-014 decision 7). `(no scope)`: the turn declared none. `(several scopes)`: the prompt's turns named more than one, so none is guessed. `(prompt joins no stdtel turn)`: requests from sessions without stdtel's hooks, or not yet loaded; kept as its own row, never folded into no scope. `share` is each row's part of the spend in range. `data_through` is the newest request the loader has stored: the warehouse lags by the loader interval. Run `stdtel-doctor --json` and read `warehouse freshness` before quoting a number (ADR-015).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "Warehouse"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "-- ADR-016 decision 3 (#159): spend by the scope its prompt ran under. Only the\n-- warehouse joins Claude Code's requests to stdtel's turns (ADR-014 decision 7).\n-- Every row carries data_through: the newest request the loader has stored.\nWITH w AS (\n  SELECT max(source_max_ts) AS data_through FROM loader_run WHERE ok AND loader = 'load_requests'\n),\ns AS (\n  SELECT CASE scope_state WHEN 'scoped'   THEN scope_name\n                          WHEN 'unscoped' THEN '(no scope)'\n                          WHEN 'several'  THEN '(several scopes)'\n                          ELSE '(prompt joins no stdtel turn)' END AS scope,\n         count(*)      AS requests,\n         sum(cost_usd) AS spend_usd\n  FROM llm_request_scope\n  WHERE harness = 'claude-code' AND ended_at >= $__timeFrom() AND ended_at < $__timeTo()\n  GROUP BY 1\n)\nSELECT s.scope, s.requests, s.spend_usd,\n       s.spend_usd / NULLIF(sum(s.spend_usd) OVER (), 0) AS share,\n       w.data_through\nFROM s CROSS JOIN w\nORDER BY s.spend_usd DESC NULLS LAST",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Claude Code requests in the warehouse for this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "spend_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "share"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "description": "Invocation rate, errors, duration and token flow. The scorecard — first-time policy pass rate and the keep/refine/deprecate call — is on 'Skill scorecard'."

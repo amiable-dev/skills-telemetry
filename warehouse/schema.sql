@@ -459,6 +459,30 @@ SELECT r.harness,
 FROM llm_request r
 LEFT JOIN candidate c ON c.session_id = r.session_id AND c.prompt_id = r.prompt_id;
 
+-- ADR-016 decision 3 (#159): which scope each request's spend belongs to. A
+-- request carries its prompt id; the stdtel turn with that prompt id carries the
+-- scope (ADR-010). Only turns, for the reason llm_request_change_request gives,
+-- grouped per prompt first so each request is one row whatever the deltas (#23).
+-- A prompt whose turns name two scopes names none: never guessed (ADR-005). A
+-- prompt no turn shares is `unjoined`, its own state, never folded into unscoped.
+CREATE OR REPLACE VIEW llm_request_scope AS
+WITH turn_scope AS (
+  SELECT session_id, prompt_id,
+         count(DISTINCT scope_name) AS scopes,
+         min(scope_name)            AS scope_name
+  FROM artefact_activation
+  WHERE kind = 'turn' AND prompt_id IS NOT NULL
+  GROUP BY session_id, prompt_id
+)
+SELECT r.harness, r.request_id, r.session_id, r.prompt_id, r.ended_at, r.cost_usd,
+       CASE WHEN t.scopes = 1 THEN t.scope_name END AS scope_name,
+       CASE WHEN t.prompt_id IS NULL THEN 'unjoined'
+            WHEN t.scopes = 0 THEN 'unscoped'
+            WHEN t.scopes = 1 THEN 'scoped'
+            ELSE 'several' END AS scope_state
+FROM llm_request r
+LEFT JOIN turn_scope t ON t.session_id = r.session_id AND t.prompt_id = r.prompt_id;
+
 -- #117 (ADR-014 decisions 1 and 10): a skill's cost is the harness's own requests
 -- named for it. One row per (session, prompt, skill): a skill run twice in one
 -- prompt must not claim the same requests twice (#23). The version is stdtel's —

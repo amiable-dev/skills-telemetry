@@ -133,6 +133,11 @@ from the one skill that stdtel saw run in the same prompt and that Claude Code d
 it `attribution_source = 'derived'`. With more than one candidate it stays `"third-party"`. Say which
 `attribution_source` a figure includes.
 
+For spend by scope, read **`llm_request_scope`**: one row per request, with the scope its prompt's
+stdtel turn ran under (ADR-016 decision 3). `scope_state` keeps four cases apart: `scoped`, `unscoped`
+(the turn declared none), `several` (the turns named more than one, so none is guessed) and `unjoined`
+(no stdtel turn has the prompt id). The operational dashboard's "Spend by scope" panel reads it.
+
 Then open Grafana at :3000 — the scorecard dashboard is provisioned.
 
 ## The verification ladder

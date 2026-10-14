@@ -7,6 +7,17 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **"Skills invoked" counts skills typed as `/name`** (ADR-016 decision 3, #159). It now reads Claude
+  Code's `skill_activated` events, which fire once per activation whether the skill was typed
+  (`user-slash`), chosen by Claude (`claude-proactive`) or loaded by another skill (`nested-skill`).
+  - The panel used to count Skill tool calls, and a typed skill makes none. Over six days, 30 of 46
+    activations were typed: the panel showed 16.
+  - It now breaks down by how the skill was invoked. Names no longer need the detailed view.
+- **New "Spend by scope" panel**, from the warehouse view `llm_request_scope` (ADR-016 decision 3).
+  - Each Claude Code request is joined to its stdtel turn by prompt id. Requests whose prompt joins no
+    turn get their own row, never folded into "(no scope)".
+  - Each row shows its share of the spend and `data_through`, the warehouse's age.
+  - A prompt whose turns name two scopes is not guessed.
 - **A skill that ran once now counts on the dashboards** (ADR-016 decision 1, #158). Before this, a
   series' first occurrence was invisible to `rate()` and `increase()`, so most skills read as never
   run.
