@@ -31,7 +31,7 @@ def build_provider(resource_attrs: dict, exporter: SpanExporter | None = None) -
     """Provider for one hook process.
 
     `service.instance.id` is pinned deliberately. Left unset the SDK generates a
-    UUID per process, and prometheusremotewrite maps it to the `instance` label —
+    UUID per process, and Prometheus maps it to the `instance` label —
     so every hook opened a new time series, each counter reached 1 and stopped,
     and rate() was structurally zero (#42). Anything in resource_attrs still
     wins, for fleets that set their own.

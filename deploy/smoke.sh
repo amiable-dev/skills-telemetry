@@ -15,8 +15,8 @@ PG=${PG_CONTAINER:-deploy-postgres-1}
 pass=0; fail=0
 
 # Several hops are eventually-consistent: Tempo needs ~20s to accept traffic,
-# and span metrics must flush through the connector, remote write and a scrape
-# before they are queryable. Checking once makes a cold start look broken, and a
+# and span metrics must flush through the connector and Prometheus's OTLP
+# receiver before they are queryable. Checking once makes a cold start look broken, and a
 # verification tool that cries wolf gets ignored. Retry, then report.
 retry() {   # retry <attempts> <delay> <command...>
     attempts=$1; delay=$2; shift 2
@@ -101,7 +101,7 @@ have_metrics() {
         | grep -o '"metric"' | wc -l | tr -d ' ')
     [ "${series:-0}" -gt 0 ]
 }
-# the span emitted above must cross the connector, remote write and a scrape
+# the span emitted above must cross the connector and Prometheus's OTLP receiver
 retry 12 5 have_metrics && ok "$series span-metric series" \
   || bad "no span metrics after 60s" "check otelcol_exporter_send_failed_metric_points at :8888, and that the spanmetrics connector is in the traces pipeline"
 

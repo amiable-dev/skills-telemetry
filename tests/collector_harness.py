@@ -18,8 +18,11 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = "otel/opentelemetry-collector-contrib:0.118.0"
+#: The image compose ships, so the privacy and naming tests run on what is deployed.
+IMAGE = yaml.safe_load((ROOT / "deploy" / "docker-compose.yml").read_text())["services"]["otel-collector"]["image"]
 
 DEBUG_EVERYWHERE = """
 exporters:

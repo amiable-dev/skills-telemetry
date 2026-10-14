@@ -79,7 +79,7 @@ Reaching Grafana from a phone or another machine is the usual reason to want it.
 |---|---|---|---|
 | Grafana | http://localhost:3000 | **none — anonymous admin** | Prometheus and Tempo are already provisioned as datasources; do not add them |
 | Tempo | http://localhost:3200 | none | `/ready`, `/api/search`, `/api/traces/{id}` |
-| Prometheus | http://localhost:9090 | none | span metrics arrive by remote write |
+| Prometheus | http://localhost:9090 | none | span metrics arrive over its OTLP receiver, with a zero written at each series' start so a first occurrence counts (ADR-016) |
 | Loki | http://localhost:11010 | none | harness-native events (ADR-014), including Claude Code's per-request cost and skill attribution. Host port is this project's berth extra `loki`; inside the stack it is `loki:3100`. Native *metrics* are dropped at the collector on purpose |
 | Collector (OTLP) | http://localhost:4318 | none | gRPC on 4317; point `STDTEL_OTLP_ENDPOINT` here |
 | Collector (metrics) | http://localhost:8888/metrics | none | the collector's own counters — the fastest way to see whether it received anything |
@@ -149,7 +149,7 @@ and what it means when it fails:
 | 4 | collector received | `otelcol_receiver_accepted_spans` > 0 | the exporter never reached it. Check `STDTEL_OTLP_ENDPOINT` — **`OTEL_*` is scrubbed from hook subprocesses**, so the OTel variable cannot configure this |
 | 5 | collector exported | `otelcol_exporter_send_failed_spans` == 0 | Tempo unreachable *from inside* the compose network |
 | 6 | Tempo searchable | a search returns a trace | ingestion lag, or a missing time range — see below |
-| 7 | Prometheus scraped | `traces_span_metrics_calls_total` has series | spanmetrics or remote-write misconfigured, or the scrape interval has not elapsed |
+| 7 | Prometheus scraped | `traces_span_metrics_calls_total` has series | spanmetrics misconfigured, or the collector's `otlphttp/prometheus` export failing (`otelcol_exporter_send_failed_metric_points` at :8888) |
 | 8 | Postgres schema | `skill_invocation` has columns | the init script ran on an existing volume — see resetting |
 
 The counters at hop 4 are the single most useful thing here. `otelcol_receiver_accepted_spans` tells

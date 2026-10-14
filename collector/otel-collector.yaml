@@ -154,8 +154,8 @@ processors:
           - delete_key(attributes, "user.email")
           - delete_key(attributes, "user.id")
 
-  # Defence in depth for #42. prometheusremotewrite maps service.instance.id to
-  # the `instance` label, so any producer that leaves it generated opens a new
+  # Defence in depth for #42. Prometheus maps service.instance.id to the
+  # `instance` label (over remote write before ADR-016, over OTLP now), so any producer that leaves it generated opens a new
   # series per process — a counter that reaches 1 and stops, and a rate() that is
   # structurally zero. stdtel pins it now; Copilot's native SDK does not, and we
   # do not control that. Stripped on the metrics pipeline only: traces keep it,
@@ -232,8 +232,11 @@ exporters:
   otlp/tempo:
     endpoint: tempo:4317
     tls: { insecure: true }
-  prometheusremotewrite:
-    endpoint: http://prometheus:9090/api/v1/write
+  # ADR-016 decision 1: Prometheus's native OTLP receiver, which ingests start
+  # timestamps (remote write 1.0 carries none). metrics_endpoint is set in full: a
+  # bare `endpoint` would have /v1/metrics appended. Default retry and queue.
+  otlphttp/prometheus:
+    metrics_endpoint: http://prometheus:9090/api/v1/otlp/v1/metrics
   debug: { verbosity: basic }
 
 service:
@@ -256,7 +259,7 @@ service:
     metrics:
       receivers: [otlp, spanmetrics]
       processors: [memory_limiter, filter/native_metrics, attributes/drop_content, transform/identity, resource/collapse_instance, batch]
-      exporters: [prometheusremotewrite]
+      exporters: [otlphttp/prometheus]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, transform/tool_names, attributes/drop_content, transform/identity, batch]

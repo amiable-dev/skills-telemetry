@@ -73,7 +73,7 @@ def test_collector_exports_plugin_as_a_metric_dimension():
 
 
 def test_metrics_pipeline_drops_service_instance_id():
-    """prometheusremotewrite maps it to `instance`, and a per-process value there
+    """Prometheus maps it to `instance`, and a per-process value there
     gives every span its own series — a counter stuck at 1 and a rate of 0 (#42).
 
     stdtel pins the value now, but Copilot's native SDK does not and we do not

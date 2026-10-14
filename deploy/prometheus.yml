@@ -1,4 +1,8 @@
 global: { scrape_interval: 30s }
+# ADR-016 decision 1: OTLP names keep today's spelling (traces_span_metrics_calls_total,
+# std_skill_name). Labels are datapoint attributes, so no resource attribute is promoted.
+otlp:
+  translation_strategy: UnderscoreEscapingWithSuffixes
 scrape_configs:
   # Prometheus's own metrics, so the operational board can show its active
   # series (ADR-016 decision 2). Everything else arrives over OTLP.

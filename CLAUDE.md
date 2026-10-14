@@ -92,7 +92,9 @@ was rejected and what the decision costs, which is what you need before re-litig
 - **[ADR-016](docs/adrs/016-counting-rare-events.md)** — a counter's first appearance is invisible to
   `rate()`/`increase()`, and stdtel's events are rare. Prometheus 3.15 (pinned by digest) receives
   metrics over OTLP with `created-timestamp-zero-ingestion`, which was measured to count a first
-  occurrence; remote write cannot. `std.scope.key` leaves the spanmetrics dimensions. Exact per-name
+  occurrence; remote write cannot. It also needs collector-contrib ≥ 0.125 (0.126.0 pinned), whose
+  spanmetrics keeps a start time per series; 0.118's per-resource start still read 0 (amendment,
+  #158). `std.scope.key` leaves the spanmetrics dimensions. Exact per-name
   counts read Loki or the warehouse, never `increase()`.
 - **[ADR-017](docs/adrs/017-a-local-health-page-beside-grafana.md)** — `stdtel-ui`, a berth-shaped
   local page beside Grafana. It shows what only the machine can see, from doctor's checks, and links

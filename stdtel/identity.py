@@ -2,7 +2,7 @@
 
 Every hook runs in its own process (ADR-003), so any identity the OpenTelemetry
 SDK *generates* is fresh each time. `service.instance.id` is the one that bites:
-the prometheusremotewrite exporter maps it to the `instance` label, so a
+Prometheus maps it to the `instance` label (over OTLP, as over remote write), so a
 generated one puts every span in a brand-new time series which receives exactly
 one increment and is then abandoned. `rate()` needs two points in the same
 series; it got one, so three panels of the operational dashboard read zero at
