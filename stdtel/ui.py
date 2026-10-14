@@ -106,7 +106,9 @@ def render(check: doctor.Check, values: dict[str, str], home: str | None = None)
 class Runner:
     """Runs each check at most once at a time, caches its result for a TTL, and gives
     up waiting on it after a timeout. A timed-out run keeps its slot until it ends,
-    so a hung check never piles up threads."""
+    so a hung check never piles up threads. Checks run on daemon threads: a hung one
+    must not hold the process open after Ctrl-C (ADR-017 decision 1), and the page
+    holds no state a cut-off check could lose."""
 
     def __init__(self, checks=None, clock=time.monotonic, ttl=None, timeout=None):
         self.checks = tuple(doctor.CHECKS if checks is None else checks)
@@ -116,7 +118,6 @@ class Runner:
         self._lock = threading.Lock()
         self._cache: dict[str, tuple[float, doctor.Check]] = {}
         self._inflight: dict[str, tuple[float, cf.Future]] = {}
-        self._pool = cf.ThreadPoolExecutor(max_workers=max(4, len(self.checks)), thread_name_prefix="stdtel-ui")
 
     def _run(self, fn) -> doctor.Check:
         name = _name(fn)
@@ -138,7 +139,10 @@ class Runner:
                 f.set_result(cached[1])
                 return cached[0], f
             if name not in self._inflight:
-                self._inflight[name] = (self.clock(), self._pool.submit(self._run, fn))
+                f = cf.Future()
+                threading.Thread(target=lambda: f.set_result(self._run(fn)), daemon=True,
+                                 name=f"stdtel-ui {name}").start()
+                self._inflight[name] = (self.clock(), f)
             return self._inflight[name]
 
     def results(self) -> list[doctor.Check]:
@@ -275,6 +279,10 @@ def main(argv: list[str] | None = None) -> int:
               f"berth who {port}", file=sys.stderr)
         return 1
     print(f"stdtel-ui: http://127.0.0.1:{port}/  (Ctrl-C to stop)", flush=True)
+    return run_until_interrupted(srv)
+
+
+def run_until_interrupted(srv: ThreadingHTTPServer) -> int:
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -50,7 +50,7 @@ def server():
     def start(checks=None, values_fn=lambda: {}):
         runner = ui.Runner(checks=checks or [check("alpha")])
         srv = ui.serve(0, runner, values_fn)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         made.append(srv)
         port = srv.server_address[1]
 
@@ -271,6 +271,40 @@ def test_a_hung_check_is_not_started_twice():
     runner.results()
     gate.set()
     assert len(runs) == 1
+
+
+CTRL_C = """
+import sys, time
+from stdtel import doctor, ui
+@doctor.named("hung")
+def hung():
+    time.sleep(120)
+    return doctor.Check("hung", "pass", "x")
+srv = ui.serve(0, ui.Runner(checks=[hung], timeout=lambda n: 0.2))
+print(srv.server_address[1], flush=True)
+sys.exit(ui.run_until_interrupted(srv))
+"""
+
+
+def test_ctrl_c_ends_it_even_while_a_check_is_hung():
+    """ADR-017 decision 1: Ctrl-C ends it. A check that never returns must not hold
+    the process open (live, #162: a pool worker kept it running after SIGINT)."""
+    import signal
+    import subprocess
+    import sys
+    proc = subprocess.Popen([sys.executable, "-c", CTRL_C], stdout=subprocess.PIPE, text=True,
+                            cwd=Path(__file__).resolve().parent.parent)
+    try:
+        port = int(proc.stdout.readline())
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        c.request("GET", "/api/checks", headers={"Host": f"127.0.0.1:{port}"})
+        assert "timed out" in c.getresponse().read().decode(), "the hung check is running"
+        c.close()
+        proc.send_signal(signal.SIGINT)
+        assert proc.wait(timeout=5) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
 
 
 def test_the_page_shows_when_each_result_was_observed(server):
