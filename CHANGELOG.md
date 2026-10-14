@@ -7,6 +7,21 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **A skill that ran once now counts on the dashboards** (ADR-016 decision 1, #158). Before this, a
+  series' first occurrence was invisible to `rate()` and `increase()`, so most skills read as never
+  run.
+  - Prometheus is now 3.15.0 and receives metrics on its own OTLP endpoint with
+    `created-timestamp-zero-ingestion`, which writes a zero at each series' start.
+  - The collector is now contrib 0.126.0. That is the first published image whose spanmetrics
+    connector keeps a start time per series. 0.118 kept one per resource, so a series born later got
+    a zero hours before its first sample, outside any recent window. Prometheus 3.15 alone was
+    measured to still read 0.
+  - Both images are pinned by digest. `prometheusremotewrite` is gone.
+  - `tests/test_counting_first_occurrences.py` runs the shipped images and configs through the W1
+    matrix: a first occurrence, three increments, a collector restart, the start, middle and end of
+    the window, a retried delayed batch, and every dashboard expression.
+  - **Restart the stack to apply it:** `make down && make up`. Data already in Prometheus keeps its
+    undercount.
 - **`std.scope.key` is no longer a metrics label, and metric series expire after a day** (ADR-016
   decision 2, #157). The key is a branch hash: bounded per branch, unbounded over time. Per-key
   figures read the warehouse; `std.scope.name` stays. Spanmetrics sets `metrics_expiration: 24h`.
