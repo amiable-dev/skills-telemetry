@@ -116,7 +116,7 @@ def _loki_up() -> bool:
 @pytest.mark.skipif(not _loki_up(), reason="Loki not running")
 @pytest.mark.parametrize("title,expr", [(p["title"], t["expr"]) for p, t in loki_targets(OPERATIONAL)])
 def test_every_loki_panel_query_runs(title, expr):
-    q = expr.replace("$__range", "3h").replace("$__auto", "5m").replace("$__interval", "5m")
+    q = expr.replace("$__range", "3h").replace("$__auto", "5m").replace("$__interval", "5m").replace("$session", ".*")
     url = "http://127.0.0.1:11010/loki/api/v1/query?" + urllib.parse.urlencode({"query": q, "time": int(time.time())})
     body = json.loads(urllib.request.urlopen(url, timeout=10).read())
     assert body["status"] == "success", (title, body)

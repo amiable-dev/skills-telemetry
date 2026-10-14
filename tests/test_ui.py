@@ -311,7 +311,7 @@ def test_the_page_shows_when_each_result_was_observed(server):
     _port, req = server()
     _r, body = req(path="/api/checks")
     (c,) = json.loads(body)["checks"]
-    assert set(c) == {"name", "outcome", "observed", "remedy", "observed_at"}
+    assert set(c) == {"name", "outcome", "observed", "remedy", "observed_at", "links"}
 
 
 # --- what is rendered -----------------------------------------------------------------------------------

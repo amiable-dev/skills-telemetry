@@ -69,6 +69,7 @@ td.age { color:var(--dim); font-size:11px; white-space:nowrap; text-align:right;
 tr.r-pass td { opacity:.7; }
 .empty, .error { padding:24px 16px; color:var(--dim); }
 .error { color:var(--fail); }
+a.link { color:var(--link); font-size:11px; }
 footer { padding:12px 16px; color:var(--dim); font-size:10px; border-top:1px solid var(--line); }
 footer a { color:var(--link); }
 </style>
@@ -143,8 +144,14 @@ function draw() {
     const tr = el("tr", `r-${c.outcome}`);
     const st = el("td"); st.append(el("span", `state s-${c.outcome}`, c.outcome));
     const at = el("td", "age", age(c.observed_at)); at.title = c.observed_at;
-    tr.append(st, el("td", "name", c.name), el("td", "observed", c.observed),
-              el("td", "remedy", c.outcome === "pass" ? "" : c.remedy), at);
+    const todo = el("td", "remedy", c.outcome === "pass" ? "" : c.remedy);
+    for (const l of c.links || []) {
+      if (!/^https?:\/\//.test(l.url)) continue;          // only http(s): never javascript: or data:
+      const a = el("a", "link", l.label);
+      a.href = l.url; a.target = "_blank"; a.rel = "noreferrer";
+      todo.append(document.createElement("br"), a);
+    }
+    tr.append(st, el("td", "name", c.name), el("td", "observed", c.observed), todo, at);
     rows.append(tr);
   }
   const attention = checks.filter((c) => c.outcome !== "pass").length;

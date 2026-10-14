@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from stdtel import doctor
+from stdtel.ui_links import links_for
 from stdtel.ui_page import PAGE
 
 HOST = "127.0.0.1"
@@ -98,7 +99,9 @@ def redact(text: str, values: dict[str, str], home: str | None = None) -> str:
 
 def render(check: doctor.Check, values: dict[str, str], home: str | None = None) -> dict:
     d = check.as_json()
-    return {k: redact(v, values, home) if isinstance(v, str) else v for k, v in d.items()}
+    out = {k: redact(v, values, home) if isinstance(v, str) else v for k, v in d.items()}
+    out["links"] = links_for(check)                     # ADR-017 decision 4; hrefs, not rendered text
+    return out
 
 
 # --- bounded, cached, coalesced execution ----------------------------------------------------------

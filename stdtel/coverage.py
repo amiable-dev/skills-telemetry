@@ -17,6 +17,7 @@ import os
 import re
 import time
 import urllib.parse
+import datetime as dt
 import urllib.request
 from dataclasses import dataclass
 
@@ -204,6 +205,19 @@ def _name(x: Session) -> str:
     return f"{x.session_id} ({x.repo or 'unknown project'}, started {when})"
 
 
+def _subjects(xs: list[Session]) -> tuple:
+    out = []
+    for x in xs:
+        s = {"session": x.session_id}
+        if x.started_at:
+            try:
+                s["since"] = dt.datetime.fromtimestamp(x.started_at, dt.timezone.utc).isoformat(timespec="seconds")
+            except (OverflowError, OSError, ValueError):
+                pass
+        out.append(s)
+    return tuple(out)
+
+
 def judge(sessions: list[Session], observed: set[str], retention_s: float | None, now: float) -> Check:
     """Each unobserved session is judged by its anchor turn: none in reach is
     unknown (absence beyond what Loki keeps proves nothing), inside the grace
@@ -229,14 +243,15 @@ def judge(sessions: list[Session], observed: set[str], retention_s: float | None
     seen = len(pop) - len(missing) - len(pending) - len(unknown)
     summary = f"{seen} of {len(pop)} session(s) exporting"
     if missing:
-        return Check(NAME, FAIL, f"{summary}; not exporting: " + "; ".join(map(_name, missing)), REMEDY)
+        return Check(NAME, FAIL, f"{summary}; not exporting: " + "; ".join(map(_name, missing)), REMEDY,
+                     subjects=_subjects(missing))
     if pending:
         return Check(NAME, PENDING, f"{summary}; inside the {GRACE_S // 60}-minute grace period: "
-                     + "; ".join(map(_name, pending)), "check again in a few minutes")
+                     + "; ".join(map(_name, pending)), "check again in a few minutes", subjects=_subjects(pending))
     if unknown:
         return Check(NAME, UNKNOWN, f"{summary}; no completed turn within the last {r / 3600:g} h that Loki "
                      "can still hold, so absence proves nothing: " + "; ".join(map(_name, unknown)),
-                     "nothing to do unless it is still running; if it is, restart it")
+                     "nothing to do unless it is still running; if it is, restart it", subjects=_subjects(unknown))
     return Check(NAME, PASS, summary)
 
 

@@ -7,6 +7,15 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Added
+- **`stdtel-ui` links into Grafana** (ADR-017 W2, #163).
+  - Findings with an aggregate behind them link to the provisioned dashboard by uid.
+  - A session that `native coverage` names opens the operational board filtered to that session, from
+    its start. The board has a new `session` variable (a regex, default `.*`), and every Loki panel
+    filters on it.
+  - Links are tested against the provisioned uids and variables. A live test also checks that every
+    Loki panel parses with a linked session substituted. The first version used `re.escape`, whose
+    `\-` LogQL rejects.
+  - A check added to doctor appears on the page with no page code.
 - **`stdtel-ui`, a local health page beside Grafana** (ADR-017 W1, #162). It serves doctor's own checks
   on 127.0.0.1, by default on berth's `web` port (`11000` here), and polls them every 30 s. It never picks
   another port.
