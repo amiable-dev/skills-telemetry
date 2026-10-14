@@ -11,7 +11,7 @@ stdtel-onboard:
 stdtel-query:
   policy_ids: telemetry.manifest_valid
   standard_id: STD-TEL-001
-  version: 1.3.0
+  version: 1.4.0
 stdtel-setup:
   policy_ids: telemetry.manifest_valid
   standard_id: STD-TEL-001

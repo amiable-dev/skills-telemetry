@@ -3,7 +3,7 @@ name: stdtel-query
 description: Query standards-telemetry data to answer questions about skill cost, token usage, cache-hit rate, and delivery outcomes — tokens per merged PR, tokens per cycle-time hour, first-time policy pass rate. Use when asked what a skill cost, which skills are expensive, how a harness compares, or to pull numbers out of Tempo, Prometheus or the warehouse.
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
   standard_id: STD-TEL-001
   policy_ids: "telemetry.manifest_valid"
   owner: platform-observability
@@ -70,6 +70,7 @@ the views, never from `skill_invocation`, which records that a skill ran, not wh
 | `skill_activation_cost` | (session, prompt, skill, version) | per-skill cost and abandonment; joins to the version stdtel recorded |
 | `skill_request_cost` | (session, prompt, skill) | per-skill spend regardless of version |
 | `llm_request_attributed` | one model request | anything finer; `attribution_source` says `native` or `derived` |
+| `llm_request_scope` | one model request | spend by scope (ADR-010); `scope_state` is `scoped`, `unscoped`, `several` or `unjoined`. Report `unjoined` as its own figure, never as unscoped |
 
 Work reaches a change request (a PR, or a GitLab MR) through `activation_change_request`, the one
 place attribution is defined ([ADR-013](../../docs/adrs/013-join-work-to-change-requests.md)). Its

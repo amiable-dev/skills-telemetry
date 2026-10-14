@@ -164,7 +164,8 @@ the misreadings this data invites: `docs/insight-walkthroughs.md`.
   added together.
 - Live-verified on Claude Code 2.1.285, 2026-09-30:
   - `api_request` carries the real `skill_name` (`probe-echo`), while `skill_activated` redacts it
-    to `custom_skill`;
+    to `custom_skill` (on 2.1.296, 2026-10-14, `skill_activated` named bundled, plugin and project
+    skills; the dashboard keeps a "name withheld" row for `custom_skill`);
   - Loki flattens attribute dots to underscores (`skill.name` is stored as `skill_name`);
   - only `service_name` is an index label; the rest is structured metadata. Query with
     `X-Loki-Response-Encoding-Flags: categorize-labels`;
