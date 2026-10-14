@@ -6,6 +6,21 @@ version until this number changes — so bump it for anything a user would recei
 
 ## Unreleased
 
+### Added
+- **`stdtel-ui`, a local health page beside Grafana** (ADR-017 W1, #162). It serves doctor's own checks
+  on 127.0.0.1, by default on berth's `web` port (`11000` here), and polls them every 30 s. It never picks
+  another port.
+  - **Security, following berth's rules:**
+    - GET and HEAD only, with a per-response CSP (`frame-ancestors 'none'`);
+    - the Host header must be `127.0.0.1:<port>` or `localhost:<port>`, or the request gets 421, which
+      defends against DNS rebinding;
+    - its one JSON endpoint refuses cross-site requests.
+  - **Checks:** each runs under its own timeout, is cached for 15 s or 60 s, and concurrent requests
+    share one run. A slow or broken check shows as `unknown` while the rest render.
+  - **What it renders:** text only. Home paths show as `~`. A setting's value renders as its name, for
+    example `$STDTEL_OTLP_ENDPOINT`.
+  - The page follows berth's design pack.
+
 ### Changed
 - **A tested rollback for the metrics path** (ADR-016 W5, #161).
   - `STDTEL_METRICS_OVERLAY=overlay-remote-write.yaml` moves the collector's metrics back to remote
