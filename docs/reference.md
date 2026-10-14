@@ -241,6 +241,34 @@ happening**. A branch renamed tomorrow does not retroactively attribute today's 
 
 ---
 
+## `stdtel-ui`
+
+A local health page beside Grafana (ADR-017). It shows the same checks as `stdtel-doctor --json`, run on
+this machine, and polls them every 30 s. Aggregates stay in Grafana, and the page links there.
+
+```
+stdtel-ui [--port N]
+```
+
+- **Port.** `--port`, else `STDTEL_UI_PORT`, else berth's `WEB_PORT`. In this repository that is
+  `11000`: `eval "$(berth env --shell)"` exports it. Another port is never picked. If the port is held,
+  it exits and names `berth who <port>`.
+- **Binding.** It binds `127.0.0.1` only. The page answers only to `Host: 127.0.0.1:<port>` or
+  `localhost:<port>`; anything else gets `421`, the defence against DNS rebinding.
+- **Requests.** It serves GET and HEAD only. The page is inlined in the package and served with a
+  per-response CSP (`frame-ancestors 'none'`). The JSON endpoint, `/api/checks`, refuses cross-site
+  requests.
+- **Checks.** Each check runs under its own timeout: 5 s for local files, 20 s for a store. Its result is
+  cached for 15 s or 60 s, and concurrent requests share one run. A check that times out or raises
+  shows as `unknown`, and the others still render. Each row shows when it was observed.
+- **What it never shows.** A path under your home directory renders as `~`. The value of a setting
+  never renders: the environment's `STDTEL_*`, `OTEL_*`, `CLAUDE_CODE_*` and `ANTHROPIC_*` values, and
+  the `env` blocks of Claude Code's settings files, are replaced by the setting's name (for example
+  `$STDTEL_OTLP_ENDPOINT`).
+- **Lifecycle.** A foreground process with no state of its own. Ctrl-C ends it.
+
+Exit: `0` after Ctrl-C · `1` the port is held · `2` no port given.
+
 ## `stdtel-statusline`
 
 A status bar line carrying the data-quality faults you can still fix. Wired via the `statusLine`
@@ -396,6 +424,8 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_SPOOL` | unset | hooks | `1` writes spans to `~/.stdtel/spool/` instead of exporting inline; `stdtel-export` sends them |
 | `STDTEL_SPOOL_MAX` | `50000` | spool | records kept before the oldest are dropped; the drop count is reported, never silent |
 | `STDTEL_SPOOL_DIR` | `~/.stdtel/spool` | spool | where spooled spans are written |
+| `STDTEL_UI_PORT` | unset | `stdtel-ui` | port for the health page; `--port` wins, and berth's `WEB_PORT` is used when this is unset |
+| `WEB_PORT` | unset | `stdtel-ui` | berth's `web` port for this project (`berth env --shell` exports it); the last fallback for the health page's port |
 | `STDTEL_STATUSLINE` | unset | statusline | `off`/`0`/`false`/`no` hides the status line without disabling telemetry |
 | `STDTEL_DISABLED` | unset | hooks | `1`/`true`/`yes`/`on` disables telemetry entirely; checked before the payload is read |
 | `STDTEL_STATE_DIR` | `~/.stdtel/sessions` | state | per-session state between hook processes |
