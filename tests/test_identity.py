@@ -56,7 +56,7 @@ def test_the_machine_and_the_developer_are_different_values():
 
 
 def test_the_provider_pins_service_instance_id():
-    """Unset, the SDK generates a UUID per process, which prometheusremotewrite
+    """Unset, the SDK generates a UUID per process, which Prometheus
     maps to the `instance` label — one new series per hook, forever."""
     provider = build_provider({"std.harness": "claude-code"})
     attrs = provider.resource.attributes

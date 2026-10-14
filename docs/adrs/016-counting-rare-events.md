@@ -149,7 +149,7 @@ shipped images and configs. Each probe series is born after the collector has ru
 
 | collector | Prometheus | first occurrence `increase()` | first two samples |
 |---|---|---|---|
-| 0.118.0 | 3.2.0, remote write | 0 | none |
+| 0.118.0 | 3.2.0, remote write | 0 | not measured (remote write 1.0 carries no start time) |
 | 0.118.0 | 3.15.0, OTLP + start-timestamp ingestion | 0 | `1, 1`: the zero was written > 40 s earlier, outside the window |
 | 0.126.0 | 3.15.0, OTLP + start-timestamp ingestion | > 0, in all 20 cases | `0, 1`, under 10 s apart |
 
@@ -167,6 +167,9 @@ From 0.125 the connector keeps a start time per series: `GetOrCreate(key, …, s
 **Decision 1 now also requires:**
 - **Collector:** `otel/opentelemetry-collector-contrib:0.126.0`, pinned by digest in compose. Both test
   harnesses read the image from compose, so the privacy tests and the W1 matrix run on what ships.
+- **The images are pinned by multi-arch index digest** (six platforms each, checked on Docker Hub), so the
+  amd64 CI runner and an arm64 laptop pull the same release. The W1 matrix runs wherever docker is present,
+  including CI on `ubuntu-latest`. Without docker it skips, like the privacy tests.
 - **The collector version is now load-bearing.** A downgrade below 0.125 silently restores the undercount.
   The W1 test fails on it, which the 0.118 row above shows.
 - **No out-of-order window is needed.** A retried batch, delivered after Prometheus has accepted later

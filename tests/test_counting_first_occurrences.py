@@ -83,8 +83,10 @@ def test_a_first_occurrence_anywhere_in_the_window_is_counted(s, position):
     """position: where in the window the first occurrence falls (0 = its start, 1 = its end)."""
     name = probe(f"pos{int(position * 10)}")
     s.activation("skill", name)
-    seen = s.wait_for_series(calls(name))
-    at = seen + (1 - position) * WINDOW
+    s.wait_for_series(calls(name))
+    # anchored on the data, not the wall clock: the zero is at the series' start time
+    t0 = float(s.query(f"{calls(name)}[{WINDOW}s]")["result"][0]["values"][0][0])
+    at = t0 + (1 - position) * WINDOW
     time.sleep(max(0.0, at - time.time()) + 1)
     assert (s.value(increase(name), at=at) or 0) > 0, f"missed at {position:.0%} through the window"
 
