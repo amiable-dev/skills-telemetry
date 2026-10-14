@@ -60,7 +60,9 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
    - **Image:** `prom/prometheus:v3.15.0`, pinned by digest in compose. Every upgrade is gated on the
      test in work item W1.
    - **Flags:** `--web.enable-otlp-receiver` and `--enable-feature=created-timestamp-zero-ingestion`,
-     beside the existing ones.
+     beside the existing ones. *(#161: `--web.enable-remote-write-receiver` also stays on, so the W5
+     fallback is one variable. It is the same exposure class as the OTLP write path, and both bind to
+     `STDTEL_BIND`.)*
    - **Prometheus config:** `otlp.translation_strategy: UnderscoreEscapingWithSuffixes`, which keeps
      today's names (`traces_span_metrics_calls_total`, `std_skill_name`). Today's labels are datapoint
      attributes (spanmetrics dimensions), not resource attributes, so they need no promotion and no
@@ -69,7 +71,8 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
    - **Collector:** the metrics pipeline exports `otlphttp` with
      `metrics_endpoint: http://prometheus:9090/api/v1/otlp/v1/metrics`. That is set in full, because
      the exporter appends `/v1/metrics` to a bare `endpoint`. It keeps the collector's default retry
-     and queue. `prometheusremotewrite` is removed.
+     and queue. `prometheusremotewrite` is removed from the base config. *(#161: it returns only in
+     `collector/overlay-remote-write.yaml`, the W5 fallback.)*
    - **Out-of-order:** the backfilled zero at the start time must be accepted, and the real-image test
      asserts it is. `tsdb.out_of_order_time_window` is set only if that test needs it.
 2. **`std.scope.key` leaves the spanmetrics dimensions, and the remaining cardinality is bounded.**
@@ -119,6 +122,10 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
 - **W5. Rollback.** If W1's test fails on a future upgrade, the stack stays on the last passing digest.
   - If OTLP ingestion has to be abandoned, the collector reverts to `prometheusremotewrite`, and every
     rate panel carries a description stating its first-occurrence undercount.
+    *(Corrected 2026-10-14, #161: measured, only the duration panels undercount on the fallback. The
+    collector starts each new `calls_total` series at 0 itself, so count panels count a first occurrence
+    on either path; see the table in the amendment. Each rate panel's description says which of the two
+    it is.)*
   - Exact counts then come only from the per-event tables in decision 3.
   - Nothing claims a threshold or query trick restores a first occurrence. None can.
 
@@ -137,8 +144,9 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
 - **`increase()` extrapolates.** A single event over a window can read 1.2 rather than 1. Panels that
   need exact counts in a range use the per-event stores (decision 3), not `increase()`.
 - **Data already in Prometheus keeps its undercount.** Nothing is backfilled.
-- **Remote write is no longer used.** The collector at 0.118 sent remote write 1.0, which has no start
-  timestamps. Since #158 metrics go over OTLP, so remote write 2.0 is moot here.
+- **Remote write 1.0 is the W5 fallback (#161), not the default.** It carries no start time, so on the
+  fallback the duration histograms undercount a first occurrence. Since #158 the default path is OTLP,
+  so remote write 2.0 is moot here.
 - **One owner.** This is a single-maintainer project. The maintainer owns tracking the experimental flag
   upstream, and the W1 test is what makes a change visible without anyone remembering to look.
 
