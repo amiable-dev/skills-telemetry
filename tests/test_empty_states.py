@@ -21,7 +21,10 @@ from tests.collector_harness import docker_available
 
 ROOT = Path(__file__).resolve().parent.parent
 BOARDS = sorted((ROOT / "deploy" / "grafana" / "provisioning" / "dashboards").glob("*.json"))
-ALARM = {"red", "dark-red", "semi-dark-red", "light-red", "orange", "dark-orange", "#f2495c", "#e02f44"}
+#: Grafana's warning and failure colours. A spend total in either reads as something wrong.
+ALARM = {"red", "dark-red", "semi-dark-red", "light-red", "super-light-red", "orange", "dark-orange",
+         "semi-dark-orange", "light-orange", "yellow", "dark-yellow", "semi-dark-yellow", "light-yellow",
+         "#f2495c", "#e02f44", "#ff9830", "#fade2a"}
 
 
 def panels():
@@ -45,7 +48,9 @@ def _id(item):
 def test_every_panel_says_what_empty_means(item):
     _board, p = item
     no_value = p.get("fieldConfig", {}).get("defaults", {}).get("noValue") or ""
-    assert len(no_value) > 10 and no_value.lower() != "no data", f"{p['title']} shows only 'No data'"
+    # a string check (ADR-007): it proves the text is specific, not that it is true
+    assert len(no_value) > 10 and not no_value.lower().startswith("no data"), \
+        f"{p['title']} shows only 'No data'"
 
 
 @pytest.mark.parametrize("item", [i for i in ALL if i[1]["type"] == "timeseries"], ids=_id)
