@@ -7,6 +7,16 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **Empty dashboard panels say what is empty, and nothing is coloured as an alarm by default**
+  (ADR-016 decision 4, #160). This applies to both dashboards.
+  - "Error rate by skill" reads 0 for a skill with no errors. It used to show nothing, because the
+    error series does not exist until an error happens. Now the numerator falls back to zero.
+  - The spend and request stats no longer turn red above 80. They had no thresholds, so Grafana's
+    default applied.
+  - Every timeseries legend names its series, such as the skill or the kind, not the expression.
+  - Every panel's empty state says what is missing and, where it helps, what to check.
+  - `tests/test_empty_states.py` enforces each rule on every panel. The error-rate case runs on the
+    shipped images.
 - **"Skills invoked" counts skills typed as `/name`** (ADR-016 decision 3, #159). It now reads Claude
   Code's `skill_activated` events, which fire once per activation whether the skill was typed
   (`user-slash`), chosen by Claude (`claude-proactive`) or loaded by another skill (`nested-skill`).

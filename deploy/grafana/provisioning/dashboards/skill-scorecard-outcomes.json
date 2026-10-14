@@ -1,7 +1,7 @@
 {
   "uid": "stdtel-scorecard",
   "title": "Skill scorecard",
-  "description": "Outcome metrics from the warehouse. Operational signals are on 'Skill telemetry'. Below 30 merged PRs per arm no comparison is supportable \u2014 see docs/evaluation-power.md.",
+  "description": "Outcome metrics from the warehouse. Operational signals are on 'Skill telemetry'. Below 30 merged PRs per arm no comparison is supportable — see docs/evaluation-power.md.",
   "tags": [
     "stdtel"
   ],
@@ -16,8 +16,8 @@
   "panels": [
     {
       "id": 1,
-      "title": "Skill scorecard \u2014 pass rate with vs without, and the recommended action",
-      "description": "The primary metric. recommended_action is 'insufficient-data' whenever an arm is below 30 merged PRs or has no outcome data at all \u2014 that is a refusal, not a verdict.",
+      "title": "Skill scorecard — pass rate with vs without, and the recommended action",
+      "description": "The primary metric. recommended_action is 'insufficient-data' whenever an arm is below 30 merged PRs or has no outcome data at all — that is a refusal, not a verdict.",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -37,11 +37,16 @@
             "uid": "Warehouse"
           },
           "format": "table",
-          "rawSql": "-- Weekly skill scorecard (design \u00a74.5). Parameters: $__timeFrom(), $__timeTo()\nWITH inv AS (\n  SELECT * FROM skill_invocation WHERE started_at >= $__timeFrom() AND started_at < $__timeTo()\n),\n-- first-time policy pass for each change request/policy the skill is coupled with\nfirst_run AS (\n  SELECT cr_id, policy_id, passed FROM policy_result WHERE run_seq = 1\n),\n-- ADR-013: the change request each skill activation's work became. The with-arm\n-- needs commit evidence (`branch+commit`, or `commit` alone); a skill linked to a\n-- change request by branch alone is in NEITHER arm (skill_uncertain), never\n-- recruited into the without-arm \u2014 ADR-002's \"unknown, never none\", applied to\n-- the weaker join.\nattributed AS (\n  SELECT v.cr_id, v.method, i.skill_name, i.skill_version, i.harness\n  FROM inv i\n  JOIN activation_change_request v ON v.span_id = i.span_id\n  JOIN change_request c ON c.cr_id = v.cr_id AND c.state = 'merged'\n),\npr_skill AS (   -- merged change requests the skill demonstrably contributed to\n  SELECT DISTINCT cr_id AS pr_id, skill_name, skill_version, harness\n  FROM attributed WHERE method IN ('branch+commit', 'commit')\n),\nskill_uncertain AS (   -- linked by branch only: excluded from both arms\n  SELECT DISTINCT a.cr_id AS pr_id, a.skill_name\n  FROM attributed a\n  WHERE a.method = 'branch'\n    AND NOT EXISTS (SELECT 1 FROM pr_skill p WHERE p.pr_id = a.cr_id AND p.skill_name = a.skill_name)\n),\n-- the policies each skill is accountable for, one row per (skill, version, policy)\nskill_policy AS (\n  SELECT DISTINCT skill_name, skill_version, unnest(policy_ids) AS policy_id FROM inv\n),\n-- A PR passes first time when EVERY policy the skill is accountable for passed on\n-- run_seq = 1. Aggregating to one row per PR first is the whole point: the metric\n-- is \"first-time pass rate on the PR\", so the PR is the unit. Averaging over the\n-- join directly counted each PR once per invocation and reported n_with = 3192\n-- against 120 merged PRs (#23).\npr_pass_with AS (\n  SELECT ps.skill_name, ps.skill_version, ps.harness, ps.pr_id,\n         MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed\n  FROM pr_skill ps\n  JOIN skill_policy sp\n    ON sp.skill_name = ps.skill_name AND sp.skill_version = ps.skill_version\n  JOIN first_run fr\n    ON fr.cr_id = ps.pr_id AND fr.policy_id = sp.policy_id\n  GROUP BY 1,2,3,4\n),\npass_with AS (\n  SELECT skill_name, skill_version, harness,\n         AVG(pr_passed::numeric) AS first_pass_rate_with,\n         COUNT(*) AS n_with                      -- PRs, never invocations\n  FROM pr_pass_with GROUP BY 1,2,3\n),\n-- the same measure over merged change requests in the window that did NOT use\n-- the skill \u2014 excluding those linked to it by branch alone, which are unknown\npr_pass_without AS (\n  SELECT sp.skill_name, c.cr_id AS pr_id,\n         MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed\n  FROM skill_policy sp\n  JOIN first_run fr ON fr.policy_id = sp.policy_id\n  JOIN change_request c ON c.cr_id = fr.cr_id AND c.state = 'merged'\n  WHERE c.opened_at >= $__timeFrom() AND c.opened_at < $__timeTo()\n    AND NOT EXISTS (SELECT 1 FROM pr_skill ps WHERE ps.pr_id = c.cr_id AND ps.skill_name = sp.skill_name)\n    AND NOT EXISTS (SELECT 1 FROM skill_uncertain su WHERE su.pr_id = c.cr_id AND su.skill_name = sp.skill_name)\n  GROUP BY 1,2\n),\npass_without AS (\n  SELECT skill_name, AVG(pr_passed::numeric) AS first_pass_rate_without,\n         COUNT(*) AS n_without                   -- PRs, never invocations\n  FROM pr_pass_without GROUP BY 1\n),\n-- #117: what the skill cost, from the harness's own requests named for it. One\n-- row per (session, prompt, skill, version) in skill_activation_cost, so a skill\n-- run twice in a prompt is not charged twice. `abandoned` is NULL where the\n-- prompt has no native record, and those prompts are counted, never averaged in.\ncost AS (\n  SELECT skill_name, skill_version, harness,\n         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tokens)  AS p50_tokens,\n         SUM(tokens)                                          AS total_tokens,\n         SUM(cost_usd)                                        AS total_cost_usd,\n         SUM(requests_derived)                                AS requests_derived,\n         AVG(CASE WHEN abandoned THEN 1 WHEN NOT abandoned THEN 0 END) AS abandonment_rate,\n         COUNT(*) FILTER (WHERE abandoned IS NULL)            AS unmeasured_activations\n  -- NULL only where nothing was measured; one missing component must not drop a row\n  FROM (SELECT *, CASE WHEN requests > 0 THEN coalesce(input_tokens, 0) + coalesce(output_tokens, 0)\n                       + coalesce(cache_read_tokens, 0) + coalesce(cache_creation_tokens, 0) END AS tokens\n        FROM skill_activation_cost\n        WHERE started_at >= $__timeFrom() AND started_at < $__timeTo()) a\n  GROUP BY 1,2,3\n),\noverlap AS (   -- redundancy: co-invocation with other skills in the same session\n  SELECT a.skill_name, COUNT(DISTINCT b.skill_name) AS co_invoked_skills\n  FROM inv a JOIN inv b ON a.session_id = b.session_id AND a.skill_name <> b.skill_name\n  GROUP BY 1\n)\nSELECT\n  i.skill_name, i.skill_version, i.harness,\n  COUNT(*)                                            AS invocations,\n  COUNT(DISTINCT i.user_hash)                         AS distinct_users,\n  COUNT(DISTINCT i.session_id)                        AS sessions,\n  c.p50_tokens, c.total_tokens, c.total_cost_usd, c.requests_derived,\n  AVG(CASE WHEN i.is_error THEN 1 ELSE 0 END)         AS error_rate,\n  c.abandonment_rate, c.unmeasured_activations,\n  pw.first_pass_rate_with, pw.n_with,\n  pwo.first_pass_rate_without, pwo.n_without,\n  COALESCE(o.co_invoked_skills, 0)                    AS co_invoked_skills,\n  CASE\n    -- Insufficient data is checked FIRST and is not a verdict about the skill.\n    -- 30 merged PRs per arm is the floor from docs/evaluation-power.md; below\n    -- it no comparative claim is supportable, and 'keep' used to be returned\n    -- for a skill with no outcome data at all (#23).\n    WHEN pw.first_pass_rate_with IS NULL OR pwo.first_pass_rate_without IS NULL\n      THEN 'insufficient-data'\n    WHEN COALESCE(pw.n_with, 0) < 30 OR COALESCE(pwo.n_without, 0) < 30\n      THEN 'insufficient-data'\n    WHEN COUNT(*) = 0 THEN 'deprecate'\n    WHEN COUNT(DISTINCT i.user_hash) = 1 THEN 'review-single-user'\n    WHEN pw.first_pass_rate_with < pwo.first_pass_rate_without THEN 'refine'\n    WHEN COALESCE(o.co_invoked_skills, 0) >= 3 THEN 'review-merge'\n    ELSE 'keep'\n  END AS recommended_action\nFROM inv i\nLEFT JOIN pass_with pw ON pw.skill_name = i.skill_name AND pw.skill_version = i.skill_version AND pw.harness = i.harness\nLEFT JOIN pass_without pwo ON pwo.skill_name = i.skill_name\nLEFT JOIN overlap o ON o.skill_name = i.skill_name\nLEFT JOIN cost c ON c.skill_name = i.skill_name AND c.skill_version = i.skill_version AND c.harness = i.harness\nGROUP BY 1,2,3, pw.first_pass_rate_with, pw.n_with, pwo.first_pass_rate_without, pwo.n_without, o.co_invoked_skills,\n         c.p50_tokens, c.total_tokens, c.total_cost_usd, c.requests_derived, c.abandonment_rate,\n         c.unmeasured_activations\nORDER BY c.total_cost_usd DESC NULLS LAST, invocations DESC"
+          "rawSql": "-- Weekly skill scorecard (design §4.5). Parameters: $__timeFrom(), $__timeTo()\nWITH inv AS (\n  SELECT * FROM skill_invocation WHERE started_at >= $__timeFrom() AND started_at < $__timeTo()\n),\n-- first-time policy pass for each change request/policy the skill is coupled with\nfirst_run AS (\n  SELECT cr_id, policy_id, passed FROM policy_result WHERE run_seq = 1\n),\n-- ADR-013: the change request each skill activation's work became. The with-arm\n-- needs commit evidence (`branch+commit`, or `commit` alone); a skill linked to a\n-- change request by branch alone is in NEITHER arm (skill_uncertain), never\n-- recruited into the without-arm — ADR-002's \"unknown, never none\", applied to\n-- the weaker join.\nattributed AS (\n  SELECT v.cr_id, v.method, i.skill_name, i.skill_version, i.harness\n  FROM inv i\n  JOIN activation_change_request v ON v.span_id = i.span_id\n  JOIN change_request c ON c.cr_id = v.cr_id AND c.state = 'merged'\n),\npr_skill AS (   -- merged change requests the skill demonstrably contributed to\n  SELECT DISTINCT cr_id AS pr_id, skill_name, skill_version, harness\n  FROM attributed WHERE method IN ('branch+commit', 'commit')\n),\nskill_uncertain AS (   -- linked by branch only: excluded from both arms\n  SELECT DISTINCT a.cr_id AS pr_id, a.skill_name\n  FROM attributed a\n  WHERE a.method = 'branch'\n    AND NOT EXISTS (SELECT 1 FROM pr_skill p WHERE p.pr_id = a.cr_id AND p.skill_name = a.skill_name)\n),\n-- the policies each skill is accountable for, one row per (skill, version, policy)\nskill_policy AS (\n  SELECT DISTINCT skill_name, skill_version, unnest(policy_ids) AS policy_id FROM inv\n),\n-- A PR passes first time when EVERY policy the skill is accountable for passed on\n-- run_seq = 1. Aggregating to one row per PR first is the whole point: the metric\n-- is \"first-time pass rate on the PR\", so the PR is the unit. Averaging over the\n-- join directly counted each PR once per invocation and reported n_with = 3192\n-- against 120 merged PRs (#23).\npr_pass_with AS (\n  SELECT ps.skill_name, ps.skill_version, ps.harness, ps.pr_id,\n         MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed\n  FROM pr_skill ps\n  JOIN skill_policy sp\n    ON sp.skill_name = ps.skill_name AND sp.skill_version = ps.skill_version\n  JOIN first_run fr\n    ON fr.cr_id = ps.pr_id AND fr.policy_id = sp.policy_id\n  GROUP BY 1,2,3,4\n),\npass_with AS (\n  SELECT skill_name, skill_version, harness,\n         AVG(pr_passed::numeric) AS first_pass_rate_with,\n         COUNT(*) AS n_with                      -- PRs, never invocations\n  FROM pr_pass_with GROUP BY 1,2,3\n),\n-- the same measure over merged change requests in the window that did NOT use\n-- the skill — excluding those linked to it by branch alone, which are unknown\npr_pass_without AS (\n  SELECT sp.skill_name, c.cr_id AS pr_id,\n         MIN(CASE WHEN fr.passed THEN 1 ELSE 0 END) AS pr_passed\n  FROM skill_policy sp\n  JOIN first_run fr ON fr.policy_id = sp.policy_id\n  JOIN change_request c ON c.cr_id = fr.cr_id AND c.state = 'merged'\n  WHERE c.opened_at >= $__timeFrom() AND c.opened_at < $__timeTo()\n    AND NOT EXISTS (SELECT 1 FROM pr_skill ps WHERE ps.pr_id = c.cr_id AND ps.skill_name = sp.skill_name)\n    AND NOT EXISTS (SELECT 1 FROM skill_uncertain su WHERE su.pr_id = c.cr_id AND su.skill_name = sp.skill_name)\n  GROUP BY 1,2\n),\npass_without AS (\n  SELECT skill_name, AVG(pr_passed::numeric) AS first_pass_rate_without,\n         COUNT(*) AS n_without                   -- PRs, never invocations\n  FROM pr_pass_without GROUP BY 1\n),\n-- #117: what the skill cost, from the harness's own requests named for it. One\n-- row per (session, prompt, skill, version) in skill_activation_cost, so a skill\n-- run twice in a prompt is not charged twice. `abandoned` is NULL where the\n-- prompt has no native record, and those prompts are counted, never averaged in.\ncost AS (\n  SELECT skill_name, skill_version, harness,\n         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tokens)  AS p50_tokens,\n         SUM(tokens)                                          AS total_tokens,\n         SUM(cost_usd)                                        AS total_cost_usd,\n         SUM(requests_derived)                                AS requests_derived,\n         AVG(CASE WHEN abandoned THEN 1 WHEN NOT abandoned THEN 0 END) AS abandonment_rate,\n         COUNT(*) FILTER (WHERE abandoned IS NULL)            AS unmeasured_activations\n  -- NULL only where nothing was measured; one missing component must not drop a row\n  FROM (SELECT *, CASE WHEN requests > 0 THEN coalesce(input_tokens, 0) + coalesce(output_tokens, 0)\n                       + coalesce(cache_read_tokens, 0) + coalesce(cache_creation_tokens, 0) END AS tokens\n        FROM skill_activation_cost\n        WHERE started_at >= $__timeFrom() AND started_at < $__timeTo()) a\n  GROUP BY 1,2,3\n),\noverlap AS (   -- redundancy: co-invocation with other skills in the same session\n  SELECT a.skill_name, COUNT(DISTINCT b.skill_name) AS co_invoked_skills\n  FROM inv a JOIN inv b ON a.session_id = b.session_id AND a.skill_name <> b.skill_name\n  GROUP BY 1\n)\nSELECT\n  i.skill_name, i.skill_version, i.harness,\n  COUNT(*)                                            AS invocations,\n  COUNT(DISTINCT i.user_hash)                         AS distinct_users,\n  COUNT(DISTINCT i.session_id)                        AS sessions,\n  c.p50_tokens, c.total_tokens, c.total_cost_usd, c.requests_derived,\n  AVG(CASE WHEN i.is_error THEN 1 ELSE 0 END)         AS error_rate,\n  c.abandonment_rate, c.unmeasured_activations,\n  pw.first_pass_rate_with, pw.n_with,\n  pwo.first_pass_rate_without, pwo.n_without,\n  COALESCE(o.co_invoked_skills, 0)                    AS co_invoked_skills,\n  CASE\n    -- Insufficient data is checked FIRST and is not a verdict about the skill.\n    -- 30 merged PRs per arm is the floor from docs/evaluation-power.md; below\n    -- it no comparative claim is supportable, and 'keep' used to be returned\n    -- for a skill with no outcome data at all (#23).\n    WHEN pw.first_pass_rate_with IS NULL OR pwo.first_pass_rate_without IS NULL\n      THEN 'insufficient-data'\n    WHEN COALESCE(pw.n_with, 0) < 30 OR COALESCE(pwo.n_without, 0) < 30\n      THEN 'insufficient-data'\n    WHEN COUNT(*) = 0 THEN 'deprecate'\n    WHEN COUNT(DISTINCT i.user_hash) = 1 THEN 'review-single-user'\n    WHEN pw.first_pass_rate_with < pwo.first_pass_rate_without THEN 'refine'\n    WHEN COALESCE(o.co_invoked_skills, 0) >= 3 THEN 'review-merge'\n    ELSE 'keep'\n  END AS recommended_action\nFROM inv i\nLEFT JOIN pass_with pw ON pw.skill_name = i.skill_name AND pw.skill_version = i.skill_version AND pw.harness = i.harness\nLEFT JOIN pass_without pwo ON pwo.skill_name = i.skill_name\nLEFT JOIN overlap o ON o.skill_name = i.skill_name\nLEFT JOIN cost c ON c.skill_name = i.skill_name AND c.skill_version = i.skill_version AND c.harness = i.harness\nGROUP BY 1,2,3, pw.first_pass_rate_with, pw.n_with, pwo.first_pass_rate_without, pwo.n_without, o.co_invoked_skills,\n         c.p50_tokens, c.total_tokens, c.total_cost_usd, c.requests_derived, c.abandonment_rate,\n         c.unmeasured_activations\nORDER BY c.total_cost_usd DESC NULLS LAST, invocations DESC"
         }
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No skill activation in the warehouse for this range. Run stdtel-doctor --json: is warehouse freshness pass?"
+        }
       }
     },
     {
@@ -72,6 +77,11 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No merged change request with a ticket and a first-run policy result in the warehouse"
+        }
       }
     },
     {
@@ -102,11 +112,16 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No turn reached a merged change request with a ticket in the warehouse"
+        }
       }
     },
     {
       "id": 4,
-      "title": "Data quality \u2014 these bound every conclusion",
+      "title": "Data quality — these bound every conclusion",
       "description": "Both are fixable only while the work is happening: a branch renamed tomorrow does not retroactively attribute today's PRs. Unattributed rows are kept for cost and excluded from outcome analysis.",
       "type": "table",
       "datasource": {
@@ -132,6 +147,11 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Nothing loaded into the warehouse yet. Run stdtel-doctor --json"
+        }
       }
     },
     {
@@ -142,7 +162,7 @@
         "type": "grafana-postgresql-datasource",
         "uid": "Warehouse"
       },
-      "description": "ADR-009. Sub-agent cache reads are large by construction \u2014 the agent re-reads its parent's context on every request \u2014 so they are shown apart from everything else. `without_usage` is how many rows carried no token figures at all; a total over three observed rows is a different claim from one over three hundred.",
+      "description": "ADR-009. Sub-agent cache reads are large by construction — the agent re-reads its parent's context on every request — so they are shown apart from everything else. `without_usage` is how many rows carried no token figures at all; a total over three observed rows is a different claim from one over three hundred.",
       "gridPos": {
         "x": 0,
         "y": 18,
@@ -157,13 +177,18 @@
             "uid": "Warehouse"
           },
           "format": "table",
-          "rawSql": "-- Where the spend goes, by artefact. Kinds overlap deliberately: a sub-agent's\n-- tokens are inside the turn that spawned it. Compare the rows; never add them\n-- up. Skills carry no tokens of their own since #117 \u2014 their spend is the\n-- harness's requests, in the scorecard \u2014 so they are not listed here.\nSELECT kind,\n       count(*)                                   AS activations,\n       count(DISTINCT prompt_id) FILTER (WHERE kind = 'turn') AS turns,\n       count(*) FILTER (WHERE input_tokens IS NULL)           AS without_usage,\n       sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0)\n           + coalesce(cache_creation_tokens, 0))  AS tokens_excl_cache_read,\n       sum(coalesce(cache_read_tokens, 0))        AS cache_read_tokens\nFROM artefact_activation\nWHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND kind <> 'skill'\nGROUP BY kind\nORDER BY tokens_excl_cache_read DESC NULLS LAST;"
+          "rawSql": "-- Where the spend goes, by artefact. Kinds overlap deliberately: a sub-agent's\n-- tokens are inside the turn that spawned it. Compare the rows; never add them\n-- up. Skills carry no tokens of their own since #117 — their spend is the\n-- harness's requests, in the scorecard — so they are not listed here.\nSELECT kind,\n       count(*)                                   AS activations,\n       count(DISTINCT prompt_id) FILTER (WHERE kind = 'turn') AS turns,\n       count(*) FILTER (WHERE input_tokens IS NULL)           AS without_usage,\n       sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0)\n           + coalesce(cache_creation_tokens, 0))  AS tokens_excl_cache_read,\n       sum(coalesce(cache_read_tokens, 0))        AS cache_read_tokens\nFROM artefact_activation\nWHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND kind <> 'skill'\nGROUP BY kind\nORDER BY tokens_excl_cache_read DESC NULLS LAST;"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No activation in the warehouse for this range. Run stdtel-doctor --json"
+        }
+      }
     },
     {
       "id": 6,
-      "title": "Loader freshness \u2014 how old is everything above?",
+      "title": "Loader freshness — how old is everything above?",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -186,17 +211,22 @@
           "format": "table",
           "rawSql": "-- How stale is this dashboard? Spans reach Tempo when a hook fires; they reach\n-- this warehouse only when a loader runs. Tempo once held four days of spans\n-- Postgres had never seen, and every component reported success throughout.\nSELECT loader,\n       max(finished_at)                                        AS last_run,\n       round(extract(epoch FROM (now() - max(finished_at))) / 60) AS minutes_ago,\n       max(source_max_ts)                                      AS newest_row_loaded,\n       (SELECT count(*) FROM loader_run r2\n         WHERE r2.loader = loader_run.loader AND NOT r2.ok\n           AND r2.started_at > now() - interval '24 hours')    AS failures_24h\nFROM loader_run\nGROUP BY loader\nORDER BY loader;"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No loader has ever run against this warehouse. Install it: stdtel-install loader"
+        }
+      }
     },
     {
       "id": 7,
-      "title": "What a loop skill really cost \u2014 its own activations vs everything under it",
+      "title": "What a loop skill really cost — its own activations vs everything under it",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "Warehouse"
       },
-      "description": "ADR-010. A skill that drives work across many turns has an activation lasting seconds while the work it causes runs for hours, so its own row looks free. `self_tokens` is what its own activations carried; `inclusive_tokens` is everything recorded while its container was open. **self is inside inclusive \u2014 never add the columns.** This answers what was *incurred under* the artefact, never what it *caused*: everything in the window is included, an unrelated question typed mid-loop as well. The causal question stays the with/without arm at the top of this board. `declared_by = overlay` means somebody here asserted that unit on a third party's behalf, so it can be wrong or stale. Rows are iterations and are not equal work \u2014 read `turns` alongside them. Empty means no artefact declares `telemetry.scope`, which is the normal state and not a fault.",
+      "description": "ADR-010. A skill that drives work across many turns has an activation lasting seconds while the work it causes runs for hours, so its own row looks free. `self_tokens` is what its own activations carried; `inclusive_tokens` is everything recorded while its container was open. **self is inside inclusive — never add the columns.** This answers what was *incurred under* the artefact, never what it *caused*: everything in the window is included, an unrelated question typed mid-loop as well. The causal question stays the with/without arm at the top of this board. `declared_by = overlay` means somebody here asserted that unit on a third party's behalf, so it can be wrong or stale. Rows are iterations and are not equal work — read `turns` alongside them. Empty means no artefact declares `telemetry.scope`, which is the normal state and not a fault.",
       "gridPos": {
         "x": 0,
         "y": 26,
@@ -207,7 +237,8 @@
         "defaults": {
           "custom": {
             "align": "auto"
-          }
+          },
+          "noValue": "No scoped run in the warehouse for this range"
         },
         "overrides": []
       },
