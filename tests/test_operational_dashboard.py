@@ -192,6 +192,7 @@ def test_spend_by_scope_names_the_warehouse_age():
     p = _panel(SPEND_BY_SCOPE)
     sql = p["targets"][0]["rawSql"]
     assert "loader_run" in sql and "'load_requests'" in sql and "WHERE ok" in sql
+    assert "now() - w.data_through" in sql, "an age in hours, not only a timestamp"
     assert "stdtel-doctor" in p["description"] and "warehouse freshness" in p["description"]
 
 

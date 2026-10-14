@@ -148,4 +148,5 @@ def test_the_panel_query_runs_and_keeps_unjoined_apart(db):
     assert got["(prompt joins no stdtel turn)"]["spend_usd"] == Decimal("0.75")
     total = sum(r["share"] for r in got.values())
     assert abs(total - 1) < Decimal("0.01"), "shares of the spend in range add up to the whole"
-    assert all("data_through" in r for r in got.values()), "every row names the warehouse's age"
+    assert all("data_through" in r and "data_age_hours" in r for r in got.values()), \
+        "every row names the warehouse's age, not only a timestamp to subtract from"

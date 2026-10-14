@@ -86,6 +86,10 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
 3. **Per-name tables in a time range read stores that are complete per event, not rates.**
    - "Skills invoked", "MCP calls" and "Tool calls" already read Loki. "Skills invoked" adds Claude
      Code's `skill_activated` events, so skills typed as `/name` appear.
+     *(Corrected 2026-10-14, #159: it reads `skill_activated` **alone**. That event also fires once for
+     each Skill tool call, so adding it to the `tool_result` count would count those twice. Measured
+     over six days: 16 Skill tool calls matched 16 activations triggered `claude-proactive` or
+     `nested-skill`, and 30 typed activations made no tool call.)*
    - A new "Spend by scope" panel reads the warehouse, the only store that joins Claude Code's requests
      to stdtel's scope by `prompt_id` (ADR-014 decision 7). On 2026-10-09 that join put $228.16 of 72
      hours under `epic-loop` and $51.55 under no scope; no current panel can show that.
