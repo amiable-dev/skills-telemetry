@@ -11,10 +11,11 @@
 # See SECURITY.md.
 services:
   otel-collector:
-    # ADR-016 decision 1: 0.125 is the first spanmetrics connector to keep a start
-    # time per series (0.118 kept one per resource, so a series born later had a
-    # zero hours before its first sample). 0.124 and 0.125 were never published as
-    # images; 0.126.0 is the first. Pinned by digest; an upgrade is gated on
+    # ADR-016 decision 1: from 0.124 the spanmetrics connector keeps a start time
+    # per series (#35994) and starts each new calls series at 0 (#38537). 0.118 kept
+    # one start time per resource, so a series born later had a zero hours before its
+    # first sample. 0.124 and 0.125 were never published as images; 0.126.0 is the
+    # first. Pinned by digest; an upgrade is gated on
     # tests/test_counting_first_occurrences.py.
     image: otel/opentelemetry-collector-contrib:0.126.0@sha256:973747f78266a8ffec428417727e6b704559e9a30e4be8c1cca2899facd68689
     # A second --config is merged over the first. The default overlay is a no-op,
@@ -22,6 +23,9 @@ services:
     command:
       - "--config=/etc/otelcol/otel-collector.yaml"
       - "--config=/etc/otelcol/${STDTEL_COLLECTOR_OVERLAY:-overlay-none.yaml}"
+      # ADR-016 W5: the metrics rollback, in its own slot so it combines with
+      # Langfuse. See docs/local-stack.md, "Rolling back the metrics path".
+      - "--config=/etc/otelcol/${STDTEL_METRICS_OVERLAY:-overlay-none.yaml}"
     volumes: ["../collector:/etc/otelcol:ro"]
     env_file: [".env"]
     environment:
@@ -48,8 +52,11 @@ services:
   # tests/test_counting_first_occurrences.py.
   prometheus:
     image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    # The remote-write receiver stays on so the rollback (ADR-016 W5) is one
+    # variable. It adds no exposure the OTLP receiver does not already have: both
+    # accept writes, and both bind to STDTEL_BIND (loopback by default).
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-otlp-receiver",
-              "--enable-feature=created-timestamp-zero-ingestion"]
+              "--enable-feature=created-timestamp-zero-ingestion", "--web.enable-remote-write-receiver"]
     volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
     ports: ["${STDTEL_BIND:-127.0.0.1}:9090:9090"]
   grafana:

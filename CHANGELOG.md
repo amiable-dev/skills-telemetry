@@ -7,6 +7,21 @@ version until this number changes — so bump it for anything a user would recei
 ## Unreleased
 
 ### Changed
+- **A tested rollback for the metrics path** (ADR-016 W5, #161).
+  - `STDTEL_METRICS_OVERLAY=overlay-remote-write.yaml` moves the collector's metrics back to remote
+    write. It sits in its own `--config` slot, so it combines with Langfuse. Prometheus keeps its
+    remote-write receiver on, so this one variable is the whole switch.
+  - `docs/local-stack.md` has the new section "Rolling back the metrics path". It covers the
+    last-passing-digest rule, the collector floor and what the fallback costs.
+  - `tests/test_rollback.py` runs the fallback on the shipped images.
+- **The fallback was measured, and a correction came out of it.**
+  - Collector 0.124+ starts each new `calls_total` series at 0 itself (contrib #38537). Count panels
+    therefore count a first occurrence on either path. Only the duration panels undercount on the
+    fallback, and each rate panel's description says which of the two it is.
+  - The same measurement shows the Prometheus `created-timestamp-zero-ingestion` flag *is*
+    load-bearing, for the duration histograms. #158 had called it unneeded, because its tests read
+    only `calls_total`. The new test `test_a_first_duration_is_counted` fails without the flag.
+  - ADR-016's amendment now cites contrib 0.124 (#35994, #38537), not 0.125 (#38990).
 - **Empty dashboard panels say what is empty, and nothing is coloured as an alarm by default**
   (ADR-016 decision 4, #160). This applies to both dashboards.
   - "Error rate by skill" reads 0 for a skill with no errors. It used to show nothing, because the

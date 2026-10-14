@@ -8,8 +8,9 @@ That start time has to be the series' own. Collector-contrib 0.118 stamps one
 start time per resource, taken when the resource was first seen, so a series born
 later carries a start time that is hours old: the zero lands outside any recent
 window and the first occurrence reads 0 again (measured 2026-10-13: `probe-a` and
-`probe-b`, sent 8 s apart, got the same start time). From 0.125 the connector
-keeps a start time per series. Every case below sends its probe after the
+`probe-b`, sent 8 s apart, got the same start time). From 0.124 the connector
+keeps a start time per series (contrib #35994), and it starts each new calls
+series at 0 (#38537). Every case below sends its probe after the
 collector has been running for longer than the query window, which is the state
 a real collector is always in.
 
@@ -64,6 +65,20 @@ def test_a_first_occurrence_is_counted(s):
     s.wait_for_series(calls(name))
     time.sleep(3)
     assert (s.value(increase(name)) or 0) > 0, "a skill that ran once must not read as never run"
+
+
+def test_a_first_duration_is_counted(s):
+    """The duration histogram's first occurrence. The connector starts a new calls
+    series at 0 itself (contrib #38537), so `calls_total` counts on any path. It does
+    not do that for the histogram, so the histogram's zero is Prometheus's start-time
+    ingestion alone. Without the flag, or on the remote-write fallback, this reads 0
+    (measured 2026-10-14, #161). This is the test that makes the flag load-bearing."""
+    name = probe("duration")
+    s.activation("skill", name)
+    s.wait_for_series(f'traces_span_metrics_duration_milliseconds_count{{std_skill_name="{name}"}}')
+    time.sleep(3)
+    got = s.value(f'sum(increase(traces_span_metrics_duration_milliseconds_count{{std_skill_name="{name}"}}[{WINDOW}s]))')
+    assert (got or 0) > 0, "a skill's first duration must reach the p50 panels"
 
 
 def test_the_series_starts_at_zero_just_before_its_first_sample(s):
@@ -206,11 +221,11 @@ def test_the_harness_runs_what_compose_ships():
 
 
 def test_the_settings_decision_1_names_are_explicit():
-    """Two settings the behaviour tests cannot see on 3.15.0. Without the flag, 3.15.0
-    still wrote the zero over OTLP (measured 2026-10-14). The translation strategy
-    named is 3.15.0's default. Both are kept explicit so an upgrade that changes either
-    default does not change what ships: decision 1 names them, and these checks make
-    removing them a visible change, not a silent one."""
+    """The settings decision 1 names. The flag is also covered by behaviour: without
+    it the duration histogram's first occurrence reads 0
+    (test_a_first_duration_is_counted). The translation strategy named is 3.15.0's
+    default, so only this check sees it, and an upgrade that changes the default
+    cannot change what ships."""
     assert "--enable-feature=created-timestamp-zero-ingestion" in COMPOSE["prometheus"]["command"]
     assert "--web.enable-otlp-receiver" in COMPOSE["prometheus"]["command"]
     prom = yaml.safe_load((ROOT / "deploy" / "prometheus.yml").read_text())

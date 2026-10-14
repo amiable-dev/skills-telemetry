@@ -163,10 +163,21 @@ for every stdtel series, from when the collector first saw stdtel. On 2026-10-13
 sent 8 s apart, both carried the same start time. The 2026-10-09 measurement in the Context missed this
 because its sample set its own start time 90 s back.
 
-From 0.125 the connector keeps a start time per series: `GetOrCreate(key, …, startTimestamp, …)` in
-`connector/spanmetricsconnector`. This arrived in the same release as `aggregation_cardinality_limit`
-(open-telemetry/opentelemetry-collector-contrib#38990). Images for 0.124 and 0.125 were never published, so
-0.126.0 is the first image.
+From 0.124 the connector keeps a start time per series (open-telemetry/opentelemetry-collector-contrib#35994).
+Images for 0.124 and 0.125 were never published, so 0.126.0 is the first image. *(Corrected 2026-10-14,
+#161: this first cited 0.125 and #38990, from a source search. The release notes name #35994 in 0.124.)*
+
+**Also in 0.124, found in #161:** the connector starts each new `calls_total` series at 0 itself
+(#38537). Its first export carries the value 0 and its second carries 1 (debug exporter, 2026-10-14). So a
+first occurrence in `calls_total` is counted on *any* path that delivers both points. That includes
+Prometheus without the flag, and remote write. The duration histogram gets no such zero, so its first
+occurrence depends on Prometheus's start-time ingestion alone:
+
+| path (collector 0.126, Prometheus 3.15) | `calls_total` first occurrence | duration histogram first occurrence |
+|---|---|---|
+| OTLP, with `created-timestamp-zero-ingestion` (shipped) | counted | counted |
+| OTLP, without the flag | counted | 0 |
+| remote write (the W5 fallback) | counted | 0 |
 
 **Decision 1 now also requires:**
 - **Collector:** `otel/opentelemetry-collector-contrib:0.126.0`, pinned by digest in compose. Both test
@@ -174,22 +185,22 @@ From 0.125 the connector keeps a start time per series: `GetOrCreate(key, …, s
 - **The images are pinned by multi-arch index digest** (six platforms each, checked on Docker Hub), so the
   amd64 CI runner and an arm64 laptop pull the same release. The W1 matrix runs wherever docker is present,
   including CI on `ubuntu-latest`. Without docker it skips, like the privacy tests.
-- **The collector version is now load-bearing.** A downgrade below 0.125 silently restores the undercount.
+- **The collector version is now load-bearing.** A downgrade below 0.124 silently restores the undercount.
   The W1 test fails on it, which the 0.118 row above shows.
 - **No out-of-order window is needed.** A retried batch, delivered after Prometheus has accepted later
   samples from other series, was accepted with its zero. `tsdb.out_of_order_time_window` stays unset
   (decision 1, last bullet).
 
-**The zero-ingestion flag stays, although 3.15.0 did not need it.** Without
-`--enable-feature=created-timestamp-zero-ingestion`, Prometheus 3.15.0 still wrote the start-time zero over
-OTLP (measured 2026-10-14; mutation testing found it). The flag is kept because decision 1 names it and an
-upgrade could change the default. A string check makes removing it a visible change.
-`translation_strategy` gets the same treatment: the value set is 3.15.0's default.
+**The zero-ingestion flag is load-bearing for the duration histograms.** Mutation testing in #158 found that
+removing it left `calls_total` counting. That was first written up as "3.15.0 did not need it". #161
+measured why: the zero in `calls_total` comes from the connector (above), so the #158 tests, which read only
+`calls_total`, could not see the flag. `test_a_first_duration_is_counted` now reads the histogram, and fails
+without the flag. `translation_strategy` is 3.15.0's default value, so only a string check guards it.
 
 **Option 3 is unchanged.** Exact per-name counts in a time range read Loki or the warehouse (decision 3).
 `increase()` still extrapolates, and data already in Prometheus keeps its undercount.
 
-**Also found:** 0.125 deprecated `dimensions_cache_size` as unused. Decision 2's cardinality bound was
+**Also found:** contrib 0.125 deprecated `dimensions_cache_size` as unused. Decision 2's cardinality bound was
 never in force. The real control is `aggregation_cardinality_limit`, tracked in #195.
 
 ## Review
