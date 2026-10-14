@@ -30,7 +30,21 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD"
+          "unit": "currencyUSD",
+          "noValue": "No Claude Code request recorded in this range (is its telemetry on?)",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
         },
         "overrides": []
       }
@@ -59,7 +73,25 @@
           },
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Claude Code request recorded in this range (is its telemetry on?)",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -88,7 +120,8 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD"
+          "unit": "currencyUSD",
+          "noValue": "No Claude Code request recorded in this range (is its telemetry on?)"
         },
         "overrides": []
       }
@@ -117,7 +150,12 @@
           },
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Claude Code request recorded in this range (is its telemetry on?)"
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -172,7 +210,9 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "noValue": "No Claude Code request recorded in this range (is its telemetry on?)"
+        },
         "overrides": [
           {
             "matcher": {
@@ -221,7 +261,8 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD"
+          "unit": "currencyUSD",
+          "noValue": "No Claude Code request recorded in this range (is its telemetry on?)"
         },
         "overrides": []
       },
@@ -414,7 +455,12 @@
             ]
           }
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No tool call recorded in this range"
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -427,7 +473,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])) * 3600"
+          "expr": "sum by (std_skill_name, std_harness) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])) * 3600",
+          "legendFormat": "{{std_skill_name}} ({{std_harness}})"
         }
       ],
       "fieldConfig": {
@@ -448,7 +495,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\",status_code=\"STATUS_CODE_ERROR\"}[1h])) / sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h]))"
+          "expr": "(sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\",status_code=\"STATUS_CODE_ERROR\"}[1h])) or sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])) * 0) / sum by (std_skill_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h]))",
+          "legendFormat": "{{std_skill_name}}"
         }
       ],
       "fieldConfig": {
@@ -456,7 +504,8 @@
           "noValue": "No skill ran in this range"
         },
         "overrides": []
-      }
+      },
+      "description": "A skill with no errors reads 0: the error series does not exist until an error happens, so the numerator falls back to zero for every skill that ran (ADR-016 decision 4)."
     },
     {
       "type": "timeseries",
@@ -469,7 +518,8 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le, std_skill_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])))"
+          "expr": "histogram_quantile(0.5, sum by (le, std_skill_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"skill\"}[1h])))",
+          "legendFormat": "{{std_skill_name}}"
         }
       ],
       "fieldConfig": {
@@ -491,9 +541,15 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_artefact_kind) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\"}[1h])) * 3600"
+          "expr": "sum by (std_artefact_kind) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\"}[1h])) * 3600",
+          "legendFormat": "{{std_artefact_kind}}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No stdtel activation in this range"
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -507,9 +563,15 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_subagent_type) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"subagent\"}[1h])) * 3600"
+          "expr": "sum by (std_subagent_type) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"subagent\"}[1h])) * 3600",
+          "legendFormat": "{{std_subagent_type}}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No sub-agent ran in this range"
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -523,9 +585,15 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"turn\"}[1h])))"
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"std.artefact.activation\",std_artefact_kind=\"turn\"}[1h])))",
+          "legendFormat": "p50 turn"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No turn recorded in this range"
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -539,9 +607,15 @@
       },
       "targets": [
         {
-          "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"compaction\"}[1h])) * 3600"
+          "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\",std_artefact_kind=\"compaction\"}[1h])) * 3600",
+          "legendFormat": "{{std_artefact_name}}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No compaction in this range"
+        }
+      }
     },
     {
       "id": 1,
@@ -562,7 +636,12 @@
           "expr": "sum by (std_artefact_name) (rate(traces_span_metrics_calls_total{span_name=\"std.artefact.activation\", std_artefact_kind=\"external\"}[5m])) * 3600",
           "legendFormat": "{{std_artefact_name}}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No external spend reported in this range"
+        }
+      }
     },
     {
       "type": "timeseries",
@@ -594,7 +673,8 @@
                 "value": 10000
               }
             ]
-          }
+          },
+          "noValue": "Prometheus is not scraping itself (deploy/prometheus.yml)"
         },
         "overrides": []
       },

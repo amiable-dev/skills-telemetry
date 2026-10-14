@@ -42,6 +42,11 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No skill activation in the warehouse for this range. Run stdtel-doctor --json: is warehouse freshness pass?"
+        }
       }
     },
     {
@@ -72,6 +77,11 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No merged change request with a ticket and a first-run policy result in the warehouse"
+        }
       }
     },
     {
@@ -102,6 +112,11 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No turn reached a merged change request with a ticket in the warehouse"
+        }
       }
     },
     {
@@ -132,6 +147,11 @@
       ],
       "options": {
         "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Nothing loaded into the warehouse yet. Run stdtel-doctor --json"
+        }
       }
     },
     {
@@ -159,7 +179,12 @@
           "format": "table",
           "rawSql": "-- Where the spend goes, by artefact. Kinds overlap deliberately: a sub-agent's\n-- tokens are inside the turn that spawned it. Compare the rows; never add them\n-- up. Skills carry no tokens of their own since #117 \u2014 their spend is the\n-- harness's requests, in the scorecard \u2014 so they are not listed here.\nSELECT kind,\n       count(*)                                   AS activations,\n       count(DISTINCT prompt_id) FILTER (WHERE kind = 'turn') AS turns,\n       count(*) FILTER (WHERE input_tokens IS NULL)           AS without_usage,\n       sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0)\n           + coalesce(cache_creation_tokens, 0))  AS tokens_excl_cache_read,\n       sum(coalesce(cache_read_tokens, 0))        AS cache_read_tokens\nFROM artefact_activation\nWHERE started_at BETWEEN $__timeFrom() AND $__timeTo() AND kind <> 'skill'\nGROUP BY kind\nORDER BY tokens_excl_cache_read DESC NULLS LAST;"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No activation in the warehouse for this range. Run stdtel-doctor --json"
+        }
+      }
     },
     {
       "id": 6,
@@ -186,7 +211,12 @@
           "format": "table",
           "rawSql": "-- How stale is this dashboard? Spans reach Tempo when a hook fires; they reach\n-- this warehouse only when a loader runs. Tempo once held four days of spans\n-- Postgres had never seen, and every component reported success throughout.\nSELECT loader,\n       max(finished_at)                                        AS last_run,\n       round(extract(epoch FROM (now() - max(finished_at))) / 60) AS minutes_ago,\n       max(source_max_ts)                                      AS newest_row_loaded,\n       (SELECT count(*) FROM loader_run r2\n         WHERE r2.loader = loader_run.loader AND NOT r2.ok\n           AND r2.started_at > now() - interval '24 hours')    AS failures_24h\nFROM loader_run\nGROUP BY loader\nORDER BY loader;"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No loader has ever run against this warehouse. Install it: stdtel-install loader"
+        }
+      }
     },
     {
       "id": 7,
@@ -207,7 +237,8 @@
         "defaults": {
           "custom": {
             "align": "auto"
-          }
+          },
+          "noValue": "No scoped run in the warehouse for this range"
         },
         "overrides": []
       },
