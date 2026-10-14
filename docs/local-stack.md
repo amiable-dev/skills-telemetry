@@ -231,6 +231,51 @@ docker exec -i deploy-postgres-1 psql -U postgres -d stdtel < warehouse/schema.s
 `schema.sql` is written with `CREATE TABLE IF NOT EXISTS`, so it is safe to re-run — but it will not
 alter an existing table. A changed column needs its own `ALTER`.
 
+## Rolling back the metrics path
+
+Prometheus counts a skill's first occurrence because three things hold together (ADR-016 decision 1):
+- its OTLP receiver writes a zero at each series' start time;
+- the collector's spanmetrics connector, at contrib 0.124 or later, gives each series its own start
+  time, and starts each new `calls_total` series at 0;
+- both images are pinned by digest.
+
+`tests/test_counting_first_occurrences.py` runs the shipped images and configs, and decides whether
+that still holds. Two rules follow.
+
+**An upgrade that fails the test does not ship.** Keep the last passing digest in
+`deploy/docker-compose.yml`. Find it with `git log -p deploy/docker-compose.yml`, or in the CHANGELOG
+entry that recorded the upgrade. The collector must stay at 0.124 or later. Below that, every series
+born after the collector started gets a zero hours before its first sample, and OTLP undercounts too.
+
+**If OTLP ingestion has to be abandoned, fall back to remote write with one variable:**
+
+```bash
+make down && STDTEL_METRICS_OVERLAY=overlay-remote-write.yaml make up
+```
+
+`collector/overlay-remote-write.yaml` changes only the metrics exporter. It sits in its own `--config`
+slot, so it combines with `STDTEL_COLLECTOR_OVERLAY=overlay-langfuse.yaml`. Prometheus keeps its
+remote-write receiver on, so nothing else changes. `tests/test_rollback.py` runs this fallback on the
+shipped images, and checks that every dashboard expression still resolves with the same names and
+labels.
+
+**What the fallback costs.** Remote write 1.0 carries no start time, so Prometheus writes no zero.
+- **Count panels still count a first occurrence.** The connector sends a new `calls_total` series at 0
+  itself, so "Skill invocations / h", "Error rate by skill" and the other per-hour counts are unaffected.
+- **Duration panels undercount.** A skill's first duration reads as nothing in "p50 skill window
+  duration" and "p50 hook-observed turn duration". Each of those panels says so in its description.
+
+No threshold or query trick restores a first occurrence that never reached Prometheus as a zero: none
+can. Exact counts come from the per-event tables, which read Loki or the warehouse:
+- "Skills invoked";
+- "MCP calls by server and tool";
+- "Tool calls by tool";
+- "Spend by scope".
+
+**What the gate does not see.** `mise run test` tests the default path, not the one a running stack
+was started with. A stack on the fallback stays green in the tests while it undercounts. Return to the
+default with `make down && make up`.
+
 ## Langfuse (optional)
 
 Self-hosted Langfuse can receive the same traces as an additional destination — see

@@ -60,7 +60,9 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
    - **Image:** `prom/prometheus:v3.15.0`, pinned by digest in compose. Every upgrade is gated on the
      test in work item W1.
    - **Flags:** `--web.enable-otlp-receiver` and `--enable-feature=created-timestamp-zero-ingestion`,
-     beside the existing ones.
+     beside the existing ones. *(#161: `--web.enable-remote-write-receiver` also stays on, so the W5
+     fallback is one variable. It is the same exposure class as the OTLP write path, and both bind to
+     `STDTEL_BIND`.)*
    - **Prometheus config:** `otlp.translation_strategy: UnderscoreEscapingWithSuffixes`, which keeps
      today's names (`traces_span_metrics_calls_total`, `std_skill_name`). Today's labels are datapoint
      attributes (spanmetrics dimensions), not resource attributes, so they need no promotion and no
@@ -69,7 +71,8 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
    - **Collector:** the metrics pipeline exports `otlphttp` with
      `metrics_endpoint: http://prometheus:9090/api/v1/otlp/v1/metrics`. That is set in full, because
      the exporter appends `/v1/metrics` to a bare `endpoint`. It keeps the collector's default retry
-     and queue. `prometheusremotewrite` is removed.
+     and queue. `prometheusremotewrite` is removed from the base config. *(#161: it returns only in
+     `collector/overlay-remote-write.yaml`, the W5 fallback.)*
    - **Out-of-order:** the backfilled zero at the start time must be accepted, and the real-image test
      asserts it is. `tsdb.out_of_order_time_window` is set only if that test needs it.
 2. **`std.scope.key` leaves the spanmetrics dimensions, and the remaining cardinality is bounded.**
@@ -119,6 +122,10 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
 - **W5. Rollback.** If W1's test fails on a future upgrade, the stack stays on the last passing digest.
   - If OTLP ingestion has to be abandoned, the collector reverts to `prometheusremotewrite`, and every
     rate panel carries a description stating its first-occurrence undercount.
+    *(Corrected 2026-10-14, #161: measured, only the duration panels undercount on the fallback. The
+    collector starts each new `calls_total` series at 0 itself, so count panels count a first occurrence
+    on either path; see the table in the amendment. Each rate panel's description says which of the two
+    it is.)*
   - Exact counts then come only from the per-event tables in decision 3.
   - Nothing claims a threshold or query trick restores a first occurrence. None can.
 
@@ -137,8 +144,9 @@ Only the last cell counts a first occurrence. It writes a zero at the series' st
 - **`increase()` extrapolates.** A single event over a window can read 1.2 rather than 1. Panels that
   need exact counts in a range use the per-event stores (decision 3), not `increase()`.
 - **Data already in Prometheus keeps its undercount.** Nothing is backfilled.
-- **Remote write is no longer used.** The collector at 0.118 sent remote write 1.0, which has no start
-  timestamps. Since #158 metrics go over OTLP, so remote write 2.0 is moot here.
+- **Remote write 1.0 is the W5 fallback (#161), not the default.** It carries no start time, so on the
+  fallback the duration histograms undercount a first occurrence. Since #158 the default path is OTLP,
+  so remote write 2.0 is moot here.
 - **One owner.** This is a single-maintainer project. The maintainer owns tracking the experimental flag
   upstream, and the W1 test is what makes a change visible without anyone remembering to look.
 
@@ -163,10 +171,21 @@ for every stdtel series, from when the collector first saw stdtel. On 2026-10-13
 sent 8 s apart, both carried the same start time. The 2026-10-09 measurement in the Context missed this
 because its sample set its own start time 90 s back.
 
-From 0.125 the connector keeps a start time per series: `GetOrCreate(key, …, startTimestamp, …)` in
-`connector/spanmetricsconnector`. This arrived in the same release as `aggregation_cardinality_limit`
-(open-telemetry/opentelemetry-collector-contrib#38990). Images for 0.124 and 0.125 were never published, so
-0.126.0 is the first image.
+From 0.124 the connector keeps a start time per series (open-telemetry/opentelemetry-collector-contrib#35994).
+Images for 0.124 and 0.125 were never published, so 0.126.0 is the first image. *(Corrected 2026-10-14,
+#161: this first cited 0.125 and #38990, from a source search. The release notes name #35994 in 0.124.)*
+
+**Also in 0.124, found in #161:** the connector starts each new `calls_total` series at 0 itself
+(#38537). Its first export carries the value 0 and its second carries 1 (debug exporter, 2026-10-14). So a
+first occurrence in `calls_total` is counted on *any* path that delivers both points. That includes
+Prometheus without the flag, and remote write. The duration histogram gets no such zero, so its first
+occurrence depends on Prometheus's start-time ingestion alone:
+
+| path (collector 0.126, Prometheus 3.15) | `calls_total` first occurrence | duration histogram first occurrence |
+|---|---|---|
+| OTLP, with `created-timestamp-zero-ingestion` (shipped) | counted | counted |
+| OTLP, without the flag | counted | 0 |
+| remote write (the W5 fallback) | counted | 0 |
 
 **Decision 1 now also requires:**
 - **Collector:** `otel/opentelemetry-collector-contrib:0.126.0`, pinned by digest in compose. Both test
@@ -174,22 +193,22 @@ From 0.125 the connector keeps a start time per series: `GetOrCreate(key, …, s
 - **The images are pinned by multi-arch index digest** (six platforms each, checked on Docker Hub), so the
   amd64 CI runner and an arm64 laptop pull the same release. The W1 matrix runs wherever docker is present,
   including CI on `ubuntu-latest`. Without docker it skips, like the privacy tests.
-- **The collector version is now load-bearing.** A downgrade below 0.125 silently restores the undercount.
+- **The collector version is now load-bearing.** A downgrade below 0.124 silently restores the undercount.
   The W1 test fails on it, which the 0.118 row above shows.
 - **No out-of-order window is needed.** A retried batch, delivered after Prometheus has accepted later
   samples from other series, was accepted with its zero. `tsdb.out_of_order_time_window` stays unset
   (decision 1, last bullet).
 
-**The zero-ingestion flag stays, although 3.15.0 did not need it.** Without
-`--enable-feature=created-timestamp-zero-ingestion`, Prometheus 3.15.0 still wrote the start-time zero over
-OTLP (measured 2026-10-14; mutation testing found it). The flag is kept because decision 1 names it and an
-upgrade could change the default. A string check makes removing it a visible change.
-`translation_strategy` gets the same treatment: the value set is 3.15.0's default.
+**The zero-ingestion flag is load-bearing for the duration histograms.** Mutation testing in #158 found that
+removing it left `calls_total` counting. That was first written up as "3.15.0 did not need it". #161
+measured why: the zero in `calls_total` comes from the connector (above), so the #158 tests, which read only
+`calls_total`, could not see the flag. `test_a_first_duration_is_counted` now reads the histogram, and fails
+without the flag. `translation_strategy` is 3.15.0's default value, so only a string check guards it.
 
 **Option 3 is unchanged.** Exact per-name counts in a time range read Loki or the warehouse (decision 3).
 `increase()` still extrapolates, and data already in Prometheus keeps its undercount.
 
-**Also found:** 0.125 deprecated `dimensions_cache_size` as unused. Decision 2's cardinality bound was
+**Also found:** contrib 0.125 deprecated `dimensions_cache_size` as unused. Decision 2's cardinality bound was
 never in force. The real control is `aggregation_cardinality_limit`, tracked in #195.
 
 ## Review

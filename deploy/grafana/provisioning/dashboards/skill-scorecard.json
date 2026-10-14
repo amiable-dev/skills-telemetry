@@ -482,7 +482,8 @@
           "noValue": "No skill ran in this range"
         },
         "overrides": []
-      }
+      },
+      "description": "Counts a first occurrence on either metrics path, OTLP or the remote-write fallback, because the collector starts each new count at 0 (ADR-016). See docs/local-stack.md#rolling-back-the-metrics-path."
     },
     {
       "type": "timeseries",
@@ -505,7 +506,7 @@
         },
         "overrides": []
       },
-      "description": "A skill with no errors reads 0: the error series does not exist until an error happens, so the numerator falls back to zero for every skill that ran (ADR-016 decision 4)."
+      "description": "A skill with no errors reads 0: the error series does not exist until an error happens, so the numerator falls back to zero for every skill that ran (ADR-016 decision 4). Counts a first occurrence on either metrics path, OTLP or the remote-write fallback, because the collector starts each new count at 0 (ADR-016). See docs/local-stack.md#rolling-back-the-metrics-path."
     },
     {
       "type": "timeseries",
@@ -527,12 +528,13 @@
           "noValue": "No skill ran in this range"
         },
         "overrides": []
-      }
+      },
+      "description": "Counts a first occurrence over OTLP only (ADR-016). On the remote-write fallback a skill's first duration is missing, and exact counts are in the per-event tables: see docs/local-stack.md#rolling-back-the-metrics-path."
     },
     {
       "type": "timeseries",
       "title": "Activations / h by artefact kind",
-      "description": "Where the agent's work actually goes. Sub-agents and compaction were invisible before ADR-009; a session can have no skill activations at all and still be the most expensive one of the day.",
+      "description": "Where the agent's work actually goes. Sub-agents and compaction were invisible before ADR-009; a session can have no skill activations at all and still be the most expensive one of the day. Counts a first occurrence on either metrics path, OTLP or the remote-write fallback, because the collector starts each new count at 0 (ADR-016). See docs/local-stack.md#rolling-back-the-metrics-path.",
       "gridPos": {
         "x": 12,
         "y": 40,
@@ -554,7 +556,7 @@
     {
       "type": "timeseries",
       "title": "Sub-agent calls / h by type",
-      "description": "Rate only — a sub-agent's token cost is a span attribute, so read that from the warehouse (warehouse/efficiency/), not from here.",
+      "description": "Rate only — a sub-agent's token cost is a span attribute, so read that from the warehouse (warehouse/efficiency/), not from here. Counts a first occurrence on either metrics path, OTLP or the remote-write fallback, because the collector starts each new count at 0 (ADR-016). See docs/local-stack.md#rolling-back-the-metrics-path.",
       "gridPos": {
         "x": 0,
         "y": 48,
@@ -576,7 +578,7 @@
     {
       "type": "timeseries",
       "title": "p50 hook-observed turn duration",
-      "description": "The harness's own turn timing, not our clock.",
+      "description": "The harness's own turn timing, not our clock. Counts a first occurrence over OTLP only (ADR-016). On the remote-write fallback a skill's first duration is missing, and exact counts are in the per-event tables: see docs/local-stack.md#rolling-back-the-metrics-path.",
       "gridPos": {
         "x": 12,
         "y": 48,
@@ -598,7 +600,7 @@
     {
       "type": "timeseries",
       "title": "Compactions / h by reason",
-      "description": "A rising auto-compaction rate is context pressure: the session is spending tokens re-reading itself. Pair with tokens_before in the warehouse.",
+      "description": "A rising auto-compaction rate is context pressure: the session is spending tokens re-reading itself. Pair with tokens_before in the warehouse. Counts a first occurrence on either metrics path, OTLP or the remote-write fallback, because the collector starts each new count at 0 (ADR-016). See docs/local-stack.md#rolling-back-the-metrics-path.",
       "gridPos": {
         "x": 0,
         "y": 56,
@@ -622,7 +624,7 @@
       "title": "External spend calls / h by system",
       "type": "timeseries",
       "datasource": null,
-      "description": "ADR-010 decision 7. Spend that happens outside the harness, reported by whatever spent it — a CLI the agent shells out to, or an MCP server calling models of its own. stdtel cannot observe this; it receives it, so an empty graph means either nothing ran or nothing is emitting, and those are different. The money is not here: cost is a Postgres figure, on the outcomes board.",
+      "description": "ADR-010 decision 7. Spend that happens outside the harness, reported by whatever spent it — a CLI the agent shells out to, or an MCP server calling models of its own. stdtel cannot observe this; it receives it, so an empty graph means either nothing ran or nothing is emitting, and those are different. The money is not here: cost is a Postgres figure, on the outcomes board. Counts a first occurrence on either metrics path, OTLP or the remote-write fallback, because the collector starts each new count at 0 (ADR-016). See docs/local-stack.md#rolling-back-the-metrics-path.",
       "gridPos": {
         "x": 12,
         "y": 56,

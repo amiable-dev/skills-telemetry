@@ -146,9 +146,10 @@ def _wait(cond, timeout: float, what: str) -> None:
 
 
 @contextlib.contextmanager
-def stack(start: bool = True):
+def stack(start: bool = True, metrics_overlay: str = "overlay-none.yaml"):
     """The shipped collector and Prometheus on a private network. Prometheus is
-    reachable from the collector as `prometheus`, as it is in compose."""
+    reachable from the collector as `prometheus`, as it is in compose.
+    `metrics_overlay` fills compose's STDTEL_METRICS_OVERLAY slot (ADR-016 W5)."""
     tag = uuid.uuid4().hex[:8]
     net, coll, prom = f"stdtel-w1-{tag}", f"stdtel-w1-collector-{tag}", f"stdtel-w1-prometheus-{tag}"
     overrides = ROOT / "tests" / f".{coll}.yaml"
@@ -160,9 +161,11 @@ def stack(start: bool = True):
         _run(["docker", "cp", str(ROOT / "deploy" / "prometheus.yml"), f"{prom}:/etc/prometheus/prometheus.yml"])
         _run(["docker", "create", "--name", coll, "--network", net, "-p", "127.0.0.1::4318",
               COLLECTOR_IMAGE, "--config=/etc/otelcol-contrib/base.yaml",
-              "--config=/etc/otelcol-contrib/mode.yaml", "--config=/etc/otelcol-contrib/test.yaml"])
+              "--config=/etc/otelcol-contrib/mode.yaml", "--config=/etc/otelcol-contrib/metrics.yaml",
+              "--config=/etc/otelcol-contrib/test.yaml"])
         for src, dst in ((ROOT / "collector" / "otel-collector.yaml", "base.yaml"),
-                         (ROOT / "collector" / "overlay-none.yaml", "mode.yaml"), (overrides, "test.yaml")):
+                         (ROOT / "collector" / "overlay-none.yaml", "mode.yaml"),
+                         (ROOT / "collector" / metrics_overlay, "metrics.yaml"), (overrides, "test.yaml")):
             _run(["docker", "cp", str(src), f"{coll}:/etc/otelcol-contrib/{dst}"])
         s = Stack(tag, net, coll, prom)
         if start:

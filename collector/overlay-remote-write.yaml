@@ -1,0 +1,19 @@
+# Rollback overlay (ADR-016 W5): metrics go to Prometheus over remote write
+# instead of OTLP.
+#
+#   STDTEL_METRICS_OVERLAY=overlay-remote-write.yaml make up
+#
+# Use it only if Prometheus's OTLP receiver has to be abandoned. Remote write 1.0
+# carries no start time, so every rate panel undercounts again: a first
+# occurrence reads 0. Exact counts are then in the per-event tables. See
+# docs/local-stack.md, "Rolling back the metrics path".
+#
+# Only the metrics exporter changes. It sits in its own --config slot, after
+# STDTEL_COLLECTOR_OVERLAY, so it combines with the Langfuse overlay.
+exporters:
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+service:
+  pipelines:
+    metrics:
+      exporters: [prometheusremotewrite]
