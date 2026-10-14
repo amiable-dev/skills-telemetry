@@ -30,8 +30,15 @@ DEFAULT_RANGE = ("now-24h", "now")
 
 
 def grafana_base(environ=None) -> str:
+    """STDTEL_GRAFANA without any username or password: a link is an href the browser
+    shows, and decision 3 says a setting's secret never renders."""
     environ = os.environ if environ is None else environ
-    return (environ.get("STDTEL_GRAFANA") or "http://localhost:3000").rstrip("/")
+    u = urllib.parse.urlsplit((environ.get("STDTEL_GRAFANA") or "http://localhost:3000").strip())
+    host = u.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = host + (f":{u.port}" if u.port else "")
+    return urllib.parse.urlunsplit((u.scheme, netloc, u.path, "", "")).rstrip("/")
 
 
 def _ms(iso: str) -> str | None:

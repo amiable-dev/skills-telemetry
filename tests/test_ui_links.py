@@ -113,6 +113,15 @@ def test_a_link_points_only_at_the_configured_grafana():
         assert link["url"].startswith("http://grafana.internal:3000/d/")
 
 
+def test_credentials_in_the_grafana_setting_never_reach_an_href():
+    """Links are the one place a setting leaves the server unredacted (an href, which
+    a browser shows on hover): a host is fine, a password is not."""
+    base = ui_links.grafana_base({"STDTEL_GRAFANA": "https://admin:s3cret@grafana.internal:3000/"})
+    assert base == "https://grafana.internal:3000"
+    for link in ui_links.links_for(doctor.Check("loader liveness", "fail", "x"), grafana=base):
+        assert "s3cret" not in link["url"] and "admin@" not in link["url"]
+
+
 def test_a_check_with_no_aggregate_has_no_link():
     assert ui_links.links_for(doctor.Check("hook resolvable", "fail", "x"), grafana="http://g") == []
 
