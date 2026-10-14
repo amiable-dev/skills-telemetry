@@ -42,6 +42,9 @@ class Check:
     detail: str
     remedy: str = ""
     observed_at: str = field(default_factory=_now)
+    #: what the finding is about, for a surface that can link to it (ADR-017 decision 4):
+    #: e.g. ({"session": id, "since": iso},). Not part of the --json contract.
+    subjects: tuple = ()
 
     def __post_init__(self):
         if isinstance(self.outcome, bool):

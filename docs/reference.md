@@ -265,6 +265,15 @@ stdtel-ui [--port N]
   never renders: the environment's `STDTEL_*`, `OTEL_*`, `CLAUDE_CODE_*` and `ANTHROPIC_*` values, and
   the `env` blocks of Claude Code's settings files, are replaced by the setting's name (for example
   `$STDTEL_OTLP_ENDPOINT`).
+- **Links into Grafana** (ADR-017 decision 4). A finding with an aggregate behind it links to the
+  provisioned dashboard by uid:
+  - `native coverage` and `artefact events` link to the operational board;
+  - `warehouse freshness` and `loader liveness` link to the outcomes board.
+
+  When `native coverage` names sessions, each gets its own link: the operational board from when the
+  session started, with its `session` variable set to that id. Only ids shaped like a Claude Code
+  session id get one, because the id lands in a quoted LogQL regex. Grafana is `STDTEL_GRAFANA`.
+  A check added to doctor appears on the page with no page code (decision 5).
 - **Lifecycle.** A foreground process with no state of its own. Ctrl-C ends it.
 
 Exit: `0` after Ctrl-C · `1` the port is held · `2` no port given.
@@ -425,6 +434,7 @@ The authoritative list. Everything else that mentions these links here.
 | `STDTEL_SPOOL_MAX` | `50000` | spool | records kept before the oldest are dropped; the drop count is reported, never silent |
 | `STDTEL_SPOOL_DIR` | `~/.stdtel/spool` | spool | where spooled spans are written |
 | `STDTEL_UI_PORT` | unset | `stdtel-ui` | port for the health page; `--port` wins, and berth's `WEB_PORT` is used when this is unset |
+| `STDTEL_GRAFANA` | `http://localhost:3000` | `stdtel-ui` | Grafana's base URL, for the page's links into the provisioned dashboards |
 | `WEB_PORT` | unset | `stdtel-ui` | berth's `web` port for this project (`berth env --shell` exports it); the last fallback for the health page's port |
 | `STDTEL_STATUSLINE` | unset | statusline | `off`/`0`/`false`/`no` hides the status line without disabling telemetry |
 | `STDTEL_DISABLED` | unset | hooks | `1`/`true`/`yes`/`on` disables telemetry entirely; checked before the payload is read |

@@ -19,7 +19,7 @@
       "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Claude Code's own cost_usd, summed.",
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd [$__range]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | unwrap cost_usd [$__range]))",
           "queryType": "instant",
           "datasource": {
             "type": "loki",
@@ -65,7 +65,7 @@
       "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free.",
       "targets": [
         {
-          "expr": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" [$__range]))",
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" [$__range]))",
           "queryType": "instant",
           "datasource": {
             "type": "loki",
@@ -109,7 +109,7 @@
       "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Each point is what the previous hour cost.",
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd [1h]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | unwrap cost_usd [1h]))",
           "legendFormat": "USD in the trailing hour",
           "datasource": {
             "type": "loki",
@@ -142,7 +142,7 @@
       "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free.",
       "targets": [
         {
-          "expr": "sum by (model) (count_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" [1h]))",
+          "expr": "sum by (model) (count_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" [1h]))",
           "legendFormat": "{{model}}",
           "datasource": {
             "type": "loki",
@@ -173,7 +173,7 @@
       "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. Cache reads usually dominate; compare the other three with each other. Cache reads are on the right axis: they are usually 100x the rest.",
       "targets": [
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap input_tokens [1h]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | unwrap input_tokens [1h]))",
           "legendFormat": "input",
           "datasource": {
             "type": "loki",
@@ -182,7 +182,7 @@
           "refId": "A"
         },
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap output_tokens [1h]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | unwrap output_tokens [1h]))",
           "legendFormat": "output",
           "datasource": {
             "type": "loki",
@@ -191,7 +191,7 @@
           "refId": "B"
         },
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cache_read_tokens [1h]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | unwrap cache_read_tokens [1h]))",
           "legendFormat": "cache read",
           "datasource": {
             "type": "loki",
@@ -200,7 +200,7 @@
           "refId": "C"
         },
         {
-          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cache_creation_tokens [1h]))",
+          "expr": "sum(sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | unwrap cache_creation_tokens [1h]))",
           "legendFormat": "cache creation",
           "datasource": {
             "type": "loki",
@@ -249,7 +249,7 @@
       "description": "From Claude Code's own api_request events in Loki (ADR-014), one per model request. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin): a session without it is missing here, not free. `(no skill)` is spend outside any skill, usually most of it. A third-party plugin's skill reads `third-party` unless the detailed view is on; the warehouse's llm_request_attributed names it where stdtel saw exactly one run in that prompt.",
       "targets": [
         {
-          "expr": "sum by (skill_name, agent_name, vcs_repository_name) (sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | label_format skill_name=`{{ or .skill_name \"(no skill)\" }}`, agent_name=`{{ or .agent_name \"(main)\" }}` | unwrap cost_usd [$__range]))",
+          "expr": "sum by (skill_name, agent_name, vcs_repository_name) (sum_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"api_request\" | label_format skill_name=`{{ or .skill_name \"(no skill)\" }}`, agent_name=`{{ or .agent_name \"(main)\" }}` | unwrap cost_usd [$__range]))",
           "queryType": "instant",
           "format": "table",
           "datasource": {
@@ -307,7 +307,7 @@
       "description": "From Claude Code's own tool_result events in Loki (ADR-014). Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). MCP server and tool names, and the skill a Skill call loaded, arrive only with the detailed view on (`stdtel-install detailed-view on`, via the stdtel-setup skill); without it they read `(hidden: detailed view off)`. The collector keeps those names and drops everything else in the call (#142).",
       "targets": [
         {
-          "expr": "sum by (mcp_server_name, mcp_tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | tool_name=\"mcp_tool\" | label_format mcp_server_name=`{{ or .mcp_server_name \"(hidden: detailed view off)\" }}`, mcp_tool_name=`{{ or .mcp_tool_name \"-\" }}` [$__range]))",
+          "expr": "sum by (mcp_server_name, mcp_tool_name) (count_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"tool_result\" | tool_name=\"mcp_tool\" | label_format mcp_server_name=`{{ or .mcp_server_name \"(hidden: detailed view off)\" }}`, mcp_tool_name=`{{ or .mcp_tool_name \"-\" }}` [$__range]))",
           "queryType": "instant",
           "format": "table",
           "datasource": {
@@ -364,7 +364,7 @@
       "description": "From Claude Code's own skill_activated events in Loki (ADR-014, ADR-016 decision 3). One event per activation, however it was invoked: typed as /name (user-slash), chosen by Claude (claude-proactive), or loaded by another skill (nested-skill). A skill typed as /name makes no Skill tool call, so the earlier tool_result count missed it. Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). Claude Code has sent a user's own skill as `custom_skill`; that row says the name was withheld. Counts activations in the range, so a long loop started earlier does not appear.",
       "targets": [
         {
-          "expr": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"skill_activated\" | label_format skill_name=`{{ if eq .skill_name \"custom_skill\" }}(your own skill: name withheld by Claude Code){{ else }}{{ or .skill_name \"(no name sent)\" }}{{ end }}` [$__range]))",
+          "expr": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"skill_activated\" | label_format skill_name=`{{ if eq .skill_name \"custom_skill\" }}(your own skill: name withheld by Claude Code){{ else }}{{ or .skill_name \"(no name sent)\" }}{{ end }}` [$__range]))",
           "queryType": "instant",
           "format": "table",
           "datasource": {
@@ -422,7 +422,7 @@
       "description": "From Claude Code's own tool_result events in Loki (ADR-014). Present only for sessions with Claude Code's telemetry on (`stdtel-install settings`, or `--native-only` with the plugin). Every tool call, with success true or false. User-configured MCP servers all read `mcp_tool` here; the MCP table splits them by server.",
       "targets": [
         {
-          "expr": "sum by (tool_name, success) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" [$__range]))",
+          "expr": "sum by (tool_name, success) (count_over_time({service_name=\"claude-code\"} | session_id=~\"$session\" | event_name=\"tool_result\" [$__range]))",
           "queryType": "instant",
           "format": "table",
           "datasource": {
@@ -755,5 +755,27 @@
       }
     }
   ],
-  "description": "Invocation rate, errors, duration and token flow. The scorecard — first-time policy pass rate and the keep/refine/deprecate call — is on 'Skill scorecard'."
+  "description": "Invocation rate, errors, duration and token flow. The scorecard — first-time policy pass rate and the keep/refine/deprecate call — is on 'Skill scorecard'.",
+  "templating": {
+    "list": [
+      {
+        "name": "session",
+        "label": "session (regex)",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "description": "Claude Code session id, as a regex; .* is every session. stdtel-ui links here with one session (ADR-017)."
+      }
+    ]
+  }
 }
